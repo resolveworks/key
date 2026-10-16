@@ -2,6 +2,9 @@
 	"name": "key",
 	"private": true,
 	"type": "module",
+	"scripts": {
+		"key": "node src/main.ts"
+	},
 	"dependencies": {
 		"@earendil-works/chord": "1.3.0",
 		"@earendil-works/pi-ai": "1.3.0",

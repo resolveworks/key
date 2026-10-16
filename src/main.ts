@@ -4,59 +4,164 @@ import { createInterface } from "node:readline/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { AssistantEntry, createRegistry, Harness, watchEvents } from "@earendil-works/pi-durable";
+import {
+	AssistantEntry,
+	type Conversation,
+	createRegistry,
+	Harness,
+	type TaskGraphNode,
+	type TaskInspection,
+	watchEvents,
+} from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { GoalDoc, KeySystem } from "./system.ts";
+import { GoalDoc, KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
-
 const workspace = process.cwd();
-process.loadEnvFile(join(workspace, ".env"));
-
-const model = process.env.KEY_MODEL ?? "";
-const slash = model.indexOf("/");
-if (slash <= 0 || slash === model.length - 1) throw new Error('KEY_MODEL must be "provider/modelId"');
-const provider = model.slice(0, slash);
-const modelId = model.slice(slash + 1);
-
 const dataDirectory = join(workspace, ".key");
-mkdirSync(dataDirectory, { recursive: true });
+const kind = KeyTask.definition.name;
 
-const registry = createRegistry();
-registry.install(CodingTools);
-registry.install(KeySystem);
+// A bare prompt is `run`; the named verbs are the CLI.
+const verbs = new Set(["run", "watch", "ls", "jobs", "ps", "help"]);
+const raw = process.argv.slice(2);
+// npm/pnpm userland separators sometimes reach the script verbatim.
+const argv = raw[0] === "--" ? raw.slice(1) : raw;
+const verb = argv[0] !== undefined && verbs.has(argv[0]) ? argv[0] : "run";
+const rest = verb === "run" && !verbs.has(argv[0] ?? "") ? argv : argv.slice(1);
 
-const harness = await Harness.open(
-	await openNodeSqliteStorage(join(dataDirectory, "session.sqlite")),
-	{
-		models: builtinModels(),
-		registry,
-		env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? workspace }),
-		onReport: (error) => console.error("key:", error),
-	},
-	context,
-);
-const root = await harness.root(context, { agent: { model: { provider, modelId }, cwd: workspace } });
-
-const goal = process.env.KEY_GOAL;
-if (goal !== undefined && goal !== "") {
-	await harness.commit(async (tx) => {
-		(await tx.doc(GoalDoc)).text = goal;
-	}, context);
+switch (verb) {
+	case "ls":
+	case "jobs":
+	case "ps":
+		await list(rest.includes("--all"));
+		break;
+	case "watch":
+		await live(undefined, false);
+		break;
+	case "help":
+		printHelp();
+		break;
+	default:
+		await live(rest.join(" ").trim(), true);
 }
 
-harness.resume();
-console.log(`key — model ${provider}/${modelId}, workspace ${workspace}`);
+/** Live jobs in the session, including the waiting ones. Read-only: it never schedules or runs task code. */
+async function list(all: boolean): Promise<void> {
+	const harness = await openHarness();
+	try {
+		const { scheduling, tasks, submissions } = await harness.inspect(context);
+		const prompts = new Map<string, string>();
+		const emitters = new Map<string, string>();
+		for (const task of tasks) recordLabel(task.record, prompts, emitters);
+		const jobs = tasks.filter((task) => all || task.record.kind === kind);
+		process.stdout.write(`scheduling ${scheduling}, ${jobs.length} live job(s)\n`);
+		for (const job of jobs) process.stdout.write(`${renderTask(job, prompts, emitters)}\n`);
+		if (submissions.length > 0) {
+			process.stdout.write(`${submissions.length} unsettled submission(s)\n`);
+			for (const submission of submissions) {
+				process.stdout.write(
+					`  submission/${submission.id} ${submission.status} conversation ${submission.conversationId}\n`,
+				);
+			}
+		}
+	} finally {
+		await harness.close(context);
+	}
+}
 
-let prompt = process.argv.slice(2).join(" ").trim();
-if (prompt === "") prompt = await readPrompt();
+/** Submit (or, with no prompt, only observe) in the standing conversation while printing emitted contexts as they live. */
+async function live(promptArg: string | undefined, repl: boolean): Promise<void> {
+	const { provider, modelId } = readModel();
+	const harness = await openHarness();
+	try {
+		const root = await harness.root(context, { agent: { model: { provider, modelId }, cwd: workspace } });
+		const goal = process.env.KEY_GOAL;
+		if (goal !== undefined && goal !== "") {
+			await harness.commit(async (tx) => {
+				(await tx.doc(GoalDoc)).text = goal;
+			}, context);
+		}
 
-if (prompt === "") {
-	console.error("usage: node src/main.ts <prompt>");
-	process.exitCode = 2;
-} else {
+		// Labels are not in the graph, so keep them beside it: seed the recovered ones, then follow commits.
+		const prompts = new Map<string, string>();
+		const emitters = new Map<string, string>();
+		for (const task of (await harness.inspect(context)).tasks) recordLabel(task.record, prompts, emitters);
+
+		const unsubscribe = harness.subscribeCommits((publication) => {
+			for (const change of publication.changes) {
+				if (change.type !== "task" || change.value.kind !== kind) continue;
+				recordLabel(change.value, prompts, emitters);
+				const state = change.value.state;
+				if (state.status !== "terminal" && state.status !== "completing") continue;
+				const result = state.outcome.status === "completed" ? state.outcome.result : `(${state.outcome.status})`;
+				process.stdout.write(`\n── task/${change.value.id} ${state.outcome.status} ──\n${String(result)}\n`);
+			}
+		});
+
+		const rendered = new Map<string, string>();
+		const watch = await harness.watchTaskGraph(context);
+		watch.start(async (graph) => {
+			const live = new Set<string>();
+			for (const [key, node] of Object.entries(graph.tasks)) {
+				// Only contexts are ours; the rest is the model's own tool-call plumbing.
+				if (node.kind !== kind) continue;
+				live.add(key);
+				const line = renderNode(node, prompts, emitters);
+				if (rendered.get(key) === line) continue;
+				rendered.set(key, line);
+				process.stdout.write(`${line}\n`);
+			}
+			for (const key of rendered.keys()) if (!live.has(key)) rendered.delete(key);
+		});
+
+		harness.resume();
+		process.stdout.write(`key — model ${provider}/${modelId}, workspace ${workspace}\n`);
+
+		if (promptArg !== undefined && promptArg !== "") {
+			await ask(harness, root, promptArg);
+		} else if (repl && process.stdin.isTTY) {
+			const lines = createInterface({ input: process.stdin, output: process.stdout });
+			let closed = false;
+			lines.on("close", () => {
+				closed = true;
+			});
+			try {
+				for (;;) {
+					let line: string;
+					try {
+						line = (await lines.question("key> ")).trim();
+					} catch {
+						break;
+					}
+					if (line === "/exit" || line === "exit" || line === "quit") break;
+					if (line !== "") {
+						await ask(harness, root, line);
+						await harness.waitForIdle(context);
+					}
+					if (closed) break;
+				}
+			} finally {
+				lines.close();
+			}
+		} else if (repl) {
+			const line = await readStdin();
+			if (line !== "") await ask(harness, root, line);
+		}
+		await harness.waitForIdle(context);
+
+		// Event callbacks run after their commit; let the last ones print.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await watch.stop();
+		unsubscribe();
+	} finally {
+		await harness.close(context);
+	}
+}
+
+/** One turn: stream the root's answer, then leave emitted contexts to the graph and commit watchers. */
+async function ask(harness: Harness, root: Conversation, prompt: string): Promise<void> {
 	const goalText = (await harness.snapshot(GoalDoc, context))?.text ?? "";
 	const content = goalText === "" ? prompt : `# Goal\n\n${goalText}\n\n---\n\n${prompt}`;
 
@@ -76,8 +181,6 @@ if (prompt === "") {
 
 	const submission = await root.submit({ type: "input", content }, context);
 	const settled = await submission.wait(context);
-	// Event callbacks run after their commit; let the last ones print.
-	await harness.waitForIdle(context);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	await stream.stop();
 
@@ -90,23 +193,116 @@ if (prompt === "") {
 		}
 		process.stdout.write("\n");
 	} else {
-		console.error(`unanswered: ${settled.status === "unanswered" ? settled.reason : settled.status}`);
-		process.exitCode = 1;
+		process.stdout.write(`\nunanswered: ${settled.status === "unanswered" ? settled.reason : settled.status}\n`);
 	}
 }
 
-await harness.close(context);
+async function openHarness(): Promise<Harness> {
+	mkdirSync(dataDirectory, { recursive: true });
+	const registry = createRegistry();
+	registry.install(CodingTools);
+	registry.install(KeySystem);
+	return Harness.open(
+		await openNodeSqliteStorage(join(dataDirectory, "session.sqlite")),
+		{
+			models: builtinModels(),
+			registry,
+			env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? workspace }),
+			onReport: (error) => console.error("key:", error),
+		},
+		context,
+	);
+}
 
-async function readPrompt(): Promise<string> {
-	if (!process.stdin.isTTY) {
-		const chunks: Buffer[] = [];
-		for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-		return Buffer.concat(chunks).toString("utf8").split("\n")[0]?.trim() ?? "";
-	}
-	const lines = createInterface({ input: process.stdin, output: process.stdout });
+function readModel(): { provider: string; modelId: string } {
 	try {
-		return (await lines.question("key> ")).trim();
-	} finally {
-		lines.close();
+		process.loadEnvFile(join(workspace, ".env"));
+	} catch {
+		// Only commands that call a model need the file.
 	}
+	const model = process.env.KEY_MODEL ?? "";
+	const slash = model.indexOf("/");
+	if (slash <= 0 || slash === model.length - 1) throw new Error('KEY_MODEL must be "provider/modelId"');
+	return { provider: model.slice(0, slash), modelId: model.slice(slash + 1) };
+}
+
+function recordLabel(
+	record: { readonly id: number; readonly input: unknown },
+	prompts: Map<string, string>,
+	emitters: Map<string, string>,
+): void {
+	const input = record.input as KeyTaskInput;
+	prompts.set(String(record.id), input.prompt);
+	if (input.emission !== undefined) emitters.set(String(record.id), String(input.emission.emitter));
+}
+
+/** One live job line: origin, status, and the first line of its prompt so an agent is not just an id. */
+function renderNode(node: TaskGraphNode, prompts: Map<string, string>, emitters: Map<string, string>): string {
+	const origin = originOf(node.id, emitters);
+	const label = labelOf(node.id, prompts);
+	const state = node.state;
+	const status =
+		state.status === "waiting"
+			? `waiting on ${state.on.map((id) => `task/${id}`).join(", ")}`
+			: state.status === "completing"
+				? `completing (${state.outcome})`
+				: `${state.status} ${state.phase}`;
+	return `  task/${node.id}${origin} ${status}${label}`;
+}
+
+/** One inspection line, used by `ls`; adds the wait edges and blocked reason the graph omits. */
+function renderTask(inspection: TaskInspection, prompts: Map<string, string>, emitters: Map<string, string>): string {
+	const record = inspection.record;
+	const state = inspection.state;
+	const status =
+		state.kind === "waiting"
+			? `waiting on ${state.on.map((id) => `task/${id}`).join(", ")}`
+			: state.kind === "ready"
+				? state.migrates
+					? "pending (migrates)"
+					: "pending"
+				: state.kind === "blocked"
+					? `blocked (${state.reason})`
+					: state.kind;
+	const phase =
+		record.state.status === "pending" || record.state.status === "running" || record.state.status === "waiting"
+			? (record.state.checkpoint as { readonly phase?: string } | undefined)?.phase
+			: undefined;
+	const phaseText = phase === undefined ? "" : ` ${phase}`;
+	return `  task/${record.id}${originOf(record.id, emitters)} [${status}${phaseText}] ${record.kind}${labelOf(record.id, prompts)}`;
+}
+
+function originOf(id: number | string, emitters: Map<string, string>): string {
+	const emitter = emitters.get(String(id));
+	return emitter === undefined ? "" : ` from task/${emitter}`;
+}
+
+function labelOf(id: number | string, prompts: Map<string, string>): string {
+	const prompt = prompts.get(String(id));
+	return prompt === undefined || prompt === "" ? "" : ` — ${prompt.split("\n", 1)[0]?.trim() ?? ""}`;
+}
+
+async function readStdin(): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+	return Buffer.concat(chunks).toString("utf8").split("\n")[0]?.trim() ?? "";
+}
+
+function printHelp(): void {
+	process.stdout.write(`key — cascading contexts
+
+usage:
+  key [prompt...]      one-shot prompt, then watch the emitted contexts
+  key run [prompt...]  same, explicit
+  key watch            resume and watch live contexts without submitting
+  key ls [--all]       list live jobs, including waiting ones (--all adds tool plumbing)
+  key help             this
+
+interactive:
+  /exit                leave the conversation
+
+env:
+  KEY_MODEL            provider/modelId used for every context
+  KEY_GOAL             session goal rendered into every context's prompt
+`);
 }
