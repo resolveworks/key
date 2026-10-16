@@ -17,7 +17,7 @@ const usage = `usage: key <command> [args...]
 
   serve            own the session and serve the graph
   client           attach to a running host: list transcripts, show one, stream the live ones
-  run <prompt...>  submit a prompt to a running host
+  run <prompt...>  start a fresh context on a running host
 
   -h, --help       this
 `;

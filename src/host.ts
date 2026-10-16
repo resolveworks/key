@@ -48,9 +48,9 @@ export type Trajectory = {
 /** One line in the transcript picker: a conversation, its owner, and whether it is running. */
 export type Summary = {
 	readonly id: number;
-	/** `standing` for the human's conversation, otherwise `task #N` or `independent`. */
+	/** The owning `task #N`, or `independent`. */
 	readonly owner: string;
-	/** The task prompt, or a name for the standing conversation. */
+	/** The owning task's prompt. */
 	readonly label: string;
 	readonly running: boolean;
 };
@@ -105,12 +105,22 @@ export class Host {
 		});
 	}
 
-	/** Submit a turn into the standing conversation; contexts cascade from it. */
-	async submit(prompt: string): Promise<void> {
-		const root = await this.#harness.root(context, {
-			agent: { model: MODEL, cwd: workspace },
-		});
-		await root.submit({ type: "input", content: prompt }, context);
+	/**
+	 * The human emits: one fresh context for the prompt, in one commit. The root conversation is
+	 * reserved — it owns top-level tasks and carries the agent every context copies, and no turn is
+	 * ever submitted to it.
+	 */
+	async run(prompt: string): Promise<void> {
+		await this.#harness.root(context, { agent: { model: MODEL, cwd: workspace } });
+		await this.#harness.commit(
+			(tx) =>
+				tx.createTask(
+					KeyTask,
+					{ prompt },
+					{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
+				),
+			context,
+		);
 	}
 
 	#record(record: { readonly id: number; readonly input: unknown }): void {
@@ -145,17 +155,13 @@ export class Host {
 			}
 		}
 		return conversations
+			.filter(({ id }) => id !== ROOT_CONVERSATION_ID)
 			.map(({ id, owner }) => {
 				const prompt = owner === undefined ? undefined : this.#prompts.get(owner.taskId);
 				return {
 					id,
-					owner:
-						id === ROOT_CONVERSATION_ID
-							? "standing"
-							: owner === undefined
-								? "independent"
-								: `task #${owner.taskId}`,
-					label: prompt?.split("\n", 1)[0]?.trim() || (id === ROOT_CONVERSATION_ID ? "standing conversation" : ""),
+					owner: owner === undefined ? "independent" : `task #${owner.taskId}`,
+					label: prompt?.split("\n", 1)[0]?.trim() ?? "",
 					running: running.has(id),
 				};
 			})
@@ -216,7 +222,7 @@ export class Host {
 		const url = new URL(req.url ?? "/", "http://localhost");
 		if (req.method === "GET" && url.pathname === "/") {
 			res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(
-				"key host\n\n  GET  /api/graph             snapshot as JSON\n  GET  /api/stream            graph snapshot, then frames (SSE)\n  GET  /api/conversations     transcripts, then changes (SSE)\n  GET  /api/conversations/:id one transcript, then changes (SSE)\n  POST /api/run               body: the prompt\n",
+				"key host\n\n  GET  /api/graph             snapshot as JSON\n  GET  /api/stream            graph snapshot, then frames (SSE)\n  GET  /api/conversations     transcripts, then changes (SSE)\n  GET  /api/conversations/:id one transcript, then changes (SSE)\n  POST /api/run               start a context from the body\n",
 			);
 			return;
 		}
@@ -243,7 +249,7 @@ export class Host {
 				res.writeHead(400).end("empty prompt");
 				return;
 			}
-			await this.submit(prompt);
+			await this.run(prompt);
 			res.writeHead(202).end("{}");
 			return;
 		}

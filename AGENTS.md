@@ -29,9 +29,10 @@ is wrong.
 1. **Information only flows forward.** A context never receives a return
    value and never waits on a successor it emitted. No call/return
    anywhere.
-2. **Emit is the only verb.** All work is created by the `emit` tool in one
+2. **Emit is the only verb.** All work is created by an emission in one
    atomic commit: the successor's conversation, its task, and (for joins)
-   its wait edges. No other code path creates tasks.
+   its wait edges. The model emits through the `emit` tool; the human emits
+   through `key run`. No other code path creates tasks.
 3. **Join is birth, not resume.** A joining task is born waiting on existing
    tasks (`allSettled`) and runs only after they settle. No context stays
    running to await anything; `waitForTask` is never used between contexts.
@@ -57,7 +58,9 @@ is wrong.
   source of truth, not this file.
 - `.env` (gitignored) holds the provider key for the hardcoded model;
   see `.env.example`. Missing is fine until a command needs a model.
-- There is no test suite and no linter.
+- There is no test suite and no linter, and you do not write smoke tests
+  to check yourself. Trust your work the way you trust the user: if it is
+  badly wrong, it will surface in use.
 - All state lives under `.key/` (gitignored); delete it to reset.
 
 ## Scope

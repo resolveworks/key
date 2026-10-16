@@ -238,7 +238,7 @@ async function* stream<T>(url: string, signal?: AbortSignal): AsyncGenerator<T> 
 	}
 }
 
-/** Ask the host to submit a prompt into the standing conversation. */
+/** Ask the host to start a fresh context from the prompt. */
 export async function send(base: string, prompt: string): Promise<void> {
 	const response = await fetch(`${base}/api/run`, { method: "POST", body: prompt });
 	if (!response.ok) throw new Error(`host returned ${response.status}: ${await response.text()}`);
