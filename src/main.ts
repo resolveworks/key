@@ -7,7 +7,7 @@ import { createRegistry, Harness, type TaskGraphNode } from "@earendil-works/pi-
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { GoalDoc, KeySystem, KeyTask } from "./system.ts";
+import { GoalDoc, KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -46,10 +46,17 @@ if (goal !== undefined && goal !== "") {
 	}, context);
 }
 
+// Prompts per context, so the live graph can label nodes instead of dumping IDs.
+const prompts = new Map<string, string>();
+const emitters = new Map<string, string>();
+
 // Terminal answers, printed when a task record settles; the graph drops terminal nodes.
 harness.subscribeCommits((publication) => {
 	for (const change of publication.changes) {
 		if (change.type !== "task" || change.value.kind !== KeyTask.definition.name) continue;
+		const input = change.value.input as KeyTaskInput;
+		prompts.set(String(change.value.id), input.prompt);
+		if (input.emission !== undefined) emitters.set(String(change.value.id), String(input.emission.emitter));
 		const state = change.value.state;
 		if (state.status !== "terminal" && state.status !== "completing") continue;
 		const result = state.outcome.status === "completed" ? state.outcome.result : `(${state.outcome.status})`;
@@ -62,6 +69,8 @@ const watch = await harness.watchTaskGraph(context);
 watch.start(async (graph) => {
 	const live = new Set<string>();
 	for (const [key, node] of Object.entries(graph.tasks)) {
+		// Only contexts are ours; the rest is the model's own tool-call plumbing.
+		if (node.kind !== KeyTask.definition.name) continue;
 		live.add(key);
 		const line = renderNode(node);
 		if (rendered.get(key) === line) continue;
@@ -90,13 +99,17 @@ await harness.close(context);
 
 function renderNode(node: TaskGraphNode): string {
 	const state = node.state;
+	const emitter = emitters.get(String(node.id));
+	const origin = emitter === undefined ? "" : ` from task/${emitter}`;
+	const prompt = prompts.get(String(node.id)) ?? "";
+	const label = prompt === "" ? "" : ` — ${prompt.split("\n")[0]}`;
 	switch (state.status) {
 		case "waiting":
-			return `  task/${node.id} waiting on ${state.on.join(", ")}`;
+			return `  task/${node.id}${origin} waiting on ${state.on.join(", ")}${label}`;
 		case "completing":
-			return `  task/${node.id} completing (${state.outcome})`;
+			return `  task/${node.id}${origin} completing (${state.outcome})${label}`;
 		default:
-			return `  task/${node.id} ${state.status} ${state.phase}`;
+			return `  task/${node.id}${origin} ${state.status} ${state.phase}${label}`;
 	}
 }
 
