@@ -2,12 +2,13 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { createRegistry, Harness, type TaskGraphNode } from "@earendil-works/pi-durable";
+import { AssistantEntry, createRegistry, Harness } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { GoalDoc, KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
+import { GoalDoc, KeySystem } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -46,40 +47,6 @@ if (goal !== undefined && goal !== "") {
 	}, context);
 }
 
-// Prompts per context, so the live graph can label nodes instead of dumping IDs.
-const prompts = new Map<string, string>();
-const emitters = new Map<string, string>();
-
-// Terminal answers, printed when a task record settles; the graph drops terminal nodes.
-harness.subscribeCommits((publication) => {
-	for (const change of publication.changes) {
-		if (change.type !== "task" || change.value.kind !== KeyTask.definition.name) continue;
-		const input = change.value.input as KeyTaskInput;
-		prompts.set(String(change.value.id), input.prompt);
-		if (input.emission !== undefined) emitters.set(String(change.value.id), String(input.emission.emitter));
-		const state = change.value.state;
-		if (state.status !== "terminal" && state.status !== "completing") continue;
-		const result = state.outcome.status === "completed" ? state.outcome.result : `(${state.outcome.status})`;
-		console.log(`\n── task/${change.value.id} ${state.outcome.status} ──\n${String(result)}\n`);
-	}
-});
-
-const rendered = new Map<string, string>();
-const watch = await harness.watchTaskGraph(context);
-watch.start(async (graph) => {
-	const live = new Set<string>();
-	for (const [key, node] of Object.entries(graph.tasks)) {
-		// Only contexts are ours; the rest is the model's own tool-call plumbing.
-		if (node.kind !== KeyTask.definition.name) continue;
-		live.add(key);
-		const line = renderNode(node);
-		if (rendered.get(key) === line) continue;
-		rendered.set(key, line);
-		console.log(line);
-	}
-	for (const key of rendered.keys()) if (!live.has(key)) rendered.delete(key);
-});
-
 harness.resume();
 console.log(`key — model ${provider}/${modelId}, workspace ${workspace}`);
 
@@ -90,28 +57,22 @@ if (prompt === "") {
 	console.error("usage: node src/main.ts <prompt>");
 	process.exitCode = 2;
 } else {
-	await root.commit((tx) => tx.createTask(KeyTask, { prompt }, { ownership: { kind: "conversation" } }), context);
-	await harness.waitForIdle(context);
-}
-
-await watch.stop();
-await harness.close(context);
-
-function renderNode(node: TaskGraphNode): string {
-	const state = node.state;
-	const emitter = emitters.get(String(node.id));
-	const origin = emitter === undefined ? "" : ` from task/${emitter}`;
-	const prompt = prompts.get(String(node.id)) ?? "";
-	const label = prompt === "" ? "" : ` — ${prompt.split("\n")[0]}`;
-	switch (state.status) {
-		case "waiting":
-			return `  task/${node.id}${origin} waiting on ${state.on.join(", ")}${label}`;
-		case "completing":
-			return `  task/${node.id}${origin} completing (${state.outcome})${label}`;
-		default:
-			return `  task/${node.id}${origin} ${state.status} ${state.phase}${label}`;
+	const goalText = (await harness.snapshot(GoalDoc, context))?.text ?? "";
+	const content = goalText === "" ? prompt : `# Goal\n\n${goalText}\n\n---\n\n${prompt}`;
+	const submission = await root.submit({ type: "input", content }, context);
+	const settled = await submission.wait(context);
+	if (settled.status === "done" && settled.type === "input") {
+		const entry = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
+		const message = entry?.model?.[0] as AssistantMessage | undefined;
+		const answer = message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ?? "";
+		console.log(answer);
+	} else {
+		console.error(`unanswered: ${settled.status === "unanswered" ? settled.reason : settled.status}`);
+		process.exitCode = 1;
 	}
 }
+
+await harness.close(context);
 
 async function readPrompt(): Promise<string> {
 	if (!process.stdin.isTTY) {
