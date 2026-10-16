@@ -47,25 +47,21 @@ is wrong.
 ## Setup and commands
 
 - `pnpm install` — deps are registry packages (`@earendil-works/*`);
-  no build step, no codegen.
-- `node src/main.ts` — run the host (Node ≥ 23 strips TypeScript types);
-  it loads a required `.env` from the working directory.
+  no build step, no codegen. Node ≥ 23 runs the TypeScript directly.
+- `pnpm key` runs the host CLI and prints its own usage; treat that as the
+  source of truth, not this file.
 - `.env` (gitignored) supplies `KEY_MODEL="provider/modelId"` and that
-  provider's key (e.g. `DEEPSEEK_API_KEY`).
+  provider's key; see `.env.example`. Missing is fine until a command
+  needs a model.
 - There is no test suite and no linter.
-- Storage and worktrees live under `.key/` (gitignored). Delete `.key/` to
-  reset the system.
+- All state lives under `.key/` (gitignored); delete it to reset.
 
 ## Scope
 
-Build: one host process (open Session on SQLite, `resume()`, standing
-conversation, terminal CLI, live DAG from `watchTaskGraph`); one task kind
-(`key.task`, phases `wait` → `run`, abort handler); the `emit` tool; a
-session-scoped goal document rendered into every prompt; a worktree per
-fresh worker (`.key/worktrees/task-<id>`, branch `task/<id>`, created
-idempotently by the run phase, never cleaned up); per-emission model
-override. Layout is `src/main.ts` (host) and `src/system.ts` (extension) —
-nothing more.
+One host process owns the session and serves the live graph; a dumb client
+renders it. One task kind, one `emit` tool, one goal document rendered
+into every prompt, per-emission model override. Keep the client free of
+state — all of it belongs to the host.
 
 Out — do not build, even if it looks easy: push notifications, phone or
 desktop clients, WebSocket server / auth / remote anything, the proactive
@@ -79,12 +75,10 @@ only, as in the pi repo.
 
 ## Durable notes
 
-The durable package (`~/Projects/pi/packages/durable`) is the source of
-truth; it is experimental and may drift. Verify against `README.md`,
-`docs/spec.md`, and `test/examples/` before inventing mechanism; the mapping
-is in the design doc. Patterns to consult: `22-subagent-foreground`
-(replay-safe tool driving a conversation), `24-child-tasks` (waiting),
-`13-recovery` (crash).
+The durable package is experimental and may drift; verify against its own
+README and examples before inventing mechanism. Consult the pattern
+matching your need — a replay-safe tool driving a conversation, waiting on
+other tasks, crash recovery — rather than trusting memory.
 
 One non-obvious fact: `tx.createTask()` only creates `pending`. "Born
 waiting" is the first phase handler's first commit — `{ status: "waiting",

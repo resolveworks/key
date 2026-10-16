@@ -5,24 +5,19 @@ A spike: **cascading contexts** — a fork/join agent system on
 A proof of concept, not a product.
 
 Information only flows forward; there is no call/return anywhere. The
-canonical design is `~/Documents/Key/design_initial.md`.
+rules that hold in every line of code live in `AGENTS.md`; the long-form
+design is a separate document.
 
 ## Run
 
 ```bash
 pnpm install
+cp .env.example .env   # then fill in the key
+pnpm key serve         # own the session and serve the graph
+pnpm key watch         # in another terminal: draw the live trajectories
+pnpm key run "<prompt>"
 ```
 
-`.env` in the working directory is required; it supplies the worker model
-and its provider key:
-
-```ini
-KEY_MODEL=deepseek/deepseek-flash
-DEEPSEEK_API_KEY=...
-```
-
-```bash
-node src/main.ts
-```
-
-Requires Node ≥ 23 (TypeScript type stripping).
+`pnpm key` with no command prints its own usage — it is the source of
+truth for the CLI. The host reads `.env` from the working directory; a
+missing file is fine until a command needs a model.
