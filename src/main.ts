@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
+import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
@@ -23,28 +23,66 @@ const workspace = process.cwd();
 const dataDirectory = join(workspace, ".key");
 const kind = KeyTask.definition.name;
 
-// A bare prompt is `run`; the named verbs are the CLI.
-const verbs = new Set(["run", "watch", "ls", "jobs", "ps", "help"]);
-const raw = process.argv.slice(2);
-// npm/pnpm userland separators sometimes reach the script verbatim.
-const argv = raw[0] === "--" ? raw.slice(1) : raw;
-const verb = argv[0] !== undefined && verbs.has(argv[0]) ? argv[0] : "run";
-const rest = verb === "run" && !verbs.has(argv[0] ?? "") ? argv : argv.slice(1);
+// The .env is optional: only commands that reach a model need KEY_MODEL.
+try {
+	process.loadEnvFile(join(workspace, ".env"));
+} catch {
+	// Missing is fine until a command asks for a model.
+}
 
-switch (verb) {
-	case "ls":
-	case "jobs":
-	case "ps":
-		await list(rest.includes("--all"));
-		break;
-	case "watch":
-		await live(undefined, false);
-		break;
-	case "help":
-		printHelp();
-		break;
-	default:
-		await live(rest.join(" ").trim(), true);
+const usage = `usage: key <command> [args...]
+
+  run <prompt...>  submit a prompt, then watch the emitted contexts
+  watch            resume and watch live contexts without submitting
+  ls [--all]       list live jobs (--all includes the model's tool plumbing)
+
+  -h, --help       this
+  --               end flags; the rest is a literal prompt
+`;
+
+await main();
+
+async function main(): Promise<void> {
+	let values: { all: boolean; help: boolean };
+	let positionals: string[];
+	try {
+		({ values, positionals } = parseArgs({
+			allowPositionals: true,
+			options: {
+				all: { type: "boolean", default: false },
+				help: { type: "boolean", short: "h", default: false },
+			},
+		}));
+	} catch (error) {
+		return fail(`bad arguments: ${(error as Error).message}`);
+	}
+
+	const [command, ...rest] = positionals;
+	if (values.help || command === undefined) {
+		process.stdout.write(usage);
+		return;
+	}
+
+	const prompt = rest.join(" ").trim();
+	switch (command) {
+		case "run":
+			if (prompt === "") return fail("run needs a prompt");
+			await live(prompt);
+			break;
+		case "watch":
+			await live();
+			break;
+		case "ls":
+			await list(values.all);
+			break;
+		default:
+			fail(`unknown command "${command}"`);
+	}
+}
+
+function fail(message: string): void {
+	process.stderr.write(`key: ${message}\n\n${usage}`);
+	process.exitCode = 1;
 }
 
 /** Live jobs in the session, including the waiting ones. Read-only: it never schedules or runs task code. */
@@ -72,7 +110,7 @@ async function list(all: boolean): Promise<void> {
 }
 
 /** Submit (or, with no prompt, only observe) in the standing conversation while printing emitted contexts as they live. */
-async function live(promptArg: string | undefined, repl: boolean): Promise<void> {
+async function live(prompt?: string): Promise<void> {
 	const { provider, modelId } = readModel();
 	const harness = await openHarness();
 	try {
@@ -119,36 +157,7 @@ async function live(promptArg: string | undefined, repl: boolean): Promise<void>
 		harness.resume();
 		process.stdout.write(`key — model ${provider}/${modelId}, workspace ${workspace}\n`);
 
-		if (promptArg !== undefined && promptArg !== "") {
-			await ask(harness, root, promptArg);
-		} else if (repl && process.stdin.isTTY) {
-			const lines = createInterface({ input: process.stdin, output: process.stdout });
-			let closed = false;
-			lines.on("close", () => {
-				closed = true;
-			});
-			try {
-				for (;;) {
-					let line: string;
-					try {
-						line = (await lines.question("key> ")).trim();
-					} catch {
-						break;
-					}
-					if (line === "/exit" || line === "exit" || line === "quit") break;
-					if (line !== "") {
-						await ask(harness, root, line);
-						await harness.waitForIdle(context);
-					}
-					if (closed) break;
-				}
-			} finally {
-				lines.close();
-			}
-		} else if (repl) {
-			const line = await readStdin();
-			if (line !== "") await ask(harness, root, line);
-		}
+		if (prompt !== undefined) await ask(harness, root, prompt);
 		await harness.waitForIdle(context);
 
 		// Event callbacks run after their commit; let the last ones print.
@@ -215,11 +224,6 @@ async function openHarness(): Promise<Harness> {
 }
 
 function readModel(): { provider: string; modelId: string } {
-	try {
-		process.loadEnvFile(join(workspace, ".env"));
-	} catch {
-		// Only commands that call a model need the file.
-	}
 	const model = process.env.KEY_MODEL ?? "";
 	const slash = model.indexOf("/");
 	if (slash <= 0 || slash === model.length - 1) throw new Error('KEY_MODEL must be "provider/modelId"');
@@ -280,29 +284,4 @@ function originOf(id: number | string, emitters: Map<string, string>): string {
 function labelOf(id: number | string, prompts: Map<string, string>): string {
 	const prompt = prompts.get(String(id));
 	return prompt === undefined || prompt === "" ? "" : ` — ${prompt.split("\n", 1)[0]?.trim() ?? ""}`;
-}
-
-async function readStdin(): Promise<string> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-	return Buffer.concat(chunks).toString("utf8").split("\n")[0]?.trim() ?? "";
-}
-
-function printHelp(): void {
-	process.stdout.write(`key — cascading contexts
-
-usage:
-  key [prompt...]      one-shot prompt, then watch the emitted contexts
-  key run [prompt...]  same, explicit
-  key watch            resume and watch live contexts without submitting
-  key ls [--all]       list live jobs, including waiting ones (--all adds tool plumbing)
-  key help             this
-
-interactive:
-  /exit                leave the conversation
-
-env:
-  KEY_MODEL            provider/modelId used for every context
-  KEY_GOAL             session goal rendered into every context's prompt
-`);
 }
