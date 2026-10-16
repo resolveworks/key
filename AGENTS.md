@@ -15,6 +15,13 @@ hell. The best change is one that deletes lines — refactor with negative
 line counts. If a mechanism is growing, the design is wrong; find the
 smaller shape.
 
+Fail fast, loud, and hard. We are one hacker on one box: trust the user
+and let mistakes surface. Choose honest errors over defensive validation,
+the real path over a fallback, a guard only for states that can actually
+happen. Let what should crash crash. A stack trace is the error message.
+When something is wrong, make it visibly wrong — silence and recovery are
+where bugs hide.
+
 ## Invariants
 
 These hold in every line of code here. If a change breaks one, the change

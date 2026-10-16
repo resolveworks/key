@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { follow, send } from "./client.ts";
+import { open, send } from "./client.ts";
 import { Host } from "./host.ts";
 
 const workspace = process.cwd();
@@ -16,7 +16,7 @@ try {
 const usage = `usage: key <command> [args...]
 
   serve            own the session and serve the graph
-  watch            attach to a running host and draw live trajectories
+  client           attach to a running host: list transcripts, show one, stream the live ones
   run <prompt...>  submit a prompt to a running host
 
   -h, --help       this
@@ -47,8 +47,8 @@ async function main(): Promise<void> {
 		case "serve":
 			await serve();
 			break;
-		case "watch":
-			await follow(base);
+		case "client":
+			await open(base);
 			break;
 		case "run":
 			if (prompt === "") return fail("run needs a prompt");

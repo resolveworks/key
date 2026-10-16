@@ -1,17 +1,27 @@
-// The host: one process owns the Session on SQLite and serves the graph over HTTP+SSE.
-// Clients attach to a snapshot and then follow frames; reconnecting is native.
+// The host: one process owns the Session on SQLite and serves the graph and the transcripts over
+// HTTP+SSE. Clients attach to a snapshot and then follow frames; reconnecting is native.
 import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { createRegistry, Harness, type TaskInspection } from "@earendil-works/pi-durable";
+import {
+	type ConversationId,
+	type ConversationView,
+	createRegistry,
+	type Cursor,
+	Harness,
+	ROOT_CONVERSATION_ID,
+	type TaskGraph,
+	type TaskInspection,
+} from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { GoalDoc, KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
+const SCAN_PAGE_SIZE = 256;
 
 /** One live trajectory the client can render. */
 export type Frame = {
@@ -29,6 +39,16 @@ export type Trajectory = {
 	readonly prompt: string;
 };
 
+/** One line in the transcript picker: a conversation, its owner, and whether it is running. */
+export type Summary = {
+	readonly id: number;
+	/** `standing` for the human's conversation, otherwise `task #N` or `independent`. */
+	readonly owner: string;
+	/** The task prompt, or a name for the standing conversation. */
+	readonly label: string;
+	readonly running: boolean;
+};
+
 export type HostOptions = {
 	readonly workspace: string;
 	readonly dataDirectory: string;
@@ -41,7 +61,10 @@ export class Host {
 	#harness!: Harness;
 	#labels = new Map<string, { prompt: string; from?: number }>();
 	#frame: Frame = { scheduling: "idle", tasks: [], submissions: [] };
+	#summaries: readonly Summary[] = [];
+	#graph: TaskGraph = { tasks: {} };
 	#listeners = new Set<ServerResponse>();
+	#listListeners = new Set<ServerResponse>();
 
 	constructor(options: HostOptions) {
 		this.#options = options;
@@ -63,8 +86,16 @@ export class Host {
 			context,
 		);
 
-		// Labels are not in the graph, so seed the recovered ones and follow commits.
-		for (const task of (await this.#harness.inspect(context)).tasks) this.#record(task.record);
+		// Labels are not in the graph, so recover every key.task's input and then follow commits.
+		await this.#harness.commit(async (tx) => {
+			let cursor: Cursor | undefined;
+			for (;;) {
+				const page = await tx.scanTasks({ kind: KeyTask.definition.name }, SCAN_PAGE_SIZE, cursor);
+				for (const record of page.items) this.#record(record);
+				if (page.next === undefined) break;
+				cursor = page.next;
+			}
+		}, context);
 
 		this.#harness.subscribeCommits((publication) => {
 			for (const change of publication.changes) {
@@ -74,7 +105,10 @@ export class Host {
 
 		await this.#refresh();
 		const watch = await this.#harness.watchTaskGraph(context);
-		watch.start(() => void this.#refresh());
+		watch.start((graph) => {
+			this.#graph = graph;
+			return this.#refresh();
+		});
 	}
 
 	/** Submit a turn into the standing conversation; contexts cascade from it. */
@@ -96,7 +130,7 @@ export class Host {
 		});
 	}
 
-	/** Read the graph and inspections once, then push the frame to every attached client. */
+	/** Read the graph and inspections once, then push both the frame and the transcript list. */
 	async #refresh(): Promise<void> {
 		const { scheduling, tasks, submissions } = await this.#harness.inspect(context);
 		this.#frame = {
@@ -106,8 +140,56 @@ export class Host {
 				.map((task) => this.#trajectory(task)),
 			submissions: submissions.map(({ id, status, conversationId }) => ({ id, status, conversationId })),
 		};
-		const payload = `data: ${JSON.stringify(this.#frame)}\n\n`;
-		for (const listener of this.#listeners) listener.write(payload);
+		this.#summaries = await this.#summarise();
+		broadcast(this.#listeners, this.#frame);
+		broadcast(this.#listListeners, this.#summaries);
+	}
+
+	async #summarise(): Promise<readonly Summary[]> {
+		const conversations = await this.#scanConversations();
+		// A conversation runs while a task it owns, or the task that owns it, is live.
+		const running = new Set<number>();
+		for (const node of Object.values(this.#graph.tasks)) {
+			if (node.state.status === "pending" || node.state.status === "running") {
+				running.add(node.conversationId);
+				for (const owned of node.conversations) running.add(owned);
+			}
+		}
+		return conversations
+			.map(({ id, owner }) => {
+				const label = this.#labels.get(String(owner?.taskId));
+				return {
+					id,
+					owner:
+						id === ROOT_CONVERSATION_ID
+							? "standing"
+							: owner === undefined
+								? "independent"
+								: `task #${owner.taskId}`,
+					label: label?.prompt.split("\n", 1)[0]?.trim() || (id === ROOT_CONVERSATION_ID ? "standing conversation" : ""),
+					running: running.has(id),
+				};
+			})
+			.sort((a, b) => b.id - a.id);
+	}
+
+	async #scanConversations(): Promise<readonly { id: number; owner?: { taskId: number } }[]> {
+		return this.#harness.commit(async (tx) => {
+			const found: { id: number; owner?: { taskId: number } }[] = [];
+			let cursor: Cursor | undefined;
+			for (;;) {
+				const page = await tx.scanConversations({}, SCAN_PAGE_SIZE, cursor);
+				for (const record of page.items) {
+					found.push({
+						id: record.id,
+						...(record.owner === undefined ? {} : { owner: { taskId: record.owner.taskId } }),
+					});
+				}
+				if (page.next === undefined) break;
+				cursor = page.next;
+			}
+			return found;
+		}, context);
 	}
 
 	#trajectory(task: TaskInspection): Trajectory {
@@ -146,7 +228,7 @@ export class Host {
 		const url = new URL(req.url ?? "/", "http://localhost");
 		if (req.method === "GET" && url.pathname === "/") {
 			res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(
-				"key host\n\n  GET  /api/graph   snapshot as JSON\n  GET  /api/stream  snapshot, then frames (SSE)\n  POST /api/run     body: the prompt\n",
+				"key host\n\n  GET  /api/graph             snapshot as JSON\n  GET  /api/stream            graph snapshot, then frames (SSE)\n  GET  /api/conversations     transcripts, then changes (SSE)\n  GET  /api/conversations/:id one transcript, then changes (SSE)\n  POST /api/run               body: the prompt\n",
 			);
 			return;
 		}
@@ -155,14 +237,16 @@ export class Host {
 			return;
 		}
 		if (req.method === "GET" && url.pathname === "/api/stream") {
-			res.writeHead(200, {
-				"content-type": "text/event-stream",
-				"cache-control": "no-cache",
-				connection: "keep-alive",
-			});
-			res.write(`data: ${JSON.stringify(this.#frame)}\n\n`);
-			this.#listeners.add(res);
-			req.on("close", () => this.#listeners.delete(res));
+			this.#stream(res, this.#frame, this.#listeners);
+			return;
+		}
+		if (req.method === "GET" && url.pathname === "/api/conversations") {
+			this.#stream(res, this.#summaries, this.#listListeners);
+			return;
+		}
+		const transcript = /^\/api\/conversations\/(\d+)$/.exec(url.pathname);
+		if (req.method === "GET" && transcript !== null) {
+			await this.#transcript(Number(transcript[1]), req, res);
 			return;
 		}
 		if (req.method === "POST" && url.pathname === "/api/run") {
@@ -178,10 +262,42 @@ export class Host {
 		res.writeHead(404).end("not found");
 	}
 
+	/** Attach one transcript: the current view, then every later revision through durable's own watch. */
+	async #transcript(id: number, req: IncomingMessage, res: ServerResponse): Promise<void> {
+		const conversation = await this.#harness.conversation(id as ConversationId, context);
+		if (conversation === undefined) {
+			res.writeHead(404).end("no such conversation");
+			return;
+		}
+		res.writeHead(200, sseHeaders());
+		const watch = await conversation.watch(context);
+		res.write(`data: ${JSON.stringify(watch.value)}\n\n`);
+		watch.start(async (view: ConversationView) => {
+			res.write(`data: ${JSON.stringify(view)}\n\n`);
+		});
+		req.on("close", () => void watch.stop());
+	}
+
+	#stream(res: ServerResponse, snapshot: unknown, listeners: Set<ServerResponse>): void {
+		res.writeHead(200, sseHeaders());
+		res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+		listeners.add(res);
+		res.on("close", () => listeners.delete(res));
+	}
+
 	async close(): Promise<void> {
-		for (const listener of this.#listeners) listener.end();
+		for (const listener of [...this.#listeners, ...this.#listListeners]) listener.end();
 		await this.#harness.close(context);
 	}
+}
+
+function sseHeaders(): Record<string, string> {
+	return { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" };
+}
+
+function broadcast(listeners: Set<ServerResponse>, value: unknown): void {
+	const payload = `data: ${JSON.stringify(value)}\n\n`;
+	for (const listener of listeners) listener.write(payload);
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
