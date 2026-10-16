@@ -33,7 +33,6 @@ try {
 const usage = `usage: key <command> [args...]
 
   run <prompt...>  submit a prompt, then watch the emitted contexts
-  watch            resume and watch live contexts without submitting
   ls [--all]       list live jobs (--all includes the model's tool plumbing)
 
   -h, --help       this
@@ -68,9 +67,6 @@ async function main(): Promise<void> {
 		case "run":
 			if (prompt === "") return fail("run needs a prompt");
 			await live(prompt);
-			break;
-		case "watch":
-			await live();
 			break;
 		case "ls":
 			await list(values.all);
@@ -109,8 +105,8 @@ async function list(all: boolean): Promise<void> {
 	}
 }
 
-/** Submit (or, with no prompt, only observe) in the standing conversation while printing emitted contexts as they live. */
-async function live(prompt?: string): Promise<void> {
+/** Submit in the standing conversation while printing emitted contexts as they live. */
+async function live(prompt: string): Promise<void> {
 	const { provider, modelId } = readModel();
 	const harness = await openHarness();
 	try {
@@ -157,7 +153,7 @@ async function live(prompt?: string): Promise<void> {
 		harness.resume();
 		process.stdout.write(`key — model ${provider}/${modelId}, workspace ${workspace}\n`);
 
-		if (prompt !== undefined) await ask(harness, root, prompt);
+		await ask(harness, root, prompt);
 		await harness.waitForIdle(context);
 
 		// Event callbacks run after their commit; let the last ones print.
