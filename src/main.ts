@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { AssistantEntry, createRegistry, Harness } from "@earendil-works/pi-durable";
+import { AssistantEntry, createRegistry, Harness, watchEvents } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -59,13 +59,36 @@ if (prompt === "") {
 } else {
 	const goalText = (await harness.snapshot(GoalDoc, context))?.text ?? "";
 	const content = goalText === "" ? prompt : `# Goal\n\n${goalText}\n\n---\n\n${prompt}`;
+
+	// Attach before submitting so no early deltas are missed.
+	const stream = await watchEvents(harness, root.id, context);
+	let streamed = false;
+	stream.start(async (events) => {
+		for (const event of events) {
+			if (event.type !== "message_update") continue;
+			for (const change of event.changes) {
+				if (change.type !== "text_delta") continue;
+				streamed = true;
+				process.stdout.write(change.delta);
+			}
+		}
+	});
+
 	const submission = await root.submit({ type: "input", content }, context);
 	const settled = await submission.wait(context);
+	// Event callbacks run after their commit; let the last ones print.
+	await harness.waitForIdle(context);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	await stream.stop();
+
 	if (settled.status === "done" && settled.type === "input") {
-		const entry = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
-		const message = entry?.model?.[0] as AssistantMessage | undefined;
-		const answer = message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ?? "";
-		console.log(answer);
+		if (!streamed) {
+			const entry = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
+			const message = entry?.model?.[0] as AssistantMessage | undefined;
+			const answer = message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ?? "";
+			process.stdout.write(answer);
+		}
+		process.stdout.write("\n");
 	} else {
 		console.error(`unanswered: ${settled.status === "unanswered" ? settled.reason : settled.status}`);
 		process.exitCode = 1;
