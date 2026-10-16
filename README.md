@@ -11,7 +11,17 @@ canonical design is `~/Documents/Key/design_initial.md`.
 
 ```bash
 pnpm install
-export KEY_MODEL="deepseek/deepseek-flash"
+```
+
+`.env` in the working directory is required; it supplies the worker model
+and its provider key:
+
+```ini
+KEY_MODEL=deepseek/deepseek-flash
+DEEPSEEK_API_KEY=...
+```
+
+```bash
 node src/main.ts
 ```
 

@@ -37,9 +37,10 @@ is wrong.
 
 - `pnpm install` — deps are registry packages (`@earendil-works/*`);
   no build step, no codegen.
-- `node src/main.ts` — run the host (Node ≥ 23 strips TypeScript types).
-- `KEY_MODEL="provider/modelId"` selects the worker model; provider
-  credentials work as in `~/Projects/pi/scripts/issues`.
+- `node src/main.ts` — run the host (Node ≥ 23 strips TypeScript types);
+  it loads a required `.env` from the working directory.
+- `.env` (gitignored) supplies `KEY_MODEL="provider/modelId"` and that
+  provider's key (e.g. `DEEPSEEK_API_KEY`).
 - There is no test suite and no linter.
 - Storage and worktrees live under `.key/` (gitignored). Delete `.key/` to
   reset the system.

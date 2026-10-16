@@ -11,13 +11,15 @@ import { GoalDoc, KeySystem, KeyTask } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
 
+const workspace = process.cwd();
+process.loadEnvFile(join(workspace, ".env"));
+
 const model = process.env.KEY_MODEL ?? "";
 const slash = model.indexOf("/");
 if (slash <= 0 || slash === model.length - 1) throw new Error('KEY_MODEL must be "provider/modelId"');
 const provider = model.slice(0, slash);
 const modelId = model.slice(slash + 1);
 
-const workspace = process.cwd();
 const dataDirectory = join(workspace, ".key");
 mkdirSync(dataDirectory, { recursive: true });
 
