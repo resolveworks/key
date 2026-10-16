@@ -18,10 +18,16 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { GoalDoc, KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
+import { KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
+
+/** One box, one host: these are constants, not configuration. */
+export const PORT = 7317;
+const workspace = process.cwd();
+const dataDirectory = join(workspace, ".key");
+const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
 
 /** One live trajectory the client can render. */
 export type Frame = {
@@ -49,38 +55,26 @@ export type Summary = {
 	readonly running: boolean;
 };
 
-export type HostOptions = {
-	readonly workspace: string;
-	readonly dataDirectory: string;
-	readonly port: number;
-	readonly model: () => { readonly provider: string; readonly modelId: string };
-};
-
 export class Host {
-	readonly #options: HostOptions;
 	#harness!: Harness;
-	#labels = new Map<string, { prompt: string; from?: number }>();
+	#prompts = new Map<number, string>();
 	#frame: Frame = { scheduling: "idle", tasks: [], submissions: [] };
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
 	#listeners = new Set<ServerResponse>();
 	#listListeners = new Set<ServerResponse>();
 
-	constructor(options: HostOptions) {
-		this.#options = options;
-	}
-
 	async open(): Promise<void> {
-		mkdirSync(this.#options.dataDirectory, { recursive: true });
+		mkdirSync(dataDirectory, { recursive: true });
 		const registry = createRegistry();
 		registry.install(CodingTools);
 		registry.install(KeySystem);
 		this.#harness = await Harness.open(
-			await openNodeSqliteStorage(join(this.#options.dataDirectory, "session.sqlite")),
+			await openNodeSqliteStorage(join(dataDirectory, "session.sqlite")),
 			{
 				models: builtinModels(),
 				registry,
-				env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? this.#options.workspace }),
+				env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? workspace }),
 				onReport: (error) => console.error("key:", error),
 			},
 			context,
@@ -114,20 +108,15 @@ export class Host {
 	/** Submit a turn into the standing conversation; contexts cascade from it. */
 	async submit(prompt: string): Promise<void> {
 		const root = await this.#harness.root(context, {
-			agent: { model: this.#options.model(), cwd: this.#options.workspace },
+			agent: { model: MODEL, cwd: workspace },
 		});
-		const goal = (await this.#harness.snapshot(GoalDoc, context))?.text ?? "";
-		const content = goal === "" ? prompt : `# Goal\n\n${goal}\n\n---\n\n${prompt}`;
-		await root.submit({ type: "input", content }, context);
+		await root.submit({ type: "input", content: prompt }, context);
 	}
 
 	#record(record: { readonly id: number; readonly input: unknown }): void {
 		const input = record.input as KeyTaskInput | undefined;
 		if (input?.prompt === undefined) return;
-		this.#labels.set(String(record.id), {
-			prompt: input.prompt,
-			...(input.emission === undefined ? {} : { from: input.emission.emitter }),
-		});
+		this.#prompts.set(record.id, input.prompt);
 	}
 
 	/** Read the graph and inspections once, then push both the frame and the transcript list. */
@@ -157,7 +146,7 @@ export class Host {
 		}
 		return conversations
 			.map(({ id, owner }) => {
-				const label = this.#labels.get(String(owner?.taskId));
+				const prompt = owner === undefined ? undefined : this.#prompts.get(owner.taskId);
 				return {
 					id,
 					owner:
@@ -166,7 +155,7 @@ export class Host {
 							: owner === undefined
 								? "independent"
 								: `task #${owner.taskId}`,
-					label: label?.prompt.split("\n", 1)[0]?.trim() || (id === ROOT_CONVERSATION_ID ? "standing conversation" : ""),
+					label: prompt?.split("\n", 1)[0]?.trim() || (id === ROOT_CONVERSATION_ID ? "standing conversation" : ""),
 					running: running.has(id),
 				};
 			})
@@ -193,7 +182,7 @@ export class Host {
 	}
 
 	#trajectory(task: TaskInspection): Trajectory {
-		const label = this.#labels.get(String(task.record.id));
+		const input = task.record.input as KeyTaskInput | undefined;
 		const state = task.state;
 		const status =
 			state.kind === "waiting"
@@ -204,9 +193,9 @@ export class Host {
 		return {
 			id: task.record.id,
 			kind: task.record.kind,
-			...(label?.from === undefined ? {} : { from: label.from }),
+			...(input?.emission === undefined ? {} : { from: input.emission.emitter }),
 			status,
-			prompt: label?.prompt ?? "",
+			prompt: input?.prompt ?? "",
 		};
 	}
 
@@ -217,10 +206,9 @@ export class Host {
 				if (!res.headersSent) res.writeHead(500).end(String(error));
 			});
 		});
-		const { port } = this.#options;
-		server.listen(port, "127.0.0.1");
+		server.listen(PORT, "127.0.0.1");
 		await new Promise((resolve) => server.once("listening", resolve));
-		process.stdout.write(`key host on http://127.0.0.1:${port}\n`);
+		process.stdout.write(`key host on http://127.0.0.1:${PORT}\n`);
 		this.#harness.resume();
 	}
 

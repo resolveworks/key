@@ -37,10 +37,9 @@ is wrong.
    running to await anything; `waitForTask` is never used between contexts.
 4. **Acyclic by construction.** Wait edges may only name tasks minted in the
    same emission commit. Never add a way to wait on the future.
-5. **Contexts are disposable.** Every context starts fresh with a prompt
-   rendered from the goal document plus its task prompt (plus upstream refs
-   for joins). Transcripts are audit logs; only the human's standing
-   conversation persists.
+5. **Contexts are disposable.** Every context starts fresh with its task
+   prompt (plus upstream refs for joins). Transcripts are audit logs; only
+   the human's standing conversation persists.
 6. **Three channels only**: prompts (control), git refs (data), the task
    graph (causality). No side channels, no shared in-memory state between
    contexts.
@@ -56,18 +55,16 @@ is wrong.
   no build step, no codegen. Node ≥ 23 runs the TypeScript directly.
 - `pnpm key` runs the host CLI and prints its own usage; treat that as the
   source of truth, not this file.
-- `.env` (gitignored) supplies `KEY_MODEL="provider/modelId"` and that
-  provider's key; see `.env.example`. Missing is fine until a command
-  needs a model.
+- `.env` (gitignored) holds the provider key for the hardcoded model;
+  see `.env.example`. Missing is fine until a command needs a model.
 - There is no test suite and no linter.
 - All state lives under `.key/` (gitignored); delete it to reset.
 
 ## Scope
 
 One host process owns the session and serves the live graph; a dumb client
-renders it. One task kind, one `emit` tool, one goal document rendered
-into every prompt, per-emission model override. Keep the client free of
-state — all of it belongs to the host.
+renders it. One task kind, one `emit` tool. Keep the client free of state
+— all of it belongs to the host.
 
 Out — do not build, even if it looks easy: push notifications, phone or
 desktop clients, WebSocket server / auth / remote anything, the proactive

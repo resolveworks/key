@@ -1,17 +1,17 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { open, send } from "./client.ts";
-import { Host } from "./host.ts";
+import { Host, PORT } from "./host.ts";
 
 const workspace = process.cwd();
-const dataDirectory = join(workspace, ".key");
-const base = `http://127.0.0.1:${process.env.KEY_PORT ?? 7317}`;
 
 try {
 	process.loadEnvFile(join(workspace, ".env"));
 } catch {
 	// Missing is fine until a command asks for a model.
 }
+
+const base = `http://127.0.0.1:${PORT}`;
 
 const usage = `usage: key <command> [args...]
 
@@ -60,9 +60,7 @@ async function main(): Promise<void> {
 }
 
 async function serve(): Promise<void> {
-	const port = Number(process.env.KEY_PORT ?? 7317);
-	const model = readModel;
-	const host = new Host({ workspace, dataDirectory, port, model });
+	const host = new Host();
 	await host.open();
 	await host.listen();
 	for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -73,11 +71,4 @@ async function serve(): Promise<void> {
 function fail(message: string): void {
 	process.stderr.write(`key: ${message}\n\n${usage}`);
 	process.exitCode = 1;
-}
-
-function readModel(): { provider: string; modelId: string } {
-	const model = process.env.KEY_MODEL ?? "";
-	const slash = model.indexOf("/");
-	if (slash <= 0 || slash === model.length - 1) throw new Error('KEY_MODEL must be "provider/modelId"');
-	return { provider: model.slice(0, slash), modelId: model.slice(slash + 1) };
 }

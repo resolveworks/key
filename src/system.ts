@@ -4,21 +4,12 @@ import {
 	AssistantEntry,
 	type ConversationId,
 	type Cursor,
-	defineDoc,
 	defineExtension,
 	defineTask,
 	defineTool,
 	ROOT_CONVERSATION_ID,
 	type TaskId,
 } from "@earendil-works/pi-durable";
-
-/** Session-scoped statement of what the project is; rendered into every context's prompt. */
-export const GoalDoc = defineDoc({
-	kind: "key.goal",
-	version: 1,
-	scope: "session",
-	initial: () => ({ text: "" }),
-});
 
 export type KeyTaskInput = {
 	readonly prompt: string;
@@ -57,10 +48,8 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			const handle = await runtime.conversation(conversationId, context);
 			if (handle === undefined) throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
 
-			const goal = (await runtime.snapshot(GoalDoc, context))?.text ?? "";
-			const content = goal === "" ? task.input.prompt : `# Goal\n\n${goal}\n\n---\n\n${task.input.prompt}`;
 			const submission = await handle.submit(
-				{ type: "input", content, requestId: `key.task:${task.id}` },
+				{ type: "input", content: task.input.prompt, requestId: `key.task:${task.id}` },
 				context,
 			);
 			const settled = await submission.wait(context);

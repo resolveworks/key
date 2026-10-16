@@ -206,7 +206,11 @@ function oneLine(value: unknown): string {
 function watchTranscript(base: string, id: number, onView: (view: ConversationView) => void): { readonly stop: () => void } {
 	const abort = new AbortController();
 	void (async () => {
-		for await (const view of stream<ConversationView>(`${base}/api/conversations/${id}`, abort.signal)) onView(view);
+		try {
+			for await (const view of stream<ConversationView>(`${base}/api/conversations/${id}`, abort.signal)) onView(view);
+		} catch (error) {
+			if (!abort.signal.aborted) throw error;
+		}
 	})();
 	return { stop: () => abort.abort() };
 }
