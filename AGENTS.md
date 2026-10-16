@@ -4,6 +4,17 @@ Guidance for coding agents working in this repo. Read `README.md` and the
 canonical design (`~/Documents/Key/design_initial.md`) before your first
 change.
 
+## Spirit
+
+Fast-moving, experimental, always current. This is an Arch Linux hacker's
+project, not a product. We lean into frameworks and love defaults: reach
+for what the platform and our deps already give us before writing our own.
+
+Elegant, clean, tiger-style code. Tech debt is hell; cruft and hacks are
+hell. The best change is one that deletes lines — refactor with negative
+line counts. If a mechanism is growing, the design is wrong; find the
+smaller shape.
+
 ## Invariants
 
 These hold in every line of code here. If a change breaks one, the change
