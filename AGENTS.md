@@ -35,14 +35,12 @@ is wrong.
 
 ## Setup and commands
 
-- `pnpm install` — deps are `file:` links into `~/Projects/pi/packages/*`;
+- `pnpm install` — deps are registry packages (`@earendil-works/*`);
   no build step, no codegen.
-- `node --conditions=source src/main.ts` — run the host (Node ≥ 23; the
-  `source` condition loads the pi packages' TypeScript directly).
+- `node src/main.ts` — run the host (Node ≥ 23 strips TypeScript types).
 - `KEY_MODEL="provider/modelId"` selects the worker model; provider
   credentials work as in `~/Projects/pi/scripts/issues`.
-- There is no test suite and no linter. The demo in `demo.md` is the check:
-  run it, including the kill-9 restart, before declaring work done.
+- There is no test suite and no linter.
 - Storage and worktrees live under `.key/` (gitignored). Delete `.key/` to
   reset the system.
 
@@ -54,8 +52,8 @@ conversation, terminal CLI, live DAG from `watchTaskGraph`); one task kind
 session-scoped goal document rendered into every prompt; a worktree per
 fresh worker (`.key/worktrees/task-<id>`, branch `task/<id>`, created
 idempotently by the run phase, never cleaned up); per-emission model
-override. Layout is `src/main.ts` (host), `src/system.ts` (extension),
-`demo.md` — nothing more unless the demo demands it.
+override. Layout is `src/main.ts` (host) and `src/system.ts` (extension) —
+nothing more.
 
 Out — do not build, even if it looks easy: push notifications, phone or
 desktop clients, WebSocket server / auth / remote anything, the proactive
