@@ -14,23 +14,19 @@ import { diff, markdown, style } from "./theme.ts";
 
 /** Collapsed tool output shows this many lines; pi's preview depth for a shell. */
 const PREVIEW_LINES = 5;
-/** pi insets the transcript from the terminal edge, and tool boxes one further step. */
-const MARGIN = 1;
-const TOOL_MARGIN = 1;
 
 /** A view as the components that draw it: settled entries, then the live generation and its tools. */
 export function transcript(view: ConversationView): readonly Component[] {
-	const blocks: Block[] = [];
+	const blocks: Component[] = [];
 	const calls = callIndex(view);
 	for (const entry of view.entries) blocks.push(...entryBlocks(entry, calls));
 	const live = view.docs["pi.live"] as LiveState | undefined;
 	if (live?.generation?.message !== undefined) {
 		blocks.push(...assistantBlocks(live.generation.message as AssistantMessage, calls, true));
 	}
-	for (const slot of live?.tools ?? [])
-		blocks.push({ component: toolBox(slot), margin: TOOL_MARGIN });
+	for (const slot of live?.tools ?? []) blocks.push(toolBox(slot));
 	if (live?.generation === undefined && (live?.tools ?? []).length === 0 && blocks.length === 0) {
-		blocks.push({ component: new Text(style.dim("  empty transcript"), 0, 0), margin: MARGIN });
+		blocks.push(new Text(style.dim("empty transcript"), 1, 0));
 	}
 	return layout(blocks);
 }
@@ -58,27 +54,17 @@ function messagesOf(view: ConversationView): readonly Message[] {
 	);
 }
 
-type Block = { readonly component: Component; readonly margin: number };
-
-function layout(blocks: readonly Block[]): readonly Component[] {
+/** pi separates turns with a blank line; each component supplies its own gutter, so nothing is inset here. */
+function layout(blocks: readonly Component[]): readonly Component[] {
 	const rows: Component[] = [];
 	blocks.forEach((block, index) => {
 		if (index > 0) rows.push(new Spacer(1));
-		rows.push(inset(block.component, block.margin));
+		rows.push(block);
 	});
 	return rows;
 }
 
-/** A component drawn inside a left margin, so the wrapped width follows the margin. */
-function inset(component: Component, margin: number): Component {
-	return {
-		render: (width) =>
-			component.render(width - 2 * margin).map((line) => " ".repeat(margin) + line),
-		invalidate: () => component.invalidate(),
-	};
-}
-
-function entryBlocks(entry: EntryRecord, calls: Calls): readonly Block[] {
+function entryBlocks(entry: EntryRecord, calls: Calls): readonly Component[] {
 	switch (entry.kind) {
 		case "pi.user":
 			return (entry.model ?? []).flatMap((message) =>
@@ -90,9 +76,7 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Block[] {
 			);
 		case "pi.tool-result":
 			return (entry.model ?? []).flatMap((message) =>
-				message.role === "toolResult"
-					? [{ component: toolResultBox(message, calls), margin: TOOL_MARGIN }]
-					: [],
+				message.role === "toolResult" ? [toolResultBox(message, calls)] : [],
 			);
 		case "pi.reset":
 			return [note("── context reset ──")];
@@ -104,15 +88,10 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Block[] {
 }
 
 /** The human's turn: a full-width box, the way pi draws a user message. */
-function userBlocks(message: Message): readonly Block[] {
+function userBlocks(message: Message): readonly Component[] {
 	const text = message.role === "user" ? textOf(message.content).trim() : "";
 	if (text === "") return [];
-	return [
-		{
-			component: new Markdown(text, 1, 1, markdown, { color: style.text, bgColor: style.userBg }),
-			margin: 0,
-		},
-	];
+	return [new Markdown(text, 1, 1, markdown, { color: style.text, bgColor: style.userBg })];
 }
 
 /** Assistant turns: text as markdown, thinking in italics above it. Tool calls get no box of their own. */
@@ -120,18 +99,17 @@ function assistantBlocks(
 	message: AssistantMessage,
 	calls: Calls,
 	streaming = false,
-): readonly Block[] {
-	const blocks: Block[] = [];
+): readonly Component[] {
+	const blocks: Component[] = [];
 	let thinking: string[] = [];
 	const flush = (): void => {
 		if (thinking.length === 0) return;
-		blocks.push({
-			component: new Markdown(thinking.join("\n\n"), 1, 0, markdown, {
+		blocks.push(
+			new Markdown(thinking.join("\n\n"), 1, 0, markdown, {
 				color: style.thinking,
 				italic: true,
 			}),
-			margin: MARGIN,
-		});
+		);
 		thinking = [];
 	};
 	for (const block of message.content) {
@@ -139,26 +117,20 @@ function assistantBlocks(
 			if (block.thinking.trim() !== "") thinking.push(block.thinking.trim());
 		} else if (block.type === "text") {
 			flush();
-			if (block.text.trim() !== "") {
-				blocks.push({ component: new Markdown(block.text.trim(), 1, 0, markdown), margin: MARGIN });
-			}
+			if (block.text.trim() !== "") blocks.push(new Markdown(block.text.trim(), 1, 0, markdown));
 		}
 	}
 	flush();
 	if (streaming && message.content.length === 0) {
-		blocks.push({ component: new Text(style.dim("  …"), 0, 0), margin: MARGIN });
+		blocks.push(new Text(style.dim("…"), 1, 0));
 	}
 	// A live call has no result yet: draw it in its running box so the transcript shows the work.
 	for (const block of message.content) {
 		if (block.type !== "toolCall" || calls.has(block.id)) continue;
-		blocks.push({
-			component: toolBox({ name: block.name, status: "running", args: block.arguments }),
-			margin: TOOL_MARGIN,
-		});
+		blocks.push(toolBox({ name: block.name, status: "running", args: block.arguments }));
 	}
 	const failure = stopReasonText(message);
-	if (failure !== "")
-		blocks.push({ component: new Text(style.error(failure), 1, 0), margin: MARGIN });
+	if (failure !== "") blocks.push(new Text(style.error(failure), 1, 0));
 	return blocks;
 }
 
@@ -276,8 +248,8 @@ function renderDiff(patch: string): string {
 		.join("\n");
 }
 
-function note(text: string): Block {
-	return { component: new Text(style.dim(text), 1, 0), margin: MARGIN };
+function note(text: string): Component {
+	return new Text(style.dim(text), 1, 0);
 }
 
 function textOf(
