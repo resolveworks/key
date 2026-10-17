@@ -80,9 +80,11 @@ export async function open(base: string): Promise<void> {
 		body.clear();
 		const list = makeList(summaries);
 		list.onSelect = (item) => showTranscript(Number(item.value));
+		const back = current === undefined ? showNew : () => showTranscript(current as number);
+		list.onCancel = back;
 		body.addChild(list);
 		tui.setFocus(list);
-		footer.setText(dim("  ↑/↓ select · enter open · ctrl+c quit"));
+		footer.setText(dim("  ↑/↓ select · enter open · esc back · ctrl+c quit"));
 		tui.requestRender();
 	};
 
