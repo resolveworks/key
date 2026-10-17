@@ -92,7 +92,7 @@ export async function open(base: string): Promise<void> {
 		list.onCancel = back;
 		body.addChild(list);
 		tui.setFocus(list);
-		footer.setText(style.muted("↑/↓ select · enter open · esc back · ctrl+c quit"));
+		footer.setText(style.muted("↑/↓ select · enter open · esc back · ctrl+c/d quit"));
 		tui.requestRender();
 	};
 
@@ -161,7 +161,7 @@ export async function open(base: string): Promise<void> {
 			prompt.setText("");
 			body.clear();
 			body.addChild(new Text(style.dim("starting trajectory…"), 1, 0));
-			footer.setText(style.muted("starting · ctrl+c quit"));
+			footer.setText(style.muted("starting · ctrl+c/d quit"));
 			tui.requestRender();
 			update();
 		} finally {
@@ -182,8 +182,21 @@ export async function open(base: string): Promise<void> {
 		void start(text);
 	};
 
+	// pi's exit convention: ctrl+c clears the prompt and quits on a second press; ctrl+d quits on
+	// an empty prompt. With text in the prompt ctrl+d falls through to delete-forward.
+	let lastCtrlC = 0;
 	tui.addInputListener((data) => {
 		if (matchesKey(data, "ctrl+c")) {
+			const now = Date.now();
+			if (now - lastCtrlC < 500) quit();
+			else {
+				lastCtrlC = now;
+				prompt.setText("");
+				tui.requestRender();
+			}
+			return { consume: true };
+		}
+		if (matchesKey(data, "ctrl+d") && prompt.getText() === "") {
 			quit();
 			return { consume: true };
 		}
