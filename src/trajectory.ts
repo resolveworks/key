@@ -10,7 +10,6 @@ import type {
 	ToolSlot,
 } from "@earendil-works/pi-durable";
 import { Box, type Component, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { ContextEntry } from "./system.ts";
 import { diff, markdown, style } from "./theme.ts";
 
 /** Collapsed tool output shows this many lines; pi's preview depth for a shell. */
@@ -81,7 +80,6 @@ function inset(component: Component, margin: number): Component {
 
 function entryBlocks(entry: EntryRecord, calls: Calls): readonly Block[] {
 	switch (entry.kind) {
-		case ContextEntry.kind:
 		case "pi.user":
 			return (entry.model ?? []).flatMap((message) =>
 				message.role === "user" ? userBlocks(message) : [],
