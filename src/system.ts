@@ -22,8 +22,6 @@ export type KeyTaskInput = {
 	readonly emission?: { readonly emitter: TaskId; readonly call: string };
 	/** This is a join: wait on these worker leaves, then run with their results folded into the prompt. */
 	readonly on?: readonly TaskId<string>[];
-	/** The line drained: a terminal leaf addressed to the human. Runs no model. */
-	readonly human?: true;
 };
 
 type KeyTaskState =
@@ -32,8 +30,8 @@ type KeyTaskState =
 
 /**
  * One context: a prompt plus the conversation it runs in. A context emits worker leaves and goes
- * terminal; at terminal it mints one successor — the join over the workers it emitted, or the human
- * when a join drains — built from the durable emit record. Nothing returns to it.
+ * terminal; at terminal it mints one successor — the join over the workers it emitted — built from
+ * the durable emit record. Nothing returns to it.
  */
 export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 	name: "key.task",
@@ -53,18 +51,6 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "run" } }), context);
 		},
 		run: async (task, runtime, context) => {
-			// The human handoff is a terminal leaf: no conversation, no model turn.
-			if (task.input.human === true) {
-				await runtime.commit(
-					() => ({
-						status: "terminal",
-						outcome: { status: "completed", result: task.input.prompt },
-					}),
-					context,
-				);
-				return;
-			}
-
 			let conversationId = task.state.checkpoint.conversationId ?? task.input.conversationId;
 			if (conversationId === undefined) {
 				// Save the intent before acting: a crash after the submit reacquires this same conversation.
@@ -125,15 +111,8 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 						{ prompt: result, on: workers },
 						{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
 					);
-				} else if (task.input.on !== undefined && task.input.on.length > 0) {
-					// A join with nothing left to delegate: no more work, so hand the last turn to the human.
-					await tx.createTask(
-						KeyTask,
-						{ prompt: result, human: true },
-						{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
-					);
 				}
-				// A worker with nothing to emit is simply done; the orchestrator that emitted it holds its join.
+				// A context with nothing to emit is simply done; whoever emitted it holds its join.
 				return { status: "terminal", outcome: { status: "completed", result } };
 			}, context);
 		},
