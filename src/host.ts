@@ -150,13 +150,11 @@ export class Host {
 
 	async #summarise(): Promise<readonly Summary[]> {
 		const conversations = await this.#scanConversations();
-		// A conversation runs while a live task belongs to it or owns it.
+		// The graph holds live tasks only; a conversation runs while one belongs to it or owns it.
 		const running = new Set<number>();
 		for (const node of Object.values(this.#graph.tasks)) {
-			if (node.state.status === "pending" || node.state.status === "running") {
-				running.add(node.conversationId);
-				for (const owned of node.conversations) running.add(owned);
-			}
+			running.add(node.conversationId);
+			for (const owned of node.conversations) running.add(owned);
 		}
 		// A child conversation is labelled by the task that forked it; a top-level one by its first context.
 		const summaries: Summary[] = [];
