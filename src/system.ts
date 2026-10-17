@@ -1,9 +1,11 @@
 import { Type } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
+	configure,
 	defineExtension,
 	defineTask,
 	defineTool,
+	section,
 	type TaskId,
 } from "@earendil-works/pi-durable";
 
@@ -12,6 +14,8 @@ export type KeyTaskInput = {
 	/** Continue this existing conversation instead of creating one. */
 	readonly conversationId?: ConversationId;
 	readonly on?: readonly TaskId<string>[];
+	/** Set for a context a parent emitted: it runs without emit of its own. */
+	readonly child?: true;
 };
 
 type KeyTaskState =
@@ -48,6 +52,9 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					conversationId = (
 						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
 					).id;
+					// A child inherits its owner's agent, emit included; emitting is the root's alone.
+					if (task.input.child === true)
+						await configure(tx, conversationId, { extensions: { remove: [KeySystem] } });
 					return { status: "running", checkpoint: { phase: "run", conversationId } };
 				}, context);
 			}
@@ -111,7 +118,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					children.push(
 						await tx.createTask(
 							KeyTask,
-							{ prompt: childPrompt },
+							{ prompt: childPrompt, child: true },
 							{
 								ownership: { kind: "conversation" },
 								conversationId,
@@ -158,6 +165,15 @@ export const Emit = defineTool({
 
 export const KeySystem = defineExtension({
 	name: "key",
+	// Installed after the coding tools, so the framing renders ahead of project context. Untagged like pi's.
+	sections: [
+		section(
+			"preamble",
+			() =>
+				"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+			{ tag: false },
+		),
+	],
 	tasks: [KeyTask],
 	tools: [Emit],
 });
