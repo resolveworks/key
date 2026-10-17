@@ -1,5 +1,4 @@
-// The host: one process owns the Session on SQLite and serves the graph and the transcripts over
-// HTTP+SSE. Clients attach to a snapshot and then follow frames; reconnecting is native.
+// The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
 import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -65,7 +64,7 @@ export class Host {
 			context,
 		);
 
-		// Labels are not in the graph, so recover every key.task's input and then follow commits.
+		// Prompts are not in the graph, so recover every key.task's input and then follow commits.
 		await this.#harness.commit(async (tx) => {
 			let cursor: Cursor | undefined;
 			for (;;) {
@@ -91,9 +90,9 @@ export class Host {
 	}
 
 	/**
-	 * The human emits: one fresh context for the prompt, in one commit. The root conversation is
-	 * reserved — it owns top-level tasks and carries the agent every context copies, and no turn is
-	 * ever submitted to it.
+	 * Start a trajectory: one fresh context, in one commit, in a new conversation. The task is owned by
+	 * the root conversation, which carries the agent a fresh conversation copies; no turn is ever
+	 * submitted to it.
 	 */
 	async run(prompt: string): Promise<number> {
 		await this.#harness.root(context, { agent: { model: MODEL, cwd: workspace } });
@@ -108,7 +107,7 @@ export class Host {
 		);
 	}
 
-	/** The human continues: a fresh context in an existing conversation, in one commit. */
+	/** Continue a trajectory: a fresh context in an existing conversation, in one commit. */
 	async continue(conversationId: number, prompt: string): Promise<number> {
 		const conversation = await this.#harness.conversation(
 			conversationId as ConversationId,
@@ -141,7 +140,7 @@ export class Host {
 
 	async #summarise(): Promise<readonly Summary[]> {
 		const conversations = await this.#scanConversations();
-		// A conversation runs while a task it owns, or the task that owns it, is live.
+		// A conversation runs while a live task belongs to it, owns it, or continues it.
 		const running = new Set<number>();
 		for (const node of Object.values(this.#graph.tasks)) {
 			if (node.state.status === "pending" || node.state.status === "running") {

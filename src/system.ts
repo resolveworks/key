@@ -11,7 +11,6 @@ export type KeyTaskInput = {
 	readonly prompt: string;
 	/** Continue this existing conversation instead of creating one. */
 	readonly conversationId?: ConversationId;
-	/** This is a join: wait on these worker leaves, then run with their results folded into the prompt. */
 	readonly on?: readonly TaskId<string>[];
 };
 
@@ -20,15 +19,15 @@ type KeyTaskState =
 	| { readonly phase: "run"; readonly conversationId?: ConversationId };
 
 /**
- * One context: a prompt plus the conversation it runs in. A context emits worker leaves and goes
- * terminal; at terminal it mints the join over the workers it emitted. Nothing returns to it.
+ * One context: a prompt plus the conversation it runs in. Nothing returns to it; at terminal, if it
+ * emitted, it mints the contexts it emitted and one join waiting on them.
  */
 export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 	name: "key.task",
 	version: 1,
 	initial: () => ({ phase: "wait" }),
 	phases: {
-		// A join parks here until its leaves settle; a worker or a root orchestrator starts at once.
+		// A context with wait edges parks until they settle; anything else starts at once.
 		wait: async (task, runtime, context) => {
 			const on = task.input.on;
 			if (on !== undefined && on.length > 0) {
@@ -41,9 +40,10 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "run" } }), context);
 		},
 		run: async (task, runtime, context) => {
+			const { prompt, on } = task.input;
+			// Save the intent before acting: a crash after the submit reacquires this same conversation.
 			let conversationId = task.state.checkpoint.conversationId ?? task.input.conversationId;
 			if (conversationId === undefined) {
-				// Save the intent before acting: a crash after the submit reacquires this same conversation.
 				await runtime.commit(async (tx) => {
 					conversationId = (
 						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
@@ -52,26 +52,29 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 				}, context);
 			}
 			if (conversationId === undefined) throw new Error(`key.task ${task.id}: no conversation`);
-			const runConversation = conversationId;
-			const handle = await runtime.conversation(runConversation, context);
+
+			const handle = await runtime.conversation(conversationId, context);
 			if (handle === undefined)
-				throw new Error(`key.task ${task.id}: conversation ${runConversation} is gone`);
+				throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
 
-			// The join prompt: the emitter's last turn (control) plus every leaf's settled result (data).
-			const on = task.input.on;
-			let prompt = task.input.prompt;
-			if (on !== undefined && on.length > 0) {
-				const outcomes = await runtime.outcomes(on, context);
-				const upstream = outcomes.map((outcome, index) =>
-					outcome.status === "completed"
-						? `task #${on[index]} completed:\n${outcome.result}`
-						: `task #${on[index]} ${outcome.status}`,
-				);
-				prompt += `\n\nUpstream results:\n\n${upstream.join("\n\n")}`;
-			}
-
+			// The prompt: the input (control) plus every waited-on task's settled result (data).
+			const upstream =
+				on === undefined
+					? []
+					: (await runtime.outcomes(on, context)).map((outcome, index) =>
+							outcome.status === "completed"
+								? `task #${on[index]} completed:\n${outcome.result}`
+								: `task #${on[index]} ${outcome.status}`,
+						);
 			const submission = await handle.submit(
-				{ type: "input", content: prompt, requestId: `key.task:${task.id}` },
+				{
+					type: "input",
+					content:
+						upstream.length === 0
+							? prompt
+							: `${prompt}\n\nUpstream results:\n\n${upstream.join("\n\n")}`,
+					requestId: `key.task:${task.id}`,
+				},
 				context,
 			);
 			const settled = await submission.wait(context);
@@ -79,7 +82,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 				throw new Error(`key.task ${task.id}: run ended ${settled.status}`);
 			}
 
-			const view = await runtime.context(runConversation, context);
+			const view = await runtime.context(conversationId, context);
 			const message = view.entries.find((entry) => entry.id === settled.answer)?.model?.[0];
 			if (message?.role !== "assistant")
 				throw new Error(`key.task ${task.id}: answer ${settled.answer} has no assistant message`);
@@ -111,7 +114,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 							{ prompt: workerPrompt },
 							{
 								ownership: { kind: "conversation" },
-								conversationId: runConversation,
+								conversationId,
 								background: true,
 							},
 						),
@@ -123,7 +126,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 						{ prompt: result, on: workers },
 						{
 							ownership: { kind: "conversation" },
-							conversationId: runConversation,
+							conversationId,
 							background: true,
 						},
 					);
