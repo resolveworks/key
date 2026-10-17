@@ -14,7 +14,7 @@ design is a separate document.
 pnpm install
 cp .env.example .env   # then fill in the key
 pnpm serve             # own the session and serve the graph; restarts on changes in src/
-pnpm key client        # in another terminal: type a prompt to start a trajectory
+pnpm client            # in another terminal: type a prompt to start a trajectory
 ```
 
 A restart is the durable recovery path, so reloading is a crash test: the
@@ -27,7 +27,7 @@ send another message into that same conversation; your message runs as a fresh
 context in the existing trajectory. `/new` abandons the open transcript: the
 next prompt starts a fresh trajectory.
 
-`pnpm key` with no command prints its own usage — it is the source of
+`pnpm serve --help` prints the CLI's own usage — it is the source of
 truth for the CLI. The host reads `.env` from the working directory; a
 missing file is fine until a command needs a model.
 
