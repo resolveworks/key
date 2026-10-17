@@ -1,5 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import {
+	type ConversationId,
+	configure,
 	defineExtension,
 	defineTask,
 	defineTool,
@@ -9,15 +11,19 @@ import {
 
 export type KeyTaskInput = {
 	readonly prompt: string;
+	/** A child context: it runs in a fresh conversation without fork. */
+	readonly leaf?: true;
 	readonly on?: readonly TaskId<string>[];
 };
 
-type KeyTaskState = { readonly phase: "wait" } | { readonly phase: "run" };
+type KeyTaskState =
+	| { readonly phase: "wait" }
+	| { readonly phase: "run"; readonly conversationId?: ConversationId };
 
 /**
- * One context: a prompt and the conversation it runs in. It runs once and ends. At terminal, if it
- * forked, it mints each child in a conversation of its own and a fresh successor in this one that
- * runs once they settle.
+ * One context: a prompt and the conversation it runs in. It runs once and ends. At terminal it mints
+ * its children and a fresh successor as tasks in this conversation; each creates its own conversation
+ * when it runs.
  */
 export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 	name: "key.task",
@@ -37,13 +43,27 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "run" } }), context);
 		},
 		run: async (task, runtime, context) => {
-			const { prompt, on } = task.input;
-			const conversationId = runtime.conversationId;
+			// Save the intent before acting: a crash after the submit reacquires this same conversation.
+			let conversationId = task.state.checkpoint.conversationId;
+			if (conversationId === undefined) {
+				await runtime.commit(async (tx) => {
+					conversationId = (
+						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
+					).id;
+					if (task.input.leaf === true) {
+						await configure(tx, conversationId, { tools: { remove: [Fork] } });
+					}
+					return { status: "running", checkpoint: { phase: "run", conversationId } };
+				}, context);
+			}
+			if (conversationId === undefined) throw new Error(`key.task ${task.id}: no conversation`);
+
 			const handle = await runtime.conversation(conversationId, context);
 			if (handle === undefined)
 				throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
 
 			// The prompt: the input (control) plus every waited-on task's settled result (data).
+			const { prompt, on } = task.input;
 			const upstream =
 				on === undefined
 					? []
@@ -89,22 +109,18 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					});
 				});
 
-			// One commit: this context ends, and it mints its children and a fresh successor. Every child
-			// conversation is owned by this task, so it inherits this context's agent; the successor joins
-			// them in this conversation. Background keeps each from being waited on by the one before it.
+			// This context ends and its children are born in its conversation. Background keeps it from
+			// waiting on them; the successor waits on them explicitly.
 			await runtime.commit(async (tx) => {
 				const children: TaskId<string>[] = [];
 				for (const childPrompt of forked) {
-					const conversation = await tx.createConversation({
-						ownership: { kind: "task", taskId: task.id },
-					});
 					children.push(
 						await tx.createTask(
 							KeyTask,
-							{ prompt: childPrompt },
+							{ prompt: childPrompt, leaf: true },
 							{
 								ownership: { kind: "conversation" },
-								conversationId: conversation.id,
+								conversationId,
 								background: true,
 							},
 						),
@@ -133,12 +149,12 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 /**
  * The only verb a context uses: fork one child per call. Call it several times in a turn for parallel
  * children. The context ends when its turn ends; a fresh successor runs once they settle, with their
- * results. Children inherit fork, so a child can fork its own children.
+ * results. A child does not fork.
  */
 export const Fork = defineTool({
 	name: "fork",
 	description:
-		"Fork one child context: it runs the given task when your turn ends. You do not wait for it; the context ends when its turn ends. Call fork once per child; calling it several times in the same turn forks several children. A fresh successor runs once they settle, with their results. Children inherit fork, so a child can fork its own children.",
+		"Fork one child context: it runs the given task when your turn ends. You do not wait for it; the context ends when its turn ends. Call fork once per child; calling it several times in the same turn forks several children. A fresh successor runs once they settle, with their results. A child does not fork.",
 	parameters: Type.Object({
 		prompt: Type.String({ description: "The task for the child context." }),
 	}),

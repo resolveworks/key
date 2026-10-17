@@ -54,7 +54,7 @@ export async function open(base: string): Promise<void> {
 
 	let summaries: readonly Summary[] = [];
 	let watching: { stop: () => void } | undefined;
-	// The open transcript, when typing continues it instead of starting a new trajectory.
+	// The open transcript, for returning from the resume list.
 	let current: number | undefined;
 	// The task whose conversation is not in the summaries yet; we open it as soon as it appears.
 	let pending: number | undefined;
@@ -121,7 +121,7 @@ export async function open(base: string): Promise<void> {
 			show(transcript(view));
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
 			footer.setText(
-				`${running ? style.success("● streaming") : style.dim("○ idle")} · type to continue`,
+				`${running ? style.success("● streaming") : style.dim("○ idle")} · type to start a new context`,
 			);
 			tui.requestRender();
 		});
@@ -139,17 +139,6 @@ export async function open(base: string): Promise<void> {
 	const start = async (text: string): Promise<void> => {
 		const value = text.trim();
 		if (value === "" || starting || pending !== undefined) return;
-		if (current !== undefined) {
-			starting = true;
-			try {
-				await post(base, `/api/conversations/${current}/messages`, value);
-				prompt.setText("");
-				tui.requestRender();
-			} finally {
-				starting = false;
-			}
-			return;
-		}
 		starting = true;
 		try {
 			pending = await post(base, "/api/run", value);

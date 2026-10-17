@@ -28,12 +28,12 @@ const workspace = process.cwd();
 const dataDirectory = join(workspace, ".key");
 const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
 
-/** One line in the transcript picker: a conversation, its owner, and whether it is running. */
+/** One line in the transcript picker: a context's conversation, and whether it is running. */
 export type Summary = {
 	readonly id: number;
-	/** The `task #N` that labels it: its owner, or its first context. */
+	/** The context `task #N` whose transcript this is. */
 	readonly owner: string;
-	/** That task's prompt. */
+	/** That context's prompt. */
 	readonly label: string;
 	readonly running: boolean;
 };
@@ -41,8 +41,6 @@ export type Summary = {
 export class Host {
 	#harness!: Harness;
 	#prompts = new Map<number, string>();
-	/** An ownerless conversation is labelled by the first context that runs in it. */
-	#starts = new Map<number, number>();
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
 	#server!: Server;
@@ -106,40 +104,9 @@ export class Host {
 		}, context);
 	}
 
-	/** Continue a trajectory: a fresh context in an existing conversation, in one commit. */
-	async continue(conversationId: number, prompt: string): Promise<number> {
-		const conversation = await this.#harness.conversation(
-			conversationId as ConversationId,
-			context,
-		);
-		if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
-		return this.#harness.commit(
-			(tx) =>
-				tx.createTask(
-					KeyTask,
-					{ prompt },
-					{
-						ownership: { kind: "conversation" },
-						conversationId: conversation.id,
-					},
-				),
-			context,
-		);
-	}
-
-	#record(record: {
-		readonly id: number;
-		readonly conversationId: number;
-		readonly kind: string;
-		readonly owner?: number;
-		readonly input: unknown;
-	}): void {
+	#record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
 		if (record.kind !== KeyTask.definition.name) return;
-		const input = record.input as KeyTaskInput;
-		this.#prompts.set(record.id, input.prompt);
-		if (record.owner === undefined && !this.#starts.has(record.conversationId)) {
-			this.#starts.set(record.conversationId, record.id);
-		}
+		this.#prompts.set(record.id, (record.input as KeyTaskInput).prompt);
 	}
 
 	/** Recompute the transcript list and push it to every attached client. */
@@ -156,19 +123,21 @@ export class Host {
 			running.add(node.conversationId);
 			for (const owned of node.conversations) running.add(owned);
 		}
-		// A child conversation is labelled by the task that forked it; a top-level one by its first context.
-		const summaries: Summary[] = [];
-		for (const { id, owner } of conversations) {
-			const taskId = owner?.taskId ?? this.#starts.get(id);
-			if (taskId === undefined) throw new Error(`conversation #${id} has no context`);
-			summaries.push({
-				id,
-				owner: `task #${taskId}`,
-				label: this.#prompts.get(taskId)?.split("\n", 1)[0]?.trim() ?? "",
-				running: running.has(id),
-			});
-		}
-		return summaries.sort((a, b) => b.id - a.id);
+		// Every context's conversation is owned by its task; an ownerless conversation is just a holder.
+		return conversations
+			.flatMap(({ id, owner }) =>
+				owner === undefined
+					? []
+					: [
+							{
+								id,
+								owner: `task #${owner.taskId}`,
+								label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
+								running: running.has(id),
+							},
+						],
+			)
+			.sort((a, b) => b.id - a.id);
 	}
 
 	async #scanConversations(): Promise<readonly { id: number; owner?: { taskId: number } }[]> {
@@ -209,7 +178,7 @@ export class Host {
 			res
 				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
 				.end(
-					"key host\n\n  GET  /api/conversations            transcripts, then changes (SSE)\n  GET  /api/conversations/:id        one transcript, then changes (SSE)\n  POST /api/run                      start a context from the body\n  POST /api/conversations/:id/messages  continue a conversation from the body\n",
+					"key host\n\n  GET  /api/conversations      transcripts, then changes (SSE)\n  GET  /api/conversations/:id  one transcript, then changes (SSE)\n  POST /api/run                start a context from the body\n",
 				);
 			return;
 		}
@@ -220,17 +189,6 @@ export class Host {
 		const transcript = /^\/api\/conversations\/(\d+)$/.exec(url.pathname);
 		if (req.method === "GET" && transcript !== null) {
 			await this.#transcript(Number(transcript[1]), req, res);
-			return;
-		}
-		const message = /^\/api\/conversations\/(\d+)\/messages$/.exec(url.pathname);
-		if (req.method === "POST" && message !== null) {
-			const prompt = (await readBody(req)).trim();
-			if (prompt === "") {
-				res.writeHead(400).end("empty prompt");
-				return;
-			}
-			const task = await this.continue(Number(message[1]), prompt);
-			res.writeHead(202, { "content-type": "application/json" }).end(JSON.stringify({ task }));
 			return;
 		}
 		if (req.method === "POST" && url.pathname === "/api/run") {
