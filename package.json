@@ -4,6 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"key": "node src/main.ts",
+		"serve": "node --watch-path=src --watch-preserve-output src/main.ts serve",
 		"check": "biome check && tsc",
 		"fix": "biome check --write",
 		"lint": "biome lint",

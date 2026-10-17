@@ -1,7 +1,7 @@
 // The host: one process owns the Session on SQLite and serves the graph and the transcripts over
 // HTTP+SSE. Clients attach to a snapshot and then follow frames; reconnecting is native.
 import { mkdirSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
@@ -44,6 +44,7 @@ export class Host {
 	#continues = new Map<number, number>();
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
+	#server!: Server;
 	#listListeners = new Set<ServerResponse>();
 
 	async open(): Promise<void> {
@@ -182,14 +183,14 @@ export class Host {
 	}
 
 	async listen(): Promise<void> {
-		const server = createServer((req, res) => {
+		this.#server = createServer((req, res) => {
 			void this.#handle(req, res).catch((error: unknown) => {
 				console.error(error);
 				if (!res.headersSent) res.writeHead(500).end(String(error));
 			});
 		});
-		server.listen(PORT, "127.0.0.1");
-		await new Promise((resolve) => server.once("listening", resolve));
+		this.#server.listen(PORT, "127.0.0.1");
+		await new Promise((resolve) => this.#server.once("listening", resolve));
 		process.stdout.write(`key host on http://127.0.0.1:${PORT}\n`);
 		this.#harness.resume();
 	}
@@ -262,6 +263,7 @@ export class Host {
 
 	async close(): Promise<void> {
 		for (const listener of this.#listListeners) listener.end();
+		this.#server.close();
 		await this.#harness.close(context);
 	}
 }

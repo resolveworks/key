@@ -53,6 +53,9 @@ is wrong.
   no build step, no codegen. Node ≥ 23 runs the TypeScript directly.
 - `pnpm key` runs the host CLI and prints its own usage; treat that as the
   source of truth, not this file.
+- `pnpm serve` is `key serve` under `node --watch-path=src`: save a file and
+  the host restarts. The restart *is* the crash-recovery path, so reload is
+  the test for invariant 7 — do not add a hot-reload that skips it.
 - `pnpm check` formats, lints (Biome), and typechecks (`tsc`, no emit).
   `pnpm fix` applies Biome's safe fixes and formatting.
 - `.env` (gitignored) holds the provider key for the hardcoded model;
