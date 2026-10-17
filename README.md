@@ -17,6 +17,9 @@ pnpm key serve         # own the session and serve the graph
 pnpm key client        # in another terminal: type a prompt to start a trajectory
 ```
 
+In the client, open a transcript and type to send another message into that same
+conversation; your message runs as a fresh context in the existing trajectory.
+
 `pnpm key` with no command prints its own usage — it is the source of
 truth for the CLI. The host reads `.env` from the working directory; a
 missing file is fine until a command needs a model.

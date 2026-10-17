@@ -48,6 +48,8 @@ export async function open(base: string): Promise<void> {
 	let summaries: readonly Summary[] = [];
 	let list = makeList([]);
 	let transcript: { stop: () => void } | undefined;
+	// The open transcript, when typing continues it instead of starting a new trajectory.
+	let current: number | undefined;
 	// The task whose conversation is not in the summaries yet; we open it as soon as it appears.
 	let pending: number | undefined;
 	let starting = false;
@@ -68,6 +70,7 @@ export async function open(base: string): Promise<void> {
 
 	const showList = (): void => {
 		mode = "list";
+		current = undefined;
 		transcript?.stop();
 		transcript = undefined;
 		body.clear();
@@ -82,6 +85,7 @@ export async function open(base: string): Promise<void> {
 
 	const showTranscript = (id: number): void => {
 		mode = "transcript";
+		current = id;
 		transcript?.stop();
 		body.clear();
 		body.addChild(new Text(dim("  connecting…"), 1, 0));
@@ -94,7 +98,7 @@ export async function open(base: string): Promise<void> {
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
 			footer.setText(
 				dim(
-					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · type to start another · esc back`,
+					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · type to continue · esc back`,
 				),
 			);
 			tui.requestRender();
@@ -116,9 +120,20 @@ export async function open(base: string): Promise<void> {
 	const start = async (text: string): Promise<void> => {
 		const value = text.trim();
 		if (value === "" || starting || pending !== undefined) return;
+		if (mode === "transcript" && current !== undefined) {
+			starting = true;
+			try {
+				await post(base, `/api/conversations/${current}/messages`, value);
+				prompt.setValue("");
+				tui.requestRender();
+			} finally {
+				starting = false;
+			}
+			return;
+		}
 		starting = true;
 		try {
-			pending = await send(base, value);
+			pending = await post(base, "/api/run", value);
 			prompt.setValue("");
 			mode = "list";
 			transcript?.stop();
@@ -321,9 +336,9 @@ async function* stream<T>(url: string, signal?: AbortSignal): AsyncGenerator<T> 
 	}
 }
 
-/** Ask the host to start a fresh context from the prompt, and return the task it minted. */
-async function send(base: string, prompt: string): Promise<number> {
-	const response = await fetch(`${base}/api/run`, { method: "POST", body: prompt });
+/** Ask the host to mint a context from the prompt, and return the task it created. */
+async function post(base: string, path: string, prompt: string): Promise<number> {
+	const response = await fetch(`${base}${path}`, { method: "POST", body: prompt });
 	if (!response.ok) throw new Error(`host returned ${response.status}: ${await response.text()}`);
 	return ((await response.json()) as { readonly task: number }).task;
 }

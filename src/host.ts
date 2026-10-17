@@ -62,6 +62,7 @@ export type Summary = {
 export class Host {
 	#harness!: Harness;
 	#prompts = new Map<number, string>();
+	#continues = new Map<number, number>();
 	#frame: Frame = { scheduling: "idle", tasks: [], submissions: [] };
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
@@ -127,10 +128,29 @@ export class Host {
 		);
 	}
 
+	/** The human continues: a fresh context in an existing conversation, in one commit. */
+	async continue(conversationId: number, prompt: string): Promise<number> {
+		const conversation = await this.#harness.conversation(
+			conversationId as ConversationId,
+			context,
+		);
+		if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
+		return this.#harness.commit(
+			(tx) =>
+				tx.createTask(
+					KeyTask,
+					{ prompt, conversationId: conversation.id },
+					{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
+				),
+			context,
+		);
+	}
+
 	#record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
 		if (record.kind !== KeyTask.definition.name) return;
 		const input = record.input as KeyTaskInput;
 		this.#prompts.set(record.id, input.prompt);
+		if (input.conversationId !== undefined) this.#continues.set(record.id, input.conversationId);
 	}
 
 	/** Read the graph and inspections once, then push both the frame and the transcript list. */
@@ -160,6 +180,8 @@ export class Host {
 			if (node.state.status === "pending" || node.state.status === "running") {
 				running.add(node.conversationId);
 				for (const owned of node.conversations) running.add(owned);
+				const continued = this.#continues.get(node.id);
+				if (continued !== undefined) running.add(continued);
 			}
 		}
 		return conversations
@@ -232,7 +254,7 @@ export class Host {
 			res
 				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
 				.end(
-					"key host\n\n  GET  /api/graph             snapshot as JSON\n  GET  /api/stream            graph snapshot, then frames (SSE)\n  GET  /api/conversations     transcripts, then changes (SSE)\n  GET  /api/conversations/:id one transcript, then changes (SSE)\n  POST /api/run               start a context from the body\n",
+					"key host\n\n  GET  /api/graph                    snapshot as JSON\n  GET  /api/stream                   graph snapshot, then frames (SSE)\n  GET  /api/conversations            transcripts, then changes (SSE)\n  GET  /api/conversations/:id        one transcript, then changes (SSE)\n  POST /api/run                      start a context from the body\n  POST /api/conversations/:id/messages  continue a conversation from the body\n",
 				);
 			return;
 		}
@@ -251,6 +273,17 @@ export class Host {
 		const transcript = /^\/api\/conversations\/(\d+)$/.exec(url.pathname);
 		if (req.method === "GET" && transcript !== null) {
 			await this.#transcript(Number(transcript[1]), req, res);
+			return;
+		}
+		const message = /^\/api\/conversations\/(\d+)\/messages$/.exec(url.pathname);
+		if (req.method === "POST" && message !== null) {
+			const prompt = (await readBody(req)).trim();
+			if (prompt === "") {
+				res.writeHead(400).end("empty prompt");
+				return;
+			}
+			const task = await this.continue(Number(message[1]), prompt);
+			res.writeHead(202, { "content-type": "application/json" }).end(JSON.stringify({ task }));
 			return;
 		}
 		if (req.method === "POST" && url.pathname === "/api/run") {

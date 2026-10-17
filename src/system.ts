@@ -13,6 +13,8 @@ import {
 
 export type KeyTaskInput = {
 	readonly prompt: string;
+	/** Continue this existing conversation instead of creating one. */
+	readonly conversationId?: ConversationId;
 	/** The emit call that created this worker, for idempotent replay. */
 	readonly emission?: { readonly emitter: TaskId; readonly call: string };
 	/** This is a join: wait on these worker leaves, then run with their results folded into the prompt. */
@@ -60,7 +62,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 				return;
 			}
 
-			let conversationId = task.state.checkpoint.conversationId;
+			let conversationId = task.state.checkpoint.conversationId ?? task.input.conversationId;
 			if (conversationId === undefined) {
 				// Save the intent before acting: a crash after the submit reacquires this same conversation.
 				await runtime.commit(async (tx) => {
