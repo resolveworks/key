@@ -18,6 +18,7 @@ import {
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import type { Summary } from "./host.ts";
+import { provider } from "./prompt.ts";
 import { style } from "./theme.ts";
 import { transcript } from "./trajectory.ts";
 
@@ -44,6 +45,7 @@ export async function open(base: string): Promise<void> {
 		borderColor: style.borderMuted,
 		selectList: selectTheme,
 	});
+	prompt.setAutocompleteProvider(provider(process.cwd()));
 	input.addChild(prompt);
 	const footer = new Text("", 1, 0);
 	tui.addChild(document);
