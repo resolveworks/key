@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { open, send } from "./client.ts";
+import { open } from "./client.ts";
 import { Host, PORT } from "./host.ts";
 
 const workspace = process.cwd();
@@ -10,8 +10,7 @@ const base = `http://127.0.0.1:${PORT}`;
 const usage = `usage: key <command> [args...]
 
   serve            own the session and serve the graph
-  client           attach to a running host: list transcripts, show one, stream the live ones
-  run <prompt...>  start a fresh context on a running host
+  client           chat with a running host: start trajectories, stream them, browse past ones
 
   -h, --help       this
 `;
@@ -30,23 +29,18 @@ async function main(): Promise<void> {
 		return fail(`bad arguments: ${(error as Error).message}`);
 	}
 
-	const [command, ...rest] = positionals;
+	const [command] = positionals;
 	if (values.help || command === undefined) {
 		process.stdout.write(usage);
 		return;
 	}
 
-	const prompt = rest.join(" ").trim();
 	switch (command) {
 		case "serve":
 			await serve();
 			break;
 		case "client":
 			await open(base);
-			break;
-		case "run":
-			if (prompt === "") return fail("run needs a prompt");
-			await send(base, prompt);
 			break;
 		default:
 			fail(`unknown command "${command}"`);

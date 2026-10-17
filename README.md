@@ -14,8 +14,7 @@ design is a separate document.
 pnpm install
 cp .env.example .env   # then fill in the key
 pnpm key serve         # own the session and serve the graph
-pnpm key client        # in another terminal: list transcripts, watch one stream
-pnpm key run "<prompt>"
+pnpm key client        # in another terminal: type a prompt to start a trajectory
 ```
 
 `pnpm key` with no command prints its own usage — it is the source of

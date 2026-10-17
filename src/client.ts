@@ -1,10 +1,12 @@
-// The client: a dumb terminal. It lists the host's transcripts, shows any of them, and streams the
-// running ones. All state lives in the host; this attaches, renders views, and submits prompts back.
+// The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
+// streams it. All state lives in the host; this renders views and submits prompts back.
 
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 import {
 	Container,
+	Input,
+	Key,
 	matchesKey,
 	ProcessTerminal,
 	ScrollView,
@@ -30,21 +32,30 @@ const selectTheme: SelectListTheme = {
 	noMatch: (text) => dim(text),
 };
 
-/** Attach to the host, list its transcripts, and show any of them until interrupted. */
+/** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
 	const tui = new TuiAltScreen(new ProcessTerminal());
 	const body = new Container();
 	const scroll = new ScrollView(body, { follow: "end", primary: true });
+	const prompt = new Input({
+		prompt: cyan("> "),
+		placeholder: "start a trajectory",
+		placeholderStyle: dim,
+	});
 	const footer = new Text("", 1, 0);
 
 	let mode: "list" | "transcript" = "list";
 	let summaries: readonly Summary[] = [];
 	let list = makeList([]);
 	let transcript: { stop: () => void } | undefined;
+	// The task whose conversation is not in the summaries yet; we open it as soon as it appears.
+	let pending: number | undefined;
+	let starting = false;
 
 	tui.setLayoutRoot(
 		new VStack([
 			{ component: scroll, basis: 0, grow: 1, minSize: 1 },
+			{ component: prompt, basis: "auto", shrink: 1, minSize: 1 },
 			{ component: footer, basis: "auto", shrink: 1, minSize: 1 },
 		]),
 	);
@@ -64,8 +75,8 @@ export async function open(base: string): Promise<void> {
 		list.onSelect = (item) => showTranscript(Number(item.value));
 		list.onCancel = () => quit();
 		body.addChild(list);
-		tui.setFocus(list);
-		footer.setText(dim("  ↑/↓ select · enter open · ctrl+c quit"));
+		tui.setFocus(prompt);
+		footer.setText(dim("  ↑/↓ select · enter open · type to start · ctrl+c quit"));
 		tui.requestRender();
 	};
 
@@ -74,7 +85,7 @@ export async function open(base: string): Promise<void> {
 		transcript?.stop();
 		body.clear();
 		body.addChild(new Text(dim("  connecting…"), 1, 0));
-		tui.setFocus(null);
+		tui.setFocus(prompt);
 		tui.requestRender();
 		transcript = watchTranscript(base, id, (view) => {
 			body.clear();
@@ -83,12 +94,53 @@ export async function open(base: string): Promise<void> {
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
 			footer.setText(
 				dim(
-					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · esc back`,
+					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · type to start another · esc back`,
 				),
 			);
 			tui.requestRender();
 		});
 	};
+
+	/** Open the pending trajectory once the host has created its conversation. */
+	const update = (): void => {
+		if (pending !== undefined) {
+			const created = summaries.find((summary) => summary.owner === `task #${pending}`);
+			if (created === undefined) return;
+			pending = undefined;
+			showTranscript(created.id);
+			return;
+		}
+		if (mode === "list") showList();
+	};
+
+	const start = async (text: string): Promise<void> => {
+		const value = text.trim();
+		if (value === "" || starting || pending !== undefined) return;
+		starting = true;
+		try {
+			pending = await send(base, value);
+			prompt.setValue("");
+			mode = "list";
+			transcript?.stop();
+			transcript = undefined;
+			body.clear();
+			body.addChild(new Text(dim("  starting trajectory…"), 1, 0));
+			footer.setText(dim("  starting · ctrl+c quit"));
+			tui.requestRender();
+			update();
+		} finally {
+			starting = false;
+		}
+	};
+
+	prompt.onSubmit = (text) => {
+		if (text.trim() === "" && mode === "list" && pending === undefined) {
+			list.handleInput(Key.enter);
+			return;
+		}
+		void start(text);
+	};
+	prompt.onEscape = quit;
 
 	tui.addInputListener((data) => {
 		if (matchesKey(data, "ctrl+c")) {
@@ -99,6 +151,12 @@ export async function open(base: string): Promise<void> {
 			showList();
 			return { consume: true };
 		}
+		if (mode === "list" && pending === undefined && prompt.getValue() === "") {
+			if (matchesKey(data, "up") || matchesKey(data, "down")) {
+				list.handleInput(data);
+				return { consume: true };
+			}
+		}
 		return undefined;
 	});
 
@@ -107,13 +165,13 @@ export async function open(base: string): Promise<void> {
 
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
-		if (mode === "list") showList();
+		update();
 	}
 }
 
 /** One selectable transcript. */
 function makeList(summaries: readonly Summary[]): SelectList {
-	const list = new SelectList(
+	return new SelectList(
 		summaries.map((summary) => ({
 			value: String(summary.id),
 			label: `#${summary.id}`,
@@ -122,7 +180,6 @@ function makeList(summaries: readonly Summary[]): SelectList {
 		20,
 		selectTheme,
 	);
-	return list;
 }
 
 /** A view's entries as renderable components, live generation and tools last. */
@@ -264,8 +321,9 @@ async function* stream<T>(url: string, signal?: AbortSignal): AsyncGenerator<T> 
 	}
 }
 
-/** Ask the host to start a fresh context from the prompt. */
-export async function send(base: string, prompt: string): Promise<void> {
+/** Ask the host to start a fresh context from the prompt, and return the task it minted. */
+async function send(base: string, prompt: string): Promise<number> {
 	const response = await fetch(`${base}/api/run`, { method: "POST", body: prompt });
 	if (!response.ok) throw new Error(`host returned ${response.status}: ${await response.text()}`);
+	return ((await response.json()) as { readonly task: number }).task;
 }

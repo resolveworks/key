@@ -28,7 +28,7 @@ is wrong.
    commit mints exactly one successor from the durable emit record: the join
    over the workers it emitted, or the human when a join emitted nothing. The
    model emits workers through the `emit` tool; the human emits through
-   `key run`. No other code path creates tasks.
+   the client. No other code path creates tasks.
 3. **Join is birth, not resume.** A joining task is born waiting on existing
    tasks (`allSettled`) and runs only after they settle. No context stays
    running to await anything; `waitForTask` is never used between contexts.

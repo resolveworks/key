@@ -114,9 +114,9 @@ export class Host {
 	 * reserved — it owns top-level tasks and carries the agent every context copies, and no turn is
 	 * ever submitted to it.
 	 */
-	async run(prompt: string): Promise<void> {
+	async run(prompt: string): Promise<number> {
 		await this.#harness.root(context, { agent: { model: MODEL, cwd: workspace } });
-		await this.#harness.commit(
+		return this.#harness.commit(
 			(tx) =>
 				tx.createTask(
 					KeyTask,
@@ -259,8 +259,8 @@ export class Host {
 				res.writeHead(400).end("empty prompt");
 				return;
 			}
-			await this.run(prompt);
-			res.writeHead(202).end("{}");
+			const task = await this.run(prompt);
+			res.writeHead(202, { "content-type": "application/json" }).end(JSON.stringify({ task }));
 			return;
 		}
 		res.writeHead(404).end("not found");
