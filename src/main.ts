@@ -5,12 +5,6 @@ import { Host, PORT } from "./host.ts";
 
 const workspace = process.cwd();
 
-try {
-	process.loadEnvFile(join(workspace, ".env"));
-} catch {
-	// Missing is fine until a command asks for a model.
-}
-
 const base = `http://127.0.0.1:${PORT}`;
 
 const usage = `usage: key <command> [args...]
@@ -60,6 +54,7 @@ async function main(): Promise<void> {
 }
 
 async function serve(): Promise<void> {
+	process.loadEnvFile(join(workspace, ".env"));
 	const host = new Host();
 	await host.open();
 	await host.listen();
