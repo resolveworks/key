@@ -6,7 +6,6 @@ import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/p
 import {
 	Container,
 	Input,
-	Key,
 	matchesKey,
 	ProcessTerminal,
 	ScrollView,
@@ -44,9 +43,9 @@ export async function open(base: string): Promise<void> {
 	});
 	const footer = new Text("", 1, 0);
 
-	let mode: "list" | "transcript" = "list";
+	let mode: "list" | "prompt" | "transcript" = "list";
 	let summaries: readonly Summary[] = [];
-	let list = makeList([]);
+	let picker: Picker | undefined;
 	let transcript: { stop: () => void } | undefined;
 	// The open transcript, when typing continues it instead of starting a new trajectory.
 	let current: number | undefined;
@@ -57,7 +56,13 @@ export async function open(base: string): Promise<void> {
 	tui.setLayoutRoot(
 		new VStack([
 			{ component: scroll, basis: 0, grow: 1, minSize: 1 },
-			{ component: prompt, basis: "auto", shrink: 1, minSize: 1 },
+			{
+				component: prompt,
+				basis: "auto",
+				shrink: 1,
+				minSize: 1,
+				visible: () => mode !== "list",
+			},
 			{ component: footer, basis: "auto", shrink: 1, minSize: 1 },
 		]),
 	);
@@ -68,18 +73,33 @@ export async function open(base: string): Promise<void> {
 		process.exit(0);
 	};
 
+	/** The resume picker: focused search, arrows select, enter opens, escape starts a new prompt. */
 	const showList = (): void => {
 		mode = "list";
 		current = undefined;
 		transcript?.stop();
 		transcript = undefined;
 		body.clear();
-		list = makeList(summaries);
-		list.onSelect = (item) => showTranscript(Number(item.value));
-		list.onCancel = () => quit();
-		body.addChild(list);
+		picker = new Picker(summaries);
+		picker.onSelect = showTranscript;
+		picker.onCancel = showPrompt;
+		body.addChild(picker);
+		tui.setFocus(picker);
+		footer.setText(dim("  ↑/↓ select · enter open · type to filter · esc new · ctrl+c quit"));
+		tui.requestRender();
+	};
+
+	/** A blank prompt for a fresh trajectory, as the editor is after cancelling resume. */
+	const showPrompt = (): void => {
+		mode = "prompt";
+		current = undefined;
+		transcript?.stop();
+		transcript = undefined;
+		prompt.setValue("");
+		body.clear();
+		body.addChild(new Text(dim("  type a prompt to start a new trajectory"), 1, 0));
 		tui.setFocus(prompt);
-		footer.setText(dim("  ↑/↓ select · enter open · type to start · ctrl+c quit"));
+		footer.setText(dim("  type to start · ctrl+r resume · ctrl+c quit"));
 		tui.requestRender();
 	};
 
@@ -114,7 +134,7 @@ export async function open(base: string): Promise<void> {
 			showTranscript(created.id);
 			return;
 		}
-		if (mode === "list") showList();
+		if (mode === "list") picker?.setSummaries(summaries);
 	};
 
 	const start = async (text: string): Promise<void> => {
@@ -135,9 +155,6 @@ export async function open(base: string): Promise<void> {
 		try {
 			pending = await post(base, "/api/run", value);
 			prompt.setValue("");
-			mode = "list";
-			transcript?.stop();
-			transcript = undefined;
 			body.clear();
 			body.addChild(new Text(dim("  starting trajectory…"), 1, 0));
 			footer.setText(dim("  starting · ctrl+c quit"));
@@ -149,28 +166,26 @@ export async function open(base: string): Promise<void> {
 	};
 
 	prompt.onSubmit = (text) => {
-		if (text.trim() === "" && mode === "list" && pending === undefined) {
-			list.handleInput(Key.enter);
+		if (text.trim() === "/resume") {
+			showList();
 			return;
 		}
 		void start(text);
 	};
-	prompt.onEscape = quit;
+	prompt.onEscape = showList;
 
 	tui.addInputListener((data) => {
 		if (matchesKey(data, "ctrl+c")) {
 			quit();
 			return { consume: true };
 		}
-		if (mode === "transcript" && matchesKey(data, "escape")) {
+		if (matchesKey(data, "ctrl+r") && mode !== "list") {
 			showList();
 			return { consume: true };
 		}
-		if (mode === "list" && pending === undefined && prompt.getValue() === "") {
-			if (matchesKey(data, "up") || matchesKey(data, "down")) {
-				list.handleInput(data);
-				return { consume: true };
-			}
+		if (mode === "transcript" && matchesKey(data, "escape")) {
+			showList();
+			return { consume: true };
 		}
 		return undefined;
 	});
@@ -181,6 +196,84 @@ export async function open(base: string): Promise<void> {
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
 		update();
+	}
+}
+
+/**
+ * The list screen, shaped like pi's /resume: the search input is focused and filters sessions,
+ * arrows move the selection, enter opens one, and escape returns to a fresh prompt.
+ */
+class Picker extends Container {
+	readonly search = new Input({
+		prompt: cyan("search "),
+		placeholder: "filter conversations",
+		placeholderStyle: dim,
+	});
+	list = makeList([]);
+	onSelect?: (id: number) => void;
+	onCancel?: () => void;
+	#summaries: readonly Summary[] = [];
+	#focused = false;
+
+	constructor(summaries: readonly Summary[]) {
+		super();
+		this.addChild(this.search);
+		this.addChild(new Text("", 0, 0));
+		this.addChild(this.list);
+		this.setSummaries(summaries);
+	}
+
+	get focused(): boolean {
+		return this.#focused;
+	}
+
+	set focused(value: boolean) {
+		this.#focused = value;
+		this.search.focused = value;
+	}
+
+	setSummaries(summaries: readonly Summary[]): void {
+		this.#summaries = summaries;
+		this.#rebuild();
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape")) {
+			if (this.search.getValue() === "") {
+				this.onCancel?.();
+			} else {
+				this.search.setValue("");
+				this.#rebuild();
+			}
+			return;
+		}
+		if (matchesKey(data, "up") || matchesKey(data, "down") || matchesKey(data, "enter")) {
+			this.list.handleInput(data);
+			return;
+		}
+		this.search.handleInput(data);
+		this.#rebuild();
+	}
+
+	#rebuild(): void {
+		const selected = this.list.getSelectedItem()?.value;
+		const query = this.search.getValue().trim().toLowerCase();
+		const matches =
+			query === ""
+				? this.#summaries
+				: this.#summaries.filter((summary) =>
+						`${summary.id} ${summary.owner} ${summary.label}`.toLowerCase().includes(query),
+					);
+		const next = makeList(matches);
+		next.onSelect = (item) => this.onSelect?.(Number(item.value));
+		next.onCancel = () => this.onCancel?.();
+		if (selected !== undefined) {
+			const index = matches.findIndex((summary) => String(summary.id) === selected);
+			if (index !== -1) next.setSelectedIndex(index);
+		}
+		this.removeChild(this.list);
+		this.list = next;
+		this.addChild(next);
 	}
 }
 
