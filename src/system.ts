@@ -13,6 +13,8 @@ export type KeyTaskInput = {
 	readonly prompt: string;
 	/** Set for a context a parent forked: it runs in a fresh conversation without fork. */
 	readonly child?: true;
+	/** A human's message to an existing context: run it in that context's conversation. */
+	readonly continue?: true;
 	readonly on?: readonly TaskId<string>[];
 };
 
@@ -46,11 +48,12 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			// Save the intent before acting: a crash after the submit reacquires this same conversation.
 			let conversationId = task.state.checkpoint.conversationId;
 			if (conversationId === undefined) {
+				const target = task.input.continue === true ? runtime.conversationId : undefined;
 				await runtime.commit(async (tx) => {
-					conversationId = (
-						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
-					).id;
-					if (task.input.child === true) {
+					conversationId =
+						target ??
+						(await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })).id;
+					if (target === undefined && task.input.child === true) {
 						await configure(tx, conversationId, { tools: { remove: [Fork] } });
 					}
 					return { status: "running", checkpoint: { phase: "run", conversationId } };

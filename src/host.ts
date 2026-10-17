@@ -104,6 +104,27 @@ export class Host {
 		}, context);
 	}
 
+	/** Message an existing context: a fresh context in its conversation, in one commit. */
+	async continue(conversationId: number, prompt: string): Promise<number> {
+		const conversation = await this.#harness.conversation(
+			conversationId as ConversationId,
+			context,
+		);
+		if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
+		return this.#harness.commit(
+			(tx) =>
+				tx.createTask(
+					KeyTask,
+					{ prompt, continue: true },
+					{
+						ownership: { kind: "conversation" },
+						conversationId: conversation.id,
+					},
+				),
+			context,
+		);
+	}
+
 	#record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
 		if (record.kind !== KeyTask.definition.name) return;
 		this.#prompts.set(record.id, (record.input as KeyTaskInput).prompt);
@@ -178,7 +199,7 @@ export class Host {
 			res
 				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
 				.end(
-					"key host\n\n  GET  /api/conversations      transcripts, then changes (SSE)\n  GET  /api/conversations/:id  one transcript, then changes (SSE)\n  POST /api/run                start a context from the body\n",
+					"key host\n\n  GET  /api/conversations              transcripts, then changes (SSE)\n  GET  /api/conversations/:id          one transcript, then changes (SSE)\n  POST /api/run                        start a context from the body\n  POST /api/conversations/:id/messages  message a context from the body\n",
 				);
 			return;
 		}
@@ -189,6 +210,17 @@ export class Host {
 		const transcript = /^\/api\/conversations\/(\d+)$/.exec(url.pathname);
 		if (req.method === "GET" && transcript !== null) {
 			await this.#transcript(Number(transcript[1]), req, res);
+			return;
+		}
+		const message = /^\/api\/conversations\/(\d+)\/messages$/.exec(url.pathname);
+		if (req.method === "POST" && message !== null) {
+			const prompt = (await readBody(req)).trim();
+			if (prompt === "") {
+				res.writeHead(400).end("empty prompt");
+				return;
+			}
+			const task = await this.continue(Number(message[1]), prompt);
+			res.writeHead(202, { "content-type": "application/json" }).end(JSON.stringify({ task }));
 			return;
 		}
 		if (req.method === "POST" && url.pathname === "/api/run") {
