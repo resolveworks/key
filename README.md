@@ -12,13 +12,13 @@ agreements live in `AGENTS.md`.
 ```bash
 pnpm install
 cp .env.example .env   # then fill in the key
-pnpm serve             # own the session and serve the graph; restarts on changes in src/
+pnpm serve             # own the session and serve the graph
 pnpm client            # in another terminal: type a prompt to start a trajectory
 ```
 
-A restart is the durable recovery path, so reloading is a crash test: the
-host reopens `.key/` and resumes from the graph. Work in flight when you save a
-file is picked up by the next process.
+Restart the host to pick up changes in `src/`. A restart is the durable
+recovery path: the host reopens `.key/` and resumes from the graph, so work in
+flight is picked up by the next process.
 
 In the client, type a prompt to start a trajectory. `/resume` lists past
 conversations: `↑`/`↓` to select, `enter` to open. Inside a transcript, type to
