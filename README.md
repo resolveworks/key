@@ -17,10 +17,10 @@ pnpm key serve         # own the session and serve the graph
 pnpm key client        # in another terminal: type a prompt to start a trajectory
 ```
 
-In the client, the resume list opens focused: type to filter, `↑`/`↓` to select,
-`enter` to open, `esc` to start a fresh trajectory. Inside a transcript, type to
+In the client, type a prompt to start a trajectory. `/resume` lists past
+conversations: `↑`/`↓` to select, `enter` to open. Inside a transcript, type to
 send another message into that same conversation; your message runs as a fresh
-context in the existing trajectory. `ctrl+r` (or `/resume`) returns to the list.
+context in the existing trajectory.
 
 `pnpm key` with no command prints its own usage — it is the source of
 truth for the CLI. The host reads `.env` from the working directory; a

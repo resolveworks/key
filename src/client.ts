@@ -43,9 +43,10 @@ export async function open(base: string): Promise<void> {
 	});
 	const footer = new Text("", 1, 0);
 
-	let mode: "list" | "prompt" | "transcript" = "list";
+	let mode: "list" | "prompt" | "transcript" = "prompt";
 	let summaries: readonly Summary[] = [];
-	let picker: Picker | undefined;
+	let list: SelectList | undefined;
+	let listSignature = "";
 	let transcript: { stop: () => void } | undefined;
 	// The open transcript, when typing continues it instead of starting a new trajectory.
 	let current: number | undefined;
@@ -73,23 +74,31 @@ export async function open(base: string): Promise<void> {
 		process.exit(0);
 	};
 
-	/** The resume picker: focused search, arrows select, enter opens, escape starts a new prompt. */
+	/** The resume list: arrows select a conversation, enter opens it. */
 	const showList = (): void => {
 		mode = "list";
 		current = undefined;
 		transcript?.stop();
 		transcript = undefined;
-		body.clear();
-		picker = new Picker(summaries);
-		picker.onSelect = showTranscript;
-		picker.onCancel = showPrompt;
-		body.addChild(picker);
-		tui.setFocus(picker);
-		footer.setText(dim("  ↑/↓ select · enter open · type to filter · esc new · ctrl+c quit"));
+		listSignature = JSON.stringify(summaries);
+		setList();
+		footer.setText(dim("  ↑/↓ select · enter open · ctrl+c quit"));
 		tui.requestRender();
 	};
 
-	/** A blank prompt for a fresh trajectory, as the editor is after cancelling resume. */
+	/** Render the conversation list, keeping the selection across live updates. */
+	const setList = (): void => {
+		const selected = list?.getSelectedItem()?.value;
+		body.clear();
+		list = makeList(summaries);
+		list.onSelect = (item) => showTranscript(Number(item.value));
+		const index = summaries.findIndex((summary) => String(summary.id) === selected);
+		if (index !== -1) list.setSelectedIndex(index);
+		body.addChild(list);
+		tui.setFocus(list);
+	};
+
+	/** A blank prompt for a fresh trajectory. */
 	const showPrompt = (): void => {
 		mode = "prompt";
 		current = undefined;
@@ -99,7 +108,7 @@ export async function open(base: string): Promise<void> {
 		body.clear();
 		body.addChild(new Text(dim("  type a prompt to start a new trajectory"), 1, 0));
 		tui.setFocus(prompt);
-		footer.setText(dim("  type to start · ctrl+r resume · ctrl+c quit"));
+		footer.setText(dim("  type to start · ctrl+c quit"));
 		tui.requestRender();
 	};
 
@@ -118,7 +127,7 @@ export async function open(base: string): Promise<void> {
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
 			footer.setText(
 				dim(
-					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · type to continue · esc back`,
+					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · type to continue`,
 				),
 			);
 			tui.requestRender();
@@ -134,7 +143,11 @@ export async function open(base: string): Promise<void> {
 			showTranscript(created.id);
 			return;
 		}
-		if (mode === "list") picker?.setSummaries(summaries);
+		if (mode === "list" && JSON.stringify(summaries) !== listSignature) {
+			listSignature = JSON.stringify(summaries);
+			setList();
+			tui.requestRender();
+		}
 	};
 
 	const start = async (text: string): Promise<void> => {
@@ -172,108 +185,21 @@ export async function open(base: string): Promise<void> {
 		}
 		void start(text);
 	};
-	prompt.onEscape = showList;
 
 	tui.addInputListener((data) => {
 		if (matchesKey(data, "ctrl+c")) {
 			quit();
 			return { consume: true };
 		}
-		if (matchesKey(data, "ctrl+r") && mode !== "list") {
-			showList();
-			return { consume: true };
-		}
-		if (mode === "transcript" && matchesKey(data, "escape")) {
-			showList();
-			return { consume: true };
-		}
 		return undefined;
 	});
 
-	showList();
+	showPrompt();
 	tui.start();
 
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
 		update();
-	}
-}
-
-/**
- * The list screen, shaped like pi's /resume: the search input is focused and filters sessions,
- * arrows move the selection, enter opens one, and escape returns to a fresh prompt.
- */
-class Picker extends Container {
-	readonly search = new Input({
-		prompt: cyan("search "),
-		placeholder: "filter conversations",
-		placeholderStyle: dim,
-	});
-	list = makeList([]);
-	onSelect?: (id: number) => void;
-	onCancel?: () => void;
-	#summaries: readonly Summary[] = [];
-	#focused = false;
-
-	constructor(summaries: readonly Summary[]) {
-		super();
-		this.addChild(this.search);
-		this.addChild(new Text("", 0, 0));
-		this.addChild(this.list);
-		this.setSummaries(summaries);
-	}
-
-	get focused(): boolean {
-		return this.#focused;
-	}
-
-	set focused(value: boolean) {
-		this.#focused = value;
-		this.search.focused = value;
-	}
-
-	setSummaries(summaries: readonly Summary[]): void {
-		this.#summaries = summaries;
-		this.#rebuild();
-	}
-
-	handleInput(data: string): void {
-		if (matchesKey(data, "escape")) {
-			if (this.search.getValue() === "") {
-				this.onCancel?.();
-			} else {
-				this.search.setValue("");
-				this.#rebuild();
-			}
-			return;
-		}
-		if (matchesKey(data, "up") || matchesKey(data, "down") || matchesKey(data, "enter")) {
-			this.list.handleInput(data);
-			return;
-		}
-		this.search.handleInput(data);
-		this.#rebuild();
-	}
-
-	#rebuild(): void {
-		const selected = this.list.getSelectedItem()?.value;
-		const query = this.search.getValue().trim().toLowerCase();
-		const matches =
-			query === ""
-				? this.#summaries
-				: this.#summaries.filter((summary) =>
-						`${summary.id} ${summary.owner} ${summary.label}`.toLowerCase().includes(query),
-					);
-		const next = makeList(matches);
-		next.onSelect = (item) => this.onSelect?.(Number(item.value));
-		next.onCancel = () => this.onCancel?.();
-		if (selected !== undefined) {
-			const index = matches.findIndex((summary) => String(summary.id) === selected);
-			if (index !== -1) next.setSelectedIndex(index);
-		}
-		this.removeChild(this.list);
-		this.list = next;
-		this.addChild(next);
 	}
 }
 
