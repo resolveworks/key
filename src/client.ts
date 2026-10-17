@@ -1,6 +1,7 @@
 // The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
 // streams it. All state lives in the host; this renders views and submits prompts back.
 
+import { setTimeout as delay } from "node:timers/promises";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import {
 	Container,
@@ -17,6 +18,8 @@ import {
 import type { Summary } from "./host.ts";
 import { style } from "./theme.ts";
 import { transcript } from "./trajectory.ts";
+
+const RECONNECT_MS = 250;
 
 const selectTheme: SelectListTheme = {
 	selectedPrefix: (text) => style.accent(text),
@@ -209,48 +212,61 @@ function watchTranscript(
 ): { readonly stop: () => void } {
 	const abort = new AbortController();
 	void (async () => {
-		try {
-			for await (const view of stream<ConversationView>(
-				`${base}/api/conversations/${id}`,
-				abort.signal,
-			))
-				onView(view);
-		} catch (error) {
-			if (!abort.signal.aborted) throw error;
-		}
+		for await (const view of stream<ConversationView>(
+			`${base}/api/conversations/${id}`,
+			abort.signal,
+		))
+			onView(view);
 	})();
 	return { stop: () => abort.abort() };
 }
 
-/** Parse an SSE body into typed frames. */
+/** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts. */
 async function* stream<T>(url: string, signal?: AbortSignal): AsyncGenerator<T> {
-	const response = await fetch(url, {
-		headers: { accept: "text/event-stream" },
-		...(signal === undefined ? {} : { signal }),
-	});
-	if (!response.ok || response.body === null) throw new Error(`host returned ${response.status}`);
-	const decoder = new TextDecoder();
-	let buffer = "";
-	for await (const chunk of response.body) {
-		buffer += decoder.decode(chunk as Uint8Array, { stream: true });
-		let end = buffer.indexOf("\n\n");
-		while (end !== -1) {
-			const data = buffer
-				.slice(0, end)
-				.split("\n")
-				.filter((line) => line.startsWith("data:"))
-				.map((line) => line.slice(5).trim())
-				.join("");
-			buffer = buffer.slice(end + 2);
-			if (data !== "") yield JSON.parse(data) as T;
-			end = buffer.indexOf("\n\n");
+	for (;;) {
+		try {
+			const response = await fetch(url, {
+				headers: { accept: "text/event-stream" },
+				...(signal === undefined ? {} : { signal }),
+			});
+			if (!response.ok || response.body === null)
+				throw new Error(`host returned ${response.status}`);
+			const decoder = new TextDecoder();
+			let buffer = "";
+			for await (const chunk of response.body) {
+				buffer += decoder.decode(chunk as Uint8Array, { stream: true });
+				let end = buffer.indexOf("\n\n");
+				while (end !== -1) {
+					const data = buffer
+						.slice(0, end)
+						.split("\n")
+						.filter((line) => line.startsWith("data:"))
+						.map((line) => line.slice(5).trim())
+						.join("");
+					buffer = buffer.slice(end + 2);
+					if (data !== "") yield JSON.parse(data) as T;
+					end = buffer.indexOf("\n\n");
+				}
+			}
+		} catch {
+			if (signal?.aborted) return;
 		}
+		await delay(RECONNECT_MS);
 	}
 }
 
 /** Ask the host to mint a context from the prompt, and return the task it created. */
 async function post(base: string, path: string, prompt: string): Promise<number> {
-	const response = await fetch(`${base}${path}`, { method: "POST", body: prompt });
-	if (!response.ok) throw new Error(`host returned ${response.status}: ${await response.text()}`);
-	return ((await response.json()) as { readonly task: number }).task;
+	for (;;) {
+		try {
+			const response = await fetch(`${base}${path}`, { method: "POST", body: prompt });
+			if (!response.ok)
+				throw new Error(`host returned ${response.status}: ${await response.text()}`);
+			return ((await response.json()) as { readonly task: number }).task;
+		} catch (error) {
+			// A restarting host refuses the connection; anything else is a real failure.
+			if (!(error instanceof TypeError)) throw error;
+			await delay(RECONNECT_MS);
+		}
+	}
 }
