@@ -1,6 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
+	configure,
 	defineExtension,
 	defineTask,
 	defineTool,
@@ -90,7 +91,8 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			const result = message.content
 				.flatMap((part) => (part.type === "text" ? [part.text] : []))
 				.join("");
-			// Every emit call the run made, across its tool rounds; the transcript is the emit record.
+			// Every emit call the run made, across its tool rounds; the transcript is the emit record. A
+			// conversation that never ran this task has no `emit` to call.
 			const emitted = view.entries
 				.filter((entry) => entry.id >= settled.entry && entry.id <= settled.answer)
 				.flatMap((entry) => entry.model ?? [])
@@ -104,18 +106,22 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					});
 				});
 
-			// One commit: this context ends, and its children are born in its conversation. Background
-			// keeps it from waiting on them; the copy of its message waits on them instead.
+			// One commit: this context ends, and it mints its children and the copy of its own message. Every
+			// child starts in a conversation of its own where `emit` is not an extension; the copy collects
+			// them and runs in the caller's conversation, where it is. Background keeps each from being waited
+			// on by the one before it.
 			await runtime.commit(async (tx) => {
 				const children: TaskId<string>[] = [];
 				for (const childPrompt of emitted) {
+					const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
+					await configure(tx, conversation.id, { extensions: { remove: [Cascades] } });
 					children.push(
 						await tx.createTask(
 							KeyTask,
 							{ prompt: childPrompt },
 							{
 								ownership: { kind: "conversation" },
-								conversationId,
+								conversationId: conversation.id,
 								background: true,
 							},
 						),
@@ -149,7 +155,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 export const Emit = defineTool({
 	name: "emit",
 	description:
-		"Emit one child context: it runs the given task when your turn ends. You do not wait for it, and it emits nothing of its own. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, every child is created and your last message runs again once they all settle, with their results.",
+		"Emit one child context: it runs the given task when your turn ends. You do not wait for it. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, every child is created and your last message runs again once they all settle, with their results.",
 	parameters: Type.Object({
 		prompt: Type.String({ description: "The task for the child context." }),
 	}),
@@ -169,5 +175,10 @@ export const KeySystem = defineExtension({
 		),
 	],
 	tasks: [KeyTask],
-	tools: [Emit],
 });
+
+/**
+ * Emitting is a top-level verb: a conversation that runs `KeyTask` takes `Emit` out of its agent when it
+ * creates it, so a child is never offered the tool and has no way to cascade.
+ */
+export const Cascades = defineExtension({ name: "key.cascades", tools: [Emit] });

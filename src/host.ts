@@ -18,7 +18,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Agents } from "./agents.ts";
-import { KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
+import { Cascades, KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
@@ -53,6 +53,7 @@ export class Host {
 		const registry = createRegistry();
 		registry.install(CodingTools);
 		registry.install(KeySystem);
+		registry.install(Cascades);
 		registry.install(Agents);
 		this.#harness = await Harness.open(
 			await openNodeSqliteStorage(join(dataDirectory, "session.sqlite")),
