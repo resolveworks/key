@@ -2,7 +2,6 @@ import { Type } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
 	configure,
-	defineDoc,
 	defineExtension,
 	defineTask,
 	defineTool,
@@ -20,16 +19,6 @@ export type KeyTaskInput = {
 type KeyTaskState =
 	| { readonly phase: "wait" }
 	| { readonly phase: "run"; readonly conversationId?: ConversationId };
-
-/** Fork calls this context made, written by the tool before it returns; terminal turns them into children. */
-const Forks = defineDoc<{ calls: { id: string; prompt: string }[] }>({
-	kind: "key.forks",
-	version: 1,
-	scope: "conversation",
-	history: "latest",
-	fork: "initial",
-	initial: () => ({ calls: [] }),
-});
 
 /**
  * One context: a prompt and the conversation it runs in. It runs once and ends. At terminal it mints
@@ -106,14 +95,25 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			const result = message.content
 				.flatMap((part) => (part.type === "text" ? [part.text] : []))
 				.join("");
-			// Each fork call is durable before its result, keyed by call so a replay records it once.
-			const forked = (await runtime.snapshot(Forks, conversationId, context))?.calls ?? [];
+			// Every fork call the run made, across its tool rounds; the transcript is the fork record.
+			const forked = view.entries
+				.filter((entry) => entry.id >= settled.entry && entry.id <= settled.answer)
+				.flatMap((entry) => entry.model ?? [])
+				.flatMap((message) => {
+					if (message.role !== "assistant") return [];
+					return message.content.flatMap((part) => {
+						if (part.type !== "toolCall" || part.name !== Fork.name) return [];
+						if (typeof part.arguments.prompt !== "string")
+							throw new Error(`key.task ${task.id}: fork ${part.id} has no prompt`);
+						return [part.arguments.prompt];
+					});
+				});
 
 			// This context ends and its children are born in its conversation. Background keeps it from
 			// waiting on them; the successor waits on them explicitly.
 			await runtime.commit(async (tx) => {
 				const children: TaskId<string>[] = [];
-				for (const { prompt: childPrompt } of forked) {
+				for (const childPrompt of forked) {
 					children.push(
 						await tx.createTask(
 							KeyTask,
@@ -159,14 +159,7 @@ export const Fork = defineTool({
 		prompt: Type.String({ description: "The task for the child context." }),
 	}),
 	replay: "safe",
-	execute: async (args, api, context) => {
-		await api.commit(async (tx) => {
-			const forks = await tx.doc(Forks, api.conversationId);
-			if (!forks.calls.some((call) => call.id === api.callId))
-				forks.calls.push({ id: api.callId, prompt: args.prompt });
-		}, context);
-		return { output: [{ type: "text", text: "Forked." }] };
-	},
+	execute: async () => ({ output: [{ type: "text", text: "Forked." }] }),
 });
 
 export const KeySystem = defineExtension({
