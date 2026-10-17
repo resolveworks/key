@@ -78,6 +78,7 @@ export async function open(base: string): Promise<void> {
 	const showList = (): void => {
 		mode = "list";
 		current = undefined;
+		prompt.setValue("");
 		transcript?.stop();
 		transcript = undefined;
 		listSignature = JSON.stringify(summaries);
