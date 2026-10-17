@@ -1,54 +1,48 @@
 # Key
 
-A spike: **cascading contexts** — a fork/join agent system on
-[`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable).
-A proof of concept, not a product.
+**Cascading contexts.** Information only flows forward. There is no call/return
+anywhere.
 
-Information only flows forward; there is no call/return anywhere. Working
-agreements live in `AGENTS.md`.
+The implementation may change. The idea below does not.
 
-## Run
+## Core idea
 
-```bash
-pnpm install
-cp .env.example .env   # then fill in the key
-pnpm serve             # own the session and serve the graph
-pnpm client            # in another terminal: type a prompt to start a trajectory
+Every agent invocation is a **fresh context**. A context runs once, may fork
+child contexts, and then ends. It never waits for a child, never resumes, and
+never receives a child's result.
+
+When a context forks, it mints:
+
+- a fresh conversation for each child context, owned by the context that forked
+  it, and therefore by that context's conversation;
+- a fresh successor context in its own conversation, created to run once those
+  children settle.
+
+The successor starts with the forking context's last message and the children's
+results. It is not the forking context continuing. It is a new context.
+
+If the successor forks again, the same thing happens: it forks children and mints
+a new successor that will run when they settle. That is the loop. The loop ends
+when a context forks nothing.
+
+A **conversation** is one cascade loop: a kickoff context followed by a chain of
+fresh successor contexts. It can fork and join many times. The first context is
+the human kickoff; every later context is a loop iteration.
+
+Each forked child is its own branch, with its own conversation and its own loop.
+A child's work happens in its own conversation; only its settled result crosses
+into the parent's next fresh context.
+
+```text
+conversation C
+
+  A          kickoff context; forks children
+  A'         fresh successor: joins A's children; may fork more
+  A''        fresh successor: joins the children forked by A'
+  ...        until a context forks nothing
 ```
 
-Restart the host to pick up changes in `src/`. A restart is the durable
-recovery path: the host reopens `.key/` and resumes from the graph, so work in
-flight is picked up by the next process.
+Information only ever enters a fresh context. Nothing returns to the context
+that forked it.
 
-In the client, type a prompt to start a trajectory. `/resume` lists past
-conversations: `↑`/`↓` to select, `enter` to open. Inside a transcript, type to
-send another message into that same conversation; your message runs as a fresh
-context in the existing trajectory. `/new` abandons the open transcript: the
-next prompt starts a fresh trajectory.
-
-Transcripts are drawn the way the [pi](https://github.com/badlogic/pi-mono)
-coding agent draws them: the prompt in a full-width box, assistant text as
-markdown, thinking in italics, and each tool call its own box whose background
-says how it is going — grey while running, green when it worked, red when it
-failed. An edit shows its colored diff; other output shows its last few lines.
-`src/theme.ts` holds pi's dark palette, `src/trajectory.ts` the components.
-
-`pnpm serve --help` prints the CLI's own usage. The host reads `.env`
-from the working directory; a missing file is fine until a command needs
-a model.
-
-## Agent files
-
-Every context starts with the project's agent instructions. In each directory
-from the working directory up to the filesystem root, the first of
-`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD` is
-loaded; outermost first, so the nearest file reads as the most specific. The
-files are rendered as `<project_context>` and re-read on every model request,
-so an edit reaches the next turn without a restart.
-
-## Check
-
-```bash
-pnpm check   # Biome: check formatting + lint, then tsc
-pnpm fix     # apply Biome's safe fixes and formatting
-```
+Working agreements live in `AGENTS.md`.
