@@ -13,7 +13,6 @@ import {
 	ProcessTerminal,
 	SelectList,
 	type SelectListTheme,
-	Spacer,
 	Text,
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
@@ -38,18 +37,19 @@ const selectTheme: SelectListTheme = {
 export async function open(base: string): Promise<void> {
 	const tui = new TuiMainScreen(new ProcessTerminal());
 	// The terminal owns the screen and the scrollback. Within a view the document only grows, so
-	// rendered lines scroll up into history instead of being redrawn. Every child is mounted once,
-	// before the first frame, and nothing in the dock is ever left rendering zero lines: a main
-	// screen never shrinks, so a slot that blinks out strands rows instead of reclaiming them.
+	// rendered lines scroll up into history instead of being redrawn. A selector takes the prompt's
+	// place in the dock rather than the document, so opening one never shrinks the transcript.
 	const document = new Container();
+	const dock = new Container();
 	const prompt = new Editor(tui, {
 		borderColor: style.borderMuted,
 		selectList: selectTheme,
 	});
 	prompt.setAutocompleteProvider(provider(process.cwd()));
+	dock.addChild(prompt);
 	const footer = new Text("new trajectory · type to start · /resume for past conversations", 1, 0);
 	tui.addChild(document);
-	tui.addChild(prompt);
+	tui.addChild(dock);
 	tui.addChild(footer);
 
 	let summaries: readonly Summary[] = [];
@@ -66,6 +66,13 @@ export async function open(base: string): Promise<void> {
 		for (const component of components) document.addChild(component);
 	};
 
+	/** The prompt occupies the dock unless a selector displaced it. */
+	const showPrompt = (): void => {
+		dock.clear();
+		dock.addChild(prompt);
+		tui.setFocus(prompt);
+	};
+
 	const quit = (): void => {
 		watching?.stop();
 		tui.stop({ preserveScreen: false });
@@ -80,7 +87,8 @@ export async function open(base: string): Promise<void> {
 		const list = makeList(summaries);
 		list.onSelect = (item) => showTranscript(Number(item.value));
 		list.onCancel = current === undefined ? showNew : () => showTranscript(current as number);
-		show([new Spacer(1), list]);
+		dock.clear();
+		dock.addChild(list);
 		tui.setFocus(list);
 		footer.setText("↑/↓ select · enter open · esc back · ctrl+c/d quit");
 		tui.requestRender();
@@ -95,7 +103,7 @@ export async function open(base: string): Promise<void> {
 		prompt.setText("");
 		watching?.stop();
 		watching = undefined;
-		tui.setFocus(prompt);
+		showPrompt();
 		show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
 		footer.setText("new trajectory · type to start · /resume for past conversations");
 		tui.requestRender();
@@ -106,7 +114,7 @@ export async function open(base: string): Promise<void> {
 		current = id;
 		saveCursor(id);
 		watching?.stop();
-		tui.setFocus(prompt);
+		showPrompt();
 		show([new Text(style.dim("connecting…"), 0, 0)]);
 		tui.requestRender();
 		watching = watchTranscript(base, id, (view) => {
