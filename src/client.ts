@@ -116,11 +116,9 @@ export async function open(base: string): Promise<void> {
 		watching = watchTranscript(base, id, (view) => {
 			body.clear();
 			for (const entry of transcript(view)) body.addChild(entry);
-			const label = summaries.find((summary) => summary.id === id);
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
 			const state = running ? style.success("● streaming") : style.dim("○ idle");
-			const tail = label?.label ?? `conversation ${id}`;
-			footer.setText(`${state}${style.muted(` · ${tail} · type to continue`)}`);
+			footer.setText(`${state}${style.muted(" · type to continue")}`);
 			tui.requestRender();
 		});
 	};
