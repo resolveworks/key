@@ -25,7 +25,7 @@ make it visibly wrong — silence and recovery are where bugs hide.
 
 ## Scope
 
-One task kind, one `emit` tool.
+One task kind, one `fork` tool.
 
 Out — do not build, even if it looks easy: push notifications, phone or
 desktop clients, WebSocket server / auth / remote anything, the proactive
