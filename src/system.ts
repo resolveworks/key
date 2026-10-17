@@ -1,7 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
-	configure,
 	defineExtension,
 	defineTask,
 	defineTool,
@@ -14,8 +13,6 @@ export type KeyTaskInput = {
 	/** Continue this existing conversation instead of creating one. */
 	readonly conversationId?: ConversationId;
 	readonly on?: readonly TaskId<string>[];
-	/** Set for a context a parent emitted: it runs without emit of its own. */
-	readonly child?: true;
 };
 
 type KeyTaskState =
@@ -52,9 +49,6 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					conversationId = (
 						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
 					).id;
-					// A child inherits its owner's agent, emit included; the cascade is one generation deep.
-					if (task.input.child === true)
-						await configure(tx, conversationId, { extensions: { remove: [KeySystem] } });
 					return { status: "running", checkpoint: { phase: "run", conversationId } };
 				}, context);
 			}
@@ -118,7 +112,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					children.push(
 						await tx.createTask(
 							KeyTask,
-							{ prompt: childPrompt, child: true },
+							{ prompt: childPrompt },
 							{
 								ownership: { kind: "conversation" },
 								conversationId,
@@ -155,7 +149,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 export const Emit = defineTool({
 	name: "emit",
 	description:
-		"Emit one child context: it runs the given task when your turn ends. You do not wait for it. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, every child is created and your last message runs again once they all settle, with their results.",
+		"Emit one child context: it runs the given task when your turn ends. You do not wait for it, and it emits nothing of its own. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, every child is created and your last message runs again once they all settle, with their results.",
 	parameters: Type.Object({
 		prompt: Type.String({ description: "The task for the child context." }),
 	}),
