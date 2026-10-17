@@ -4,9 +4,8 @@ A spike: **cascading contexts** — a fork/join agent system on
 [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable).
 A proof of concept, not a product.
 
-Information only flows forward; there is no call/return anywhere. The
-rules that hold in every line of code live in `AGENTS.md`; the long-form
-design is a separate document.
+Information only flows forward; there is no call/return anywhere. Working
+agreements live in `AGENTS.md`.
 
 ## Run
 
@@ -34,9 +33,9 @@ says how it is going — grey while running, green when it worked, red when it
 failed. An edit shows its colored diff; other output shows its last few lines.
 `src/theme.ts` holds pi's dark palette, `src/trajectory.ts` the components.
 
-`pnpm serve --help` prints the CLI's own usage — it is the source of
-truth for the CLI. The host reads `.env` from the working directory; a
-missing file is fine until a command needs a model.
+`pnpm serve --help` prints the CLI's own usage. The host reads `.env`
+from the working directory; a missing file is fine until a command needs
+a model.
 
 ## Agent files
 
@@ -50,6 +49,6 @@ so an edit reaches the next turn without a restart.
 ## Check
 
 ```bash
-pnpm check   # Biome: format + lint, then tsc
+pnpm check   # Biome: check formatting + lint, then tsc
 pnpm fix     # apply Biome's safe fixes and formatting
 ```
