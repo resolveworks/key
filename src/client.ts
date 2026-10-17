@@ -1,8 +1,7 @@
 // The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
 // streams it. All state lives in the host; this renders views and submits prompts back.
 
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
+import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import {
 	Container,
 	Input,
@@ -16,34 +15,35 @@ import {
 	VStack,
 } from "@earendil-works/pi-tui";
 import type { Summary } from "./host.ts";
-
-const dim = (text: string) => `\x1b[2m${text}\x1b[0m`;
-const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
-const yellow = (text: string) => `\x1b[33m${text}\x1b[0m`;
-const cyan = (text: string) => `\x1b[36m${text}\x1b[0m`;
-const green = (text: string) => `\x1b[32m${text}\x1b[0m`;
+import { style } from "./theme.ts";
+import { transcript } from "./trajectory.ts";
 
 const selectTheme: SelectListTheme = {
-	selectedPrefix: (text) => cyan(text),
-	selectedText: (text) => bold(text),
-	description: (text) => dim(text),
-	scrollInfo: (text) => dim(text),
-	noMatch: (text) => dim(text),
+	selectedPrefix: (text) => style.accent(text),
+	selectedText: (text) => style.bold(text),
+	description: (text) => style.muted(text),
+	scrollInfo: (text) => style.dim(text),
+	noMatch: (text) => style.dim(text),
 };
 
 /** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
 	const tui = new TuiAltScreen(new ProcessTerminal());
 	const body = new Container();
-	const scroll = new ScrollView(body, { follow: "end", primary: true });
+	const scroll = new ScrollView(body, {
+		follow: "end",
+		primary: true,
+		scrollbarTrackStyle: style.scrollbar.track,
+		scrollbarThumbStyle: style.scrollbar.thumb,
+	});
 	const prompt = new Input({
-		prompt: cyan("> "),
+		prompt: style.accent("> "),
 	});
 	const footer = new Text("", 1, 0);
 
 	let mode: "list" | "transcript" | undefined;
 	let summaries: readonly Summary[] = [];
-	let transcript: { stop: () => void } | undefined;
+	let watching: { stop: () => void } | undefined;
 	// The open transcript, when typing continues it instead of starting a new trajectory.
 	let current: number | undefined;
 	// The task whose conversation is not in the summaries yet; we open it as soon as it appears.
@@ -65,7 +65,7 @@ export async function open(base: string): Promise<void> {
 	);
 
 	const quit = (): void => {
-		transcript?.stop();
+		watching?.stop();
 		tui.stop({ preserveScreen: false });
 		process.exit(0);
 	};
@@ -75,8 +75,8 @@ export async function open(base: string): Promise<void> {
 		mode = "list";
 		current = undefined;
 		prompt.setValue("");
-		transcript?.stop();
-		transcript = undefined;
+		watching?.stop();
+		watching = undefined;
 		body.clear();
 		const list = makeList(summaries);
 		list.onSelect = (item) => showTranscript(Number(item.value));
@@ -84,7 +84,7 @@ export async function open(base: string): Promise<void> {
 		list.onCancel = back;
 		body.addChild(list);
 		tui.setFocus(list);
-		footer.setText(dim("  ↑/↓ select · enter open · esc back · ctrl+c quit"));
+		footer.setText(style.muted("↑/↓ select · enter open · esc back · ctrl+c quit"));
 		tui.requestRender();
 	};
 
@@ -93,33 +93,31 @@ export async function open(base: string): Promise<void> {
 		mode = "transcript";
 		current = undefined;
 		prompt.setValue("");
-		transcript?.stop();
-		transcript = undefined;
+		watching?.stop();
+		watching = undefined;
 		body.clear();
-		body.addChild(new Text(dim("  new trajectory · type to start"), 1, 0));
+		body.addChild(new Text(style.dim("new trajectory · type to start"), 1, 0));
 		tui.setFocus(prompt);
-		footer.setText(dim("  new trajectory · type to start · /resume for past conversations"));
+		footer.setText(style.muted("new trajectory · type to start · /resume for past conversations"));
 		tui.requestRender();
 	};
 
 	const showTranscript = (id: number): void => {
 		mode = "transcript";
 		current = id;
-		transcript?.stop();
+		watching?.stop();
 		body.clear();
-		body.addChild(new Text(dim("  connecting…"), 1, 0));
+		body.addChild(new Text(style.dim("connecting…"), 1, 0));
 		tui.setFocus(prompt);
 		tui.requestRender();
-		transcript = watchTranscript(base, id, (view) => {
+		watching = watchTranscript(base, id, (view) => {
 			body.clear();
-			for (const entry of renderView(view)) body.addChild(entry);
+			for (const entry of transcript(view)) body.addChild(entry);
 			const label = summaries.find((summary) => summary.id === id);
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
-			footer.setText(
-				dim(
-					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · type to continue`,
-				),
-			);
+			const state = running ? style.success("● streaming") : style.dim("○ idle");
+			const tail = label?.label ?? `conversation ${id}`;
+			footer.setText(`${state}${style.muted(` · ${tail} · type to continue`)}`);
 			tui.requestRender();
 		});
 	};
@@ -152,8 +150,8 @@ export async function open(base: string): Promise<void> {
 			pending = await post(base, "/api/run", value);
 			prompt.setValue("");
 			body.clear();
-			body.addChild(new Text(dim("  starting trajectory…"), 1, 0));
-			footer.setText(dim("  starting · ctrl+c quit"));
+			body.addChild(new Text(style.dim("starting trajectory…"), 1, 0));
+			footer.setText(style.muted("starting · ctrl+c quit"));
 			tui.requestRender();
 			update();
 		} finally {
@@ -196,103 +194,11 @@ function makeList(summaries: readonly Summary[]): SelectList {
 		summaries.map((summary) => ({
 			value: String(summary.id),
 			label: `#${summary.id}`,
-			description: `${summary.running ? "●" : "○"} ${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
+			description: `${summary.running ? style.success("●") : style.dim("○")} ${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
 		})),
 		20,
 		selectTheme,
 	);
-}
-
-/** A view's entries as renderable components, live generation and tools last. */
-function renderView(view: ConversationView): readonly Text[] {
-	const parts: Text[] = [];
-	for (const entry of view.entries) parts.push(...renderEntry(entry));
-	const live = view.docs["pi.live"] as LiveState | undefined;
-	if (live?.generation?.message !== undefined) {
-		parts.push(...renderMessage(live.generation.message as AssistantMessage, true));
-	}
-	for (const tool of live?.tools ?? []) {
-		const head =
-			tool.status === "running"
-				? green(`${tool.name} running`)
-				: dim(`${tool.name} ${tool.status}`);
-		parts.push(new Text(`  ${head}`, 1, 0));
-		if (tool.output !== undefined && tool.output !== "") {
-			parts.push(new Text(dim(indent(tail(String(tool.output), 6))), 2, 0));
-		}
-	}
-	return parts;
-}
-
-function renderEntry(entry: EntryRecord): readonly Text[] {
-	switch (entry.kind) {
-		case "pi.user":
-		case "pi.assistant":
-		case "pi.tool-result":
-			return (entry.model ?? []).flatMap((message) => renderMessage(message));
-		case "pi.reset":
-			return [new Text(dim("── context reset ──"), 1, 0)];
-		case "pi.compaction":
-			return [new Text(dim("── compacted ──"), 1, 0)];
-		default:
-			return [];
-	}
-}
-
-/** A transcript message as one or more text blocks. */
-function renderMessage(message: Message, streaming = false): readonly Text[] {
-	switch (message.role) {
-		case "user":
-			return [new Text(`${cyan("you")}\n${textOf(message.content)}`, 1, 0)];
-		case "toolResult": {
-			const mark = message.isError ? yellow(`${message.toolName} ✗`) : dim(`${message.toolName} ✓`);
-			return [new Text(`  ${mark}\n${dim(indent(tail(textOf(message.content), 8)))}`, 1, 0)];
-		}
-		case "assistant": {
-			const parts: Text[] = [];
-			for (const block of message.content) {
-				if (block.type === "text") {
-					parts.push(new Text(`${green("key")}${streaming ? dim(" …") : ""}\n${block.text}`, 1, 0));
-				} else if (block.type === "thinking") {
-					parts.push(new Text(dim(indent(tail(block.thinking, 4))), 2, 0));
-				} else if (block.type === "toolCall") {
-					parts.push(new Text(dim(`  → ${block.name}(${oneLine(block.arguments)})`), 1, 0));
-				}
-			}
-			return parts;
-		}
-		default:
-			return [];
-	}
-}
-
-function textOf(
-	content: string | readonly { readonly type: string; readonly text?: string }[],
-): string {
-	if (typeof content === "string") return content;
-	return content
-		.flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : []))
-		.join("");
-}
-
-function indent(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => `  ${line}`)
-		.join("\n");
-}
-
-function tail(text: string, lines: number): string {
-	const all = text.split("\n");
-	return all
-		.slice(Math.max(0, all.length - lines))
-		.join("\n")
-		.trimEnd();
-}
-
-function oneLine(value: unknown): string {
-	const text = JSON.stringify(value ?? {});
-	return text === undefined ? "" : text.length > 80 ? `${text.slice(0, 77)}…` : text;
 }
 
 /** Attach one transcript's SSE stream; `onView` runs for the snapshot and every later revision. */

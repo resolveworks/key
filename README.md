@@ -27,6 +27,13 @@ send another message into that same conversation; your message runs as a fresh
 context in the existing trajectory. `/new` abandons the open transcript: the
 next prompt starts a fresh trajectory.
 
+Transcripts are drawn the way the [pi](https://github.com/badlogic/pi-mono)
+coding agent draws them: the prompt in a full-width box, assistant text as
+markdown, thinking in italics, and each tool call its own box whose background
+says how it is going — grey while running, green when it worked, red when it
+failed. An edit shows its colored diff; other output shows its last few lines.
+`src/theme.ts` holds pi's dark palette, `src/trajectory.ts` the components.
+
 `pnpm serve --help` prints the CLI's own usage — it is the source of
 truth for the CLI. The host reads `.env` from the working directory; a
 missing file is fine until a command needs a model.
