@@ -52,7 +52,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					conversationId = (
 						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
 					).id;
-					// A child inherits its owner's agent, emit included; emitting is the root's alone.
+					// A child inherits its owner's agent, emit included; the cascade is one generation deep.
 					if (task.input.child === true)
 						await configure(tx, conversationId, { extensions: { remove: [KeySystem] } });
 					return { status: "running", checkpoint: { phase: "run", conversationId } };
