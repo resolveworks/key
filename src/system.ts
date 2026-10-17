@@ -12,8 +12,8 @@ import {
 
 export type KeyTaskInput = {
 	readonly prompt: string;
-	/** A child context: it runs in a fresh conversation without fork. */
-	readonly leaf?: true;
+	/** Set for a context a parent forked: it runs in a fresh conversation without fork. */
+	readonly child?: true;
 	readonly on?: readonly TaskId<string>[];
 };
 
@@ -61,7 +61,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					conversationId = (
 						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
 					).id;
-					if (task.input.leaf === true) {
+					if (task.input.child === true) {
 						await configure(tx, conversationId, { tools: { remove: [Fork] } });
 					}
 					return { status: "running", checkpoint: { phase: "run", conversationId } };
@@ -117,7 +117,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					children.push(
 						await tx.createTask(
 							KeyTask,
-							{ prompt: childPrompt, leaf: true },
+							{ prompt: childPrompt, child: true },
 							{
 								ownership: { kind: "conversation" },
 								conversationId,
