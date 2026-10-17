@@ -1,4 +1,3 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
@@ -99,10 +98,12 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			}
 
 			const entry = await runtime.entry(AssistantEntry, settled.answer, context);
-			const message = entry?.model?.[0] as AssistantMessage | undefined;
-			const result =
-				message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ??
-				"";
+			const message = entry?.model?.[0];
+			if (message?.role !== "assistant")
+				throw new Error(`key.task ${task.id}: answer ${settled.answer} has no assistant message`);
+			const result = message.content
+				.flatMap((part) => (part.type === "text" ? [part.text] : []))
+				.join("");
 
 			// One commit: this context ends and mints its successor from the emit record.
 			await runtime.commit(async (tx) => {

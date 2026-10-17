@@ -127,9 +127,9 @@ export class Host {
 		);
 	}
 
-	#record(record: { readonly id: number; readonly input: unknown }): void {
-		const input = record.input as KeyTaskInput | undefined;
-		if (input?.prompt === undefined) return;
+	#record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
+		if (record.kind !== KeyTask.definition.name) return;
+		const input = record.input as KeyTaskInput;
 		this.#prompts.set(record.id, input.prompt);
 	}
 
@@ -196,7 +196,7 @@ export class Host {
 	}
 
 	#trajectory(task: TaskInspection): Trajectory {
-		const input = task.record.input as unknown as KeyTaskInput | undefined;
+		const input = task.record.input as unknown as KeyTaskInput;
 		const state = task.state;
 		const status =
 			state.kind === "waiting"
@@ -207,9 +207,9 @@ export class Host {
 		return {
 			id: task.record.id,
 			kind: task.record.kind,
-			...(input?.emission === undefined ? {} : { from: input.emission.emitter }),
+			...(input.emission === undefined ? {} : { from: input.emission.emitter }),
 			status,
-			prompt: input?.prompt ?? "",
+			prompt: input.prompt,
 		};
 	}
 
@@ -227,7 +227,7 @@ export class Host {
 	}
 
 	async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-		const url = new URL(req.url ?? "/", "http://localhost");
+		const url = new URL(req.url as string, "http://localhost");
 		if (req.method === "GET" && url.pathname === "/") {
 			res
 				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })

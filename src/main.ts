@@ -59,7 +59,15 @@ async function serve(): Promise<void> {
 	await host.open();
 	await host.listen();
 	for (const signal of ["SIGINT", "SIGTERM"] as const) {
-		process.on(signal, () => void host.close().finally(() => process.exit(0)));
+		process.on(signal, () => {
+			void host.close().then(
+				() => process.exit(0),
+				(error: unknown) => {
+					console.error(error);
+					process.exit(1);
+				},
+			);
+		});
 	}
 }
 
