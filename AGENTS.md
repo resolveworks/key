@@ -29,15 +29,18 @@ is wrong.
 1. **Information only flows forward.** A context never receives a return
    value and never waits on a successor it emitted. No call/return
    anywhere.
-2. **Emit is the only verb.** All work is created by an emission in one
-   atomic commit: the successor's conversation, its task, and (for joins)
-   its wait edges. The model emits through the `emit` tool; the human emits
-   through `key run`. No other code path creates tasks.
+2. **Emit creates workers; terminal creates the successor.** `emit` mints the
+   worker leaves in one atomic commit. When a context ends, its terminal
+   commit mints exactly one successor from the durable emit record: the join
+   over the workers it emitted, or the human when a join emitted nothing. The
+   model emits workers through the `emit` tool; the human emits through
+   `key run`. No other code path creates tasks.
 3. **Join is birth, not resume.** A joining task is born waiting on existing
    tasks (`allSettled`) and runs only after they settle. No context stays
    running to await anything; `waitForTask` is never used between contexts.
-4. **Acyclic by construction.** Wait edges may only name tasks minted in the
-   same emission commit. Never add a way to wait on the future.
+4. **Acyclic by construction.** Wait edges may only name tasks that already
+   exist — the past. A join is minted at the emitter's terminal, so its edges
+   name workers emitted earlier. Never add a way to wait on the future.
 5. **Contexts are disposable.** Every context starts fresh with its task
    prompt (plus upstream refs for joins). Transcripts are audit logs; only
    the human's standing conversation persists.

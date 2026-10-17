@@ -188,7 +188,7 @@ export class Host {
 	}
 
 	#trajectory(task: TaskInspection): Trajectory {
-		const input = task.record.input as KeyTaskInput | undefined;
+		const input = task.record.input as unknown as KeyTaskInput | undefined;
 		const state = task.state;
 		const status =
 			state.kind === "waiting"

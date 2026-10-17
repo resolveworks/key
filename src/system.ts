@@ -9,12 +9,17 @@ import {
 	defineTool,
 	ROOT_CONVERSATION_ID,
 	type TaskId,
+	type Tx,
 } from "@earendil-works/pi-durable";
 
 export type KeyTaskInput = {
 	readonly prompt: string;
-	/** The emit call that created this context and this context's position in it, for idempotent replay. */
-	readonly emission?: { readonly emitter: TaskId; readonly index: number };
+	/** The emit call that created this worker, for idempotent replay. */
+	readonly emission?: { readonly emitter: TaskId; readonly call: string };
+	/** This is a join: wait on these worker leaves, then run with their results folded into the prompt. */
+	readonly on?: readonly TaskId<string>[];
+	/** The line drained: a terminal leaf addressed to the human. Runs no model. */
+	readonly human?: true;
 };
 
 type KeyTaskState =
@@ -22,20 +27,37 @@ type KeyTaskState =
 	| { readonly phase: "run"; readonly conversationId?: ConversationId };
 
 /**
- * One context: a prompt plus the conversation it runs in. A context emits successors and goes
- * terminal; nothing returns to it. The emitted tasks are conversation-owned in the root
- * conversation, so an emitter is not held by the work it emits.
+ * One context: a prompt plus the conversation it runs in. A context emits worker leaves and goes
+ * terminal; at terminal it mints one successor — the join over the workers it emitted, or the human
+ * when a join drains — built from the durable emit record. Nothing returns to it.
  */
 export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 	name: "key.task",
 	version: 1,
 	initial: () => ({ phase: "wait" }),
 	phases: {
-		// Born pending. This is where a joining context will instead commit a wait on its upstream tasks.
-		wait: async (_task, runtime, context) => {
+		// A join parks here until its leaves settle; a worker or a root orchestrator starts at once.
+		wait: async (task, runtime, context) => {
+			const on = task.input.on;
+			if (on !== undefined && on.length > 0) {
+				await runtime.commit(
+					() => ({ status: "waiting", on, policy: "allSettled", checkpoint: { phase: "run" } }),
+					context,
+				);
+				return;
+			}
 			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "run" } }), context);
 		},
 		run: async (task, runtime, context) => {
+			// The human handoff is a terminal leaf: no conversation, no model turn.
+			if (task.input.human === true) {
+				await runtime.commit(
+					() => ({ status: "terminal", outcome: { status: "completed", result: task.input.prompt } }),
+					context,
+				);
+				return;
+			}
+
 			let conversationId = task.state.checkpoint.conversationId;
 			if (conversationId === undefined) {
 				// Save the intent before acting: a crash after the submit reacquires this same conversation.
@@ -48,8 +70,21 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			const handle = await runtime.conversation(conversationId, context);
 			if (handle === undefined) throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
 
+			// The join prompt: the emitter's last turn (control) plus every leaf's settled result (data).
+			const on = task.input.on;
+			let prompt = task.input.prompt;
+			if (on !== undefined && on.length > 0) {
+				const outcomes = await runtime.outcomes(on, context);
+				const upstream = outcomes.map((outcome, index) =>
+					outcome.status === "completed"
+						? `task #${on[index]} completed:\n${outcome.result}`
+						: `task #${on[index]} ${outcome.status}`,
+				);
+				prompt += `\n\nUpstream results:\n\n${upstream.join("\n\n")}`;
+			}
+
 			const submission = await handle.submit(
-				{ type: "input", content: task.input.prompt, requestId: `key.task:${task.id}` },
+				{ type: "input", content: prompt, requestId: `key.task:${task.id}` },
 				context,
 			);
 			const settled = await submission.wait(context);
@@ -60,7 +95,28 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			const entry = await runtime.entry(AssistantEntry, settled.answer, context);
 			const message = entry?.model?.[0] as AssistantMessage | undefined;
 			const result = message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ?? "";
-			await runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result } }), context);
+
+			// One commit: this context ends and mints its successor from the emit record.
+			await runtime.commit(async (tx) => {
+				const workers = await emittedBy(tx, task.id);
+				if (workers.length > 0) {
+					// Fork became a fork/join: the join is born waiting on the leaves it just emitted.
+					await tx.createTask(
+						KeyTask,
+						{ prompt: result, on: workers },
+						{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
+					);
+				} else if (task.input.on !== undefined && task.input.on.length > 0) {
+					// A join with nothing left to delegate: no more work, so hand the last turn to the human.
+					await tx.createTask(
+						KeyTask,
+						{ prompt: result, human: true },
+						{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
+					);
+				}
+				// A worker with nothing to emit is simply done; the orchestrator that emitted it holds its join.
+				return { status: "terminal", outcome: { status: "completed", result } };
+			}, context);
 		},
 	},
 	abort: async (_task, runtime, context) => {
@@ -68,56 +124,51 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 	},
 });
 
+/** Every worker this context emitted, in creation order — the durable record the join is built from. */
+async function emittedBy(tx: Tx, emitter: TaskId, call?: string): Promise<readonly TaskId<string>[]> {
+	const found: TaskId<string>[] = [];
+	let cursor: Cursor | undefined;
+	for (;;) {
+		const page = await tx.scanTasks(
+			{ conversationId: ROOT_CONVERSATION_ID, kind: KeyTask.definition.name },
+			256,
+			cursor,
+		);
+		for (const record of page.items) {
+			const input = record.input as unknown as KeyTaskInput;
+			if (input.emission?.emitter !== emitter) continue;
+			if (call !== undefined && input.emission.call !== call) continue;
+			found.push(record.id as TaskId<string>);
+		}
+		if (page.next === undefined) break;
+		cursor = page.next;
+	}
+	return found;
+}
+
 /**
- * The only verb. Each entry becomes a fresh context. An emission is one commit; a replay after a
- * crash finds the contexts it already created by their emission marker instead of emitting twice.
+ * The only verb a context uses: one piece of work per call. Call it more than once in a turn for
+ * parallel work. A join over every worker emitted so far is minted when this context ends.
  */
 export const Emit = defineTool({
 	name: "emit",
 	description:
-		"Emit successor contexts. Each runs the given task in a fresh context and may emit further. You do not wait for them; your turn ends once they are created.",
+		"Emit one worker context: a fresh context that runs the given task. You do not wait for it. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, a join waiting on every worker you emitted is created with your last message as its prompt.",
 	parameters: Type.Object({
-		tasks: Type.Array(
-			Type.Object({ prompt: Type.String({ description: "The task for the successor context." }) }),
-			{ description: "One entry per successor context." },
-		),
+		prompt: Type.String({ description: "The task for the worker context." }),
 	}),
 	replay: "safe",
 	execute: async (args, api, context) => {
-		const ids = await api.commit(async (tx) => {
-			const existing: { readonly id: number; readonly index: number }[] = [];
-			let cursor: Cursor | undefined;
-			for (;;) {
-				const page = await tx.scanTasks(
-					{ conversationId: ROOT_CONVERSATION_ID, kind: KeyTask.definition.name },
-					256,
-					cursor,
-				);
-				for (const record of page.items) {
-					const input = record.input as { readonly emission?: { readonly emitter?: number; readonly index?: number } };
-					if (input.emission?.emitter !== api.taskId) continue;
-					existing.push({ id: record.id, index: input.emission.index ?? 0 });
-				}
-				if (page.next === undefined) break;
-				cursor = page.next;
-			}
-			if (existing.length > 0) return existing.sort((a, b) => a.index - b.index).map((found) => found.id);
-
-			const created: number[] = [];
-			let index = 0;
-			for (const spec of args.tasks) {
-				created.push(
-					await tx.createTask(
-						KeyTask,
-						{ prompt: spec.prompt, emission: { emitter: api.taskId, index } },
-						{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
-					),
-				);
-				index++;
-			}
-			return created;
+		const id = await api.commit(async (tx) => {
+			const [existing] = await emittedBy(tx, api.taskId, api.callId);
+			if (existing !== undefined) return existing;
+			return tx.createTask(
+				KeyTask,
+				{ prompt: args.prompt, emission: { emitter: api.taskId, call: api.callId } },
+				{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
+			);
 		}, context);
-		return { output: [{ type: "text", text: `Emitted ${ids.length} context(s): ${ids.join(", ")}.` }] };
+		return { output: [{ type: "text", text: `Emitted #${id}.` }] };
 	},
 });
 
