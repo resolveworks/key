@@ -1,8 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
 import {
-	AssistantEntry,
 	type ConversationId,
 	type Cursor,
+	defineEntry,
 	defineExtension,
 	defineTask,
 	defineTool,
@@ -10,6 +10,9 @@ import {
 	type TaskId,
 	type Tx,
 } from "@earendil-works/pi-durable";
+
+/** The user turn a context submits, stamped with its task: `emit` reads it back to attribute workers. */
+export const ContextEntry = defineEntry<{ readonly taskId: TaskId }>("key.context");
 
 export type KeyTaskInput = {
 	readonly prompt: string;
@@ -91,7 +94,12 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			}
 
 			const submission = await handle.submit(
-				{ type: "input", content: prompt, requestId: `key.task:${task.id}` },
+				{
+					type: "input",
+					content: prompt,
+					requestId: `key.task:${task.id}`,
+					entry: { kind: ContextEntry.kind, data: { taskId: task.id } },
+				},
 				context,
 			);
 			const settled = await submission.wait(context);
@@ -99,8 +107,8 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 				throw new Error(`key.task ${task.id}: run ended ${settled.status}`);
 			}
 
-			const entry = await runtime.entry(AssistantEntry, settled.answer, context);
-			const message = entry?.model?.[0];
+			const view = await runtime.context(conversationId, context);
+			const message = view.entries.find((entry) => entry.id === settled.answer)?.model?.[0];
 			if (message?.role !== "assistant")
 				throw new Error(`key.task ${task.id}: answer ${settled.answer} has no assistant message`);
 			const result = message.content
@@ -134,6 +142,25 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 		await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context);
 	},
 });
+
+/**
+ * The context whose run contains this tool call: the task stamped on the conversation's latest user
+ * turn. The tool itself belongs to a generation, not to the context, so the turn carries the
+ * ownership the emit record needs.
+ */
+async function emittingContext(tx: Tx, conversationId: ConversationId): Promise<TaskId> {
+	let cursor: Cursor | undefined;
+	for (;;) {
+		const page = await tx.scanEntries({ conversationId, order: "descending" }, 256, cursor);
+		const turn = page.items.find((entry) => ContextEntry.is(entry));
+		if (turn !== undefined) return turn.data.taskId;
+		if (page.next === undefined) break;
+		cursor = page.next;
+	}
+	throw new Error(
+		`emit: conversation ${conversationId} has no context turn to attribute the worker to`,
+	);
+}
 
 /** Every worker this context emitted, in creation order — the durable record the join is built from. */
 async function emittedBy(
@@ -175,11 +202,12 @@ export const Emit = defineTool({
 	replay: "safe",
 	execute: async (args, api, context) => {
 		const id = await api.commit(async (tx) => {
-			const [existing] = await emittedBy(tx, api.taskId, api.callId);
+			const emitter = await emittingContext(tx, api.conversationId);
+			const [existing] = await emittedBy(tx, emitter, api.callId);
 			if (existing !== undefined) return existing;
 			return tx.createTask(
 				KeyTask,
-				{ prompt: args.prompt, emission: { emitter: api.taskId, call: api.callId } },
+				{ prompt: args.prompt, emission: { emitter, call: api.callId } },
 				{ ownership: { kind: "conversation" }, conversationId: ROOT_CONVERSATION_ID },
 			);
 		}, context);
