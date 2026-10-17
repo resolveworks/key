@@ -38,8 +38,6 @@ export async function open(base: string): Promise<void> {
 	const scroll = new ScrollView(body, { follow: "end", primary: true });
 	const prompt = new Input({
 		prompt: cyan("> "),
-		placeholder: "start a trajectory",
-		placeholderStyle: dim,
 	});
 	const footer = new Text("", 1, 0);
 
