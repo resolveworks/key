@@ -187,15 +187,20 @@ export async function open(base: string): Promise<void> {
 		return undefined;
 	});
 
-	// A restart reopens what was open; the transcript route reattaches from a fresh snapshot.
+	// A restart reopens what was open, but only once the host confirms it still exists: a cursor is
+	// a hint, never a fact, and a stale one must land on a fresh trajectory rather than a dead view.
+	showNew();
 	const cursor = loadCursor();
-	if (cursor === undefined) showNew();
-	else showTranscript(cursor);
 
 	tui.start();
 
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
+		if (cursor !== undefined) {
+			if (!summaries.some((summary) => summary.id === cursor)) continue;
+			showTranscript(cursor);
+			break;
+		}
 		update();
 	}
 }
@@ -204,9 +209,9 @@ export async function open(base: string): Promise<void> {
 function loadCursor(): number | undefined {
 	try {
 		const { conversation } = JSON.parse(readFileSync(cursorFile, "utf8")) as {
-			conversation: number;
+			conversation: number | null;
 		};
-		return conversation;
+		return conversation ?? undefined;
 	} catch {
 		return undefined;
 	}
