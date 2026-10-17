@@ -13,7 +13,6 @@ import {
 	Harness,
 	ROOT_CONVERSATION_ID,
 	type TaskGraph,
-	type TaskInspection,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -29,26 +28,6 @@ const workspace = process.cwd();
 const dataDirectory = join(workspace, ".key");
 const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
 
-/** One live trajectory the client can render. */
-export type Frame = {
-	readonly scheduling: string;
-	readonly tasks: readonly Trajectory[];
-	readonly submissions: readonly {
-		readonly id: number;
-		readonly status: string;
-		readonly conversationId: number;
-	}[];
-};
-
-export type Trajectory = {
-	readonly id: number;
-	readonly kind: string;
-	/** Emitted-by task id, when known. */
-	readonly from?: number;
-	readonly status: string;
-	readonly prompt: string;
-};
-
 /** One line in the transcript picker: a conversation, its owner, and whether it is running. */
 export type Summary = {
 	readonly id: number;
@@ -63,10 +42,8 @@ export class Host {
 	#harness!: Harness;
 	#prompts = new Map<number, string>();
 	#continues = new Map<number, number>();
-	#frame: Frame = { scheduling: "idle", tasks: [], submissions: [] };
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
-	#listeners = new Set<ServerResponse>();
 	#listListeners = new Set<ServerResponse>();
 
 	async open(): Promise<void> {
@@ -102,11 +79,11 @@ export class Host {
 			}
 		});
 
-		await this.#refresh();
+		await this.#publish();
 		const watch = await this.#harness.watchTaskGraph(context);
 		watch.start((graph) => {
 			this.#graph = graph;
-			return this.#refresh();
+			return this.#publish();
 		});
 	}
 
@@ -153,22 +130,9 @@ export class Host {
 		if (input.conversationId !== undefined) this.#continues.set(record.id, input.conversationId);
 	}
 
-	/** Read the graph and inspections once, then push both the frame and the transcript list. */
-	async #refresh(): Promise<void> {
-		const { scheduling, tasks, submissions } = await this.#harness.inspect(context);
-		this.#frame = {
-			scheduling,
-			tasks: tasks
-				.filter((task) => task.record.kind === KeyTask.definition.name)
-				.map((task) => this.#trajectory(task)),
-			submissions: submissions.map(({ id, status, conversationId }) => ({
-				id,
-				status,
-				conversationId,
-			})),
-		};
+	/** Recompute the transcript list and push it to every attached client. */
+	async #publish(): Promise<void> {
 		this.#summaries = await this.#summarise();
-		broadcast(this.#listeners, this.#frame);
 		broadcast(this.#listListeners, this.#summaries);
 	}
 
@@ -217,24 +181,6 @@ export class Host {
 		}, context);
 	}
 
-	#trajectory(task: TaskInspection): Trajectory {
-		const input = task.record.input as unknown as KeyTaskInput;
-		const state = task.state;
-		const status =
-			state.kind === "waiting"
-				? `waiting on ${state.on.map((id) => `#${id}`).join(", ")}`
-				: state.kind === "blocked"
-					? `blocked (${state.reason})`
-					: state.kind;
-		return {
-			id: task.record.id,
-			kind: task.record.kind,
-			...(input.emission === undefined ? {} : { from: input.emission.emitter }),
-			status,
-			prompt: input.prompt,
-		};
-	}
-
 	async listen(): Promise<void> {
 		const server = createServer((req, res) => {
 			void this.#handle(req, res).catch((error: unknown) => {
@@ -254,16 +200,8 @@ export class Host {
 			res
 				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
 				.end(
-					"key host\n\n  GET  /api/graph                    snapshot as JSON\n  GET  /api/stream                   graph snapshot, then frames (SSE)\n  GET  /api/conversations            transcripts, then changes (SSE)\n  GET  /api/conversations/:id        one transcript, then changes (SSE)\n  POST /api/run                      start a context from the body\n  POST /api/conversations/:id/messages  continue a conversation from the body\n",
+					"key host\n\n  GET  /api/conversations            transcripts, then changes (SSE)\n  GET  /api/conversations/:id        one transcript, then changes (SSE)\n  POST /api/run                      start a context from the body\n  POST /api/conversations/:id/messages  continue a conversation from the body\n",
 				);
-			return;
-		}
-		if (req.method === "GET" && url.pathname === "/api/graph") {
-			res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(this.#frame));
-			return;
-		}
-		if (req.method === "GET" && url.pathname === "/api/stream") {
-			this.#stream(res, this.#frame, this.#listeners);
 			return;
 		}
 		if (req.method === "GET" && url.pathname === "/api/conversations") {
@@ -323,7 +261,7 @@ export class Host {
 	}
 
 	async close(): Promise<void> {
-		for (const listener of [...this.#listeners, ...this.#listListeners]) listener.end();
+		for (const listener of this.#listListeners) listener.end();
 		await this.#harness.close(context);
 	}
 }

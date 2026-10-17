@@ -41,10 +41,8 @@ export async function open(base: string): Promise<void> {
 	});
 	const footer = new Text("", 1, 0);
 
-	let mode: "list" | "prompt" | "transcript" = "prompt";
+	let mode: "list" | "transcript" | undefined;
 	let summaries: readonly Summary[] = [];
-	let list: SelectList | undefined;
-	let listSignature = "";
 	let transcript: { stop: () => void } | undefined;
 	// The open transcript, when typing continues it instead of starting a new trajectory.
 	let current: number | undefined;
@@ -79,35 +77,12 @@ export async function open(base: string): Promise<void> {
 		prompt.setValue("");
 		transcript?.stop();
 		transcript = undefined;
-		listSignature = JSON.stringify(summaries);
-		setList();
-		footer.setText(dim("  ↑/↓ select · enter open · ctrl+c quit"));
-		tui.requestRender();
-	};
-
-	/** Render the conversation list, keeping the selection across live updates. */
-	const setList = (): void => {
-		const selected = list?.getSelectedItem()?.value;
 		body.clear();
-		list = makeList(summaries);
+		const list = makeList(summaries);
 		list.onSelect = (item) => showTranscript(Number(item.value));
-		const index = summaries.findIndex((summary) => String(summary.id) === selected);
-		if (index !== -1) list.setSelectedIndex(index);
 		body.addChild(list);
 		tui.setFocus(list);
-	};
-
-	/** A blank prompt for a fresh trajectory. */
-	const showPrompt = (): void => {
-		mode = "prompt";
-		current = undefined;
-		transcript?.stop();
-		transcript = undefined;
-		prompt.setValue("");
-		body.clear();
-		body.addChild(new Text(dim("  type a prompt to start a new trajectory"), 1, 0));
-		tui.setFocus(prompt);
-		footer.setText(dim("  type to start · ctrl+c quit"));
+		footer.setText(dim("  ↑/↓ select · enter open · ctrl+c quit"));
 		tui.requestRender();
 	};
 
@@ -135,18 +110,11 @@ export async function open(base: string): Promise<void> {
 
 	/** Open the pending trajectory once the host has created its conversation. */
 	const update = (): void => {
-		if (pending !== undefined) {
-			const created = summaries.find((summary) => summary.owner === `task #${pending}`);
-			if (created === undefined) return;
-			pending = undefined;
-			showTranscript(created.id);
-			return;
-		}
-		if (mode === "list" && JSON.stringify(summaries) !== listSignature) {
-			listSignature = JSON.stringify(summaries);
-			setList();
-			tui.requestRender();
-		}
+		if (pending === undefined) return;
+		const created = summaries.find((summary) => summary.owner === `task #${pending}`);
+		if (created === undefined) return;
+		pending = undefined;
+		showTranscript(created.id);
 	};
 
 	const start = async (text: string): Promise<void> => {
@@ -193,7 +161,7 @@ export async function open(base: string): Promise<void> {
 		return undefined;
 	});
 
-	showPrompt();
+	tui.setFocus(prompt);
 	tui.start();
 
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
