@@ -1,6 +1,8 @@
 // The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
 // streams it. All state lives in the host; this renders views and submits prompts back.
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import {
@@ -20,6 +22,8 @@ import { style } from "./theme.ts";
 import { transcript } from "./trajectory.ts";
 
 const RECONNECT_MS = 250;
+/** Where a client restart picks up: the transcript that was open, if any. */
+const cursorFile = join(process.cwd(), ".key", "client.json");
 
 const selectTheme: SelectListTheme = {
 	selectedPrefix: (text) => style.accent(text),
@@ -76,7 +80,6 @@ export async function open(base: string): Promise<void> {
 	/** The resume list: arrows select a conversation, enter opens it. */
 	const showList = (): void => {
 		mode = "list";
-		current = undefined;
 		prompt.setValue("");
 		watching?.stop();
 		watching = undefined;
@@ -95,6 +98,7 @@ export async function open(base: string): Promise<void> {
 	const showNew = (): void => {
 		mode = "transcript";
 		current = undefined;
+		saveCursor(undefined);
 		prompt.setValue("");
 		watching?.stop();
 		watching = undefined;
@@ -108,6 +112,7 @@ export async function open(base: string): Promise<void> {
 	const showTranscript = (id: number): void => {
 		mode = "transcript";
 		current = id;
+		saveCursor(id);
 		watching?.stop();
 		body.clear();
 		body.addChild(new Text(style.dim("connecting…"), 1, 0));
@@ -180,13 +185,34 @@ export async function open(base: string): Promise<void> {
 		return undefined;
 	});
 
-	tui.setFocus(prompt);
+	// A restart reopens what was open; the transcript route reattaches from a fresh snapshot.
+	const cursor = loadCursor();
+	if (cursor === undefined) showNew();
+	else showTranscript(cursor);
+
 	tui.start();
 
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
 		update();
 	}
+}
+
+/** The transcript the last client had open, if it is still there. */
+function loadCursor(): number | undefined {
+	try {
+		const { conversation } = JSON.parse(readFileSync(cursorFile, "utf8")) as {
+			conversation: number;
+		};
+		return conversation;
+	} catch {
+		return undefined;
+	}
+}
+
+function saveCursor(conversation: number | undefined): void {
+	mkdirSync(join(process.cwd(), ".key"), { recursive: true });
+	writeFileSync(cursorFile, JSON.stringify({ conversation: conversation ?? null }));
 }
 
 /** One selectable transcript. */
