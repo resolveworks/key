@@ -1,7 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
 import {
-	type ConversationId,
-	configure,
 	defineExtension,
 	defineTask,
 	defineTool,
@@ -11,18 +9,15 @@ import {
 
 export type KeyTaskInput = {
 	readonly prompt: string;
-	/** Continue this existing conversation instead of creating one. */
-	readonly conversationId?: ConversationId;
 	readonly on?: readonly TaskId<string>[];
 };
 
-type KeyTaskState =
-	| { readonly phase: "wait" }
-	| { readonly phase: "run"; readonly conversationId?: ConversationId };
+type KeyTaskState = { readonly phase: "wait" } | { readonly phase: "run" };
 
 /**
- * One context: a prompt plus the conversation it runs in. Nothing returns to it; at terminal, if it
- * emitted, it mints the children it emitted, and a copy of its own message that runs once they settle.
+ * One context: a prompt and the conversation it runs in. It runs once and ends. At terminal, if it
+ * forked, it mints each child in a conversation of its own and a fresh successor in this one that
+ * runs once they settle.
  */
 export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 	name: "key.task",
@@ -43,18 +38,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 		},
 		run: async (task, runtime, context) => {
 			const { prompt, on } = task.input;
-			// Save the intent before acting: a crash after the submit reacquires this same conversation.
-			let conversationId = task.state.checkpoint.conversationId ?? task.input.conversationId;
-			if (conversationId === undefined) {
-				await runtime.commit(async (tx) => {
-					conversationId = (
-						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
-					).id;
-					return { status: "running", checkpoint: { phase: "run", conversationId } };
-				}, context);
-			}
-			if (conversationId === undefined) throw new Error(`key.task ${task.id}: no conversation`);
-
+			const conversationId = runtime.conversationId;
 			const handle = await runtime.conversation(conversationId, context);
 			if (handle === undefined)
 				throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
@@ -91,30 +75,29 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			const result = message.content
 				.flatMap((part) => (part.type === "text" ? [part.text] : []))
 				.join("");
-			// Every emit call the run made, across its tool rounds; the transcript is the emit record. A
-			// conversation that never ran this task has no `emit` to call.
-			const emitted = view.entries
+			// Every fork call the run made, across its tool rounds; the transcript is the fork record.
+			const forked = view.entries
 				.filter((entry) => entry.id >= settled.entry && entry.id <= settled.answer)
 				.flatMap((entry) => entry.model ?? [])
 				.flatMap((message) => {
 					if (message.role !== "assistant") return [];
 					return message.content.flatMap((part) => {
-						if (part.type !== "toolCall" || part.name !== Emit.name) return [];
+						if (part.type !== "toolCall" || part.name !== Fork.name) return [];
 						if (typeof part.arguments.prompt !== "string")
-							throw new Error(`key.task ${task.id}: emit ${part.id} has no prompt`);
+							throw new Error(`key.task ${task.id}: fork ${part.id} has no prompt`);
 						return [part.arguments.prompt];
 					});
 				});
 
-			// One commit: this context ends, and it mints its children and the copy of its own message. Every
-			// child starts in a conversation of its own where `emit` is not an extension; the copy collects
-			// them and runs in the caller's conversation, where it is. Background keeps each from being waited
-			// on by the one before it.
+			// One commit: this context ends, and it mints its children and a fresh successor. Every child
+			// conversation is owned by this task, so it inherits this context's agent; the successor joins
+			// them in this conversation. Background keeps each from being waited on by the one before it.
 			await runtime.commit(async (tx) => {
 				const children: TaskId<string>[] = [];
-				for (const childPrompt of emitted) {
-					const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
-					await configure(tx, conversation.id, { extensions: { remove: [Cascades] } });
+				for (const childPrompt of forked) {
+					const conversation = await tx.createConversation({
+						ownership: { kind: "task", taskId: task.id },
+					});
 					children.push(
 						await tx.createTask(
 							KeyTask,
@@ -148,19 +131,19 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 });
 
 /**
- * The only verb a context uses: one piece of work per call. Call it more than once in a turn for
- * parallel work. The context materializes the calls when its turn ends, and its message re-runs once
- * they settle.
+ * The only verb a context uses: fork one child per call. Call it several times in a turn for parallel
+ * children. The context ends when its turn ends; a fresh successor runs once they settle, with their
+ * results. Children inherit fork, so a child can fork its own children.
  */
-export const Emit = defineTool({
-	name: "emit",
+export const Fork = defineTool({
+	name: "fork",
 	description:
-		"Emit one child context: it runs the given task when your turn ends. You do not wait for it. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, every child is created and your last message runs again once they all settle, with their results.",
+		"Fork one child context: it runs the given task when your turn ends. You do not wait for it; the context ends when its turn ends. Call fork once per child; calling it several times in the same turn forks several children. A fresh successor runs once they settle, with their results. Children inherit fork, so a child can fork its own children.",
 	parameters: Type.Object({
 		prompt: Type.String({ description: "The task for the child context." }),
 	}),
 	replay: "safe",
-	execute: async () => ({ output: [{ type: "text", text: "Emitted." }] }),
+	execute: async () => ({ output: [{ type: "text", text: "Forked." }] }),
 });
 
 export const KeySystem = defineExtension({
@@ -175,10 +158,5 @@ export const KeySystem = defineExtension({
 		),
 	],
 	tasks: [KeyTask],
+	tools: [Fork],
 });
-
-/**
- * Emitting is a top-level verb: a conversation that runs `KeyTask` takes `Emit` out of its agent when it
- * creates it, so a child is never offered the tool and has no way to cascade.
- */
-export const Cascades = defineExtension({ name: "key.cascades", tools: [Emit] });

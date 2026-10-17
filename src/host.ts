@@ -12,13 +12,12 @@ import {
 	createRegistry,
 	Harness,
 	type TaskGraph,
-	type Tx,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Agents } from "./agents.ts";
-import { Cascades, KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
+import { KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
@@ -32,9 +31,9 @@ const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
 /** One line in the transcript picker: a conversation, its owner, and whether it is running. */
 export type Summary = {
 	readonly id: number;
-	/** The owning `task #N`. */
+	/** The `task #N` that labels it: its owner, or its first context. */
 	readonly owner: string;
-	/** The owning task's prompt. */
+	/** That task's prompt. */
 	readonly label: string;
 	readonly running: boolean;
 };
@@ -42,7 +41,8 @@ export type Summary = {
 export class Host {
 	#harness!: Harness;
 	#prompts = new Map<number, string>();
-	#continues = new Map<number, number>();
+	/** An ownerless conversation is labelled by the first context that runs in it. */
+	#starts = new Map<number, number>();
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
 	#server!: Server;
@@ -53,7 +53,6 @@ export class Host {
 		const registry = createRegistry();
 		registry.install(CodingTools);
 		registry.install(KeySystem);
-		registry.install(Cascades);
 		registry.install(Agents);
 		this.#harness = await Harness.open(
 			await openNodeSqliteStorage(join(dataDirectory, "session.sqlite")),
@@ -93,7 +92,18 @@ export class Host {
 
 	/** Start a trajectory: one fresh context, in one commit, in a new conversation. */
 	async run(prompt: string): Promise<number> {
-		return this.#harness.commit((tx) => this.#spawn(tx, { prompt }), context);
+		return this.#harness.commit(async (tx) => {
+			const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
+			await configure(tx, conversation.id, { model: MODEL, cwd: workspace });
+			return tx.createTask(
+				KeyTask,
+				{ prompt },
+				{
+					ownership: { kind: "conversation" },
+					conversationId: conversation.id,
+				},
+			);
+		}, context);
 	}
 
 	/** Continue a trajectory: a fresh context in an existing conversation, in one commit. */
@@ -104,29 +114,32 @@ export class Host {
 		);
 		if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
 		return this.#harness.commit(
-			(tx) => this.#spawn(tx, { prompt, conversationId: conversation.id }),
+			(tx) =>
+				tx.createTask(
+					KeyTask,
+					{ prompt },
+					{
+						ownership: { kind: "conversation" },
+						conversationId: conversation.id,
+					},
+				),
 			context,
 		);
 	}
 
-	/**
-	 * A task needs a conversation to live in; this one holds its owner edge and nothing else, and no
-	 * turn is ever submitted to it. Both kinds of context are born the same way, with the same agent.
-	 */
-	async #spawn(tx: Tx, input: KeyTaskInput): Promise<number> {
-		const host = await tx.createConversation({ ownership: { kind: "ownerless" } });
-		await configure(tx, host.id, { model: MODEL, cwd: workspace });
-		return tx.createTask(KeyTask, input, {
-			ownership: { kind: "conversation" },
-			conversationId: host.id,
-		});
-	}
-
-	#record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
+	#record(record: {
+		readonly id: number;
+		readonly conversationId: number;
+		readonly kind: string;
+		readonly owner?: number;
+		readonly input: unknown;
+	}): void {
 		if (record.kind !== KeyTask.definition.name) return;
 		const input = record.input as KeyTaskInput;
 		this.#prompts.set(record.id, input.prompt);
-		if (input.conversationId !== undefined) this.#continues.set(record.id, input.conversationId);
+		if (record.owner === undefined && !this.#starts.has(record.conversationId)) {
+			this.#starts.set(record.conversationId, record.id);
+		}
 	}
 
 	/** Recompute the transcript list and push it to every attached client. */
@@ -137,24 +150,23 @@ export class Host {
 
 	async #summarise(): Promise<readonly Summary[]> {
 		const conversations = await this.#scanConversations();
-		// A conversation runs while a live task belongs to it, owns it, or continues it.
+		// A conversation runs while a live task belongs to it or owns it.
 		const running = new Set<number>();
 		for (const node of Object.values(this.#graph.tasks)) {
 			if (node.state.status === "pending" || node.state.status === "running") {
 				running.add(node.conversationId);
 				for (const owned of node.conversations) running.add(owned);
-				const continued = this.#continues.get(node.id);
-				if (continued !== undefined) running.add(continued);
 			}
 		}
-		// A context's host conversation owns its task and holds no turns; only trajectories have an owner.
+		// A child conversation is labelled by the task that forked it; a top-level one by its first context.
 		const summaries: Summary[] = [];
 		for (const { id, owner } of conversations) {
-			if (owner === undefined) continue;
+			const taskId = owner?.taskId ?? this.#starts.get(id);
+			if (taskId === undefined) throw new Error(`conversation #${id} has no context`);
 			summaries.push({
 				id,
-				owner: `task #${owner.taskId}`,
-				label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
+				owner: `task #${taskId}`,
+				label: this.#prompts.get(taskId)?.split("\n", 1)[0]?.trim() ?? "",
 				running: running.has(id),
 			});
 		}
