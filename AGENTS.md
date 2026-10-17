@@ -59,11 +59,13 @@ is wrong.
   no build step, no codegen. Node ≥ 23 runs the TypeScript directly.
 - `pnpm key` runs the host CLI and prints its own usage; treat that as the
   source of truth, not this file.
+- `pnpm check` formats, lints (Biome), and typechecks (`tsc`, no emit).
+  `pnpm fix` applies Biome's safe fixes and formatting.
 - `.env` (gitignored) holds the provider key for the hardcoded model;
   see `.env.example`. Missing is fine until a command needs a model.
-- There is no test suite and no linter, and you do not write smoke tests
-  to check yourself. Trust your work the way you trust the user: if it is
-  badly wrong, it will surface in use.
+- There is no test suite, and you do not write smoke tests to check
+  yourself. Trust your work the way you trust the user: if it is badly
+  wrong, it will surface in use.
 - All state lives under `.key/` (gitignored); delete it to reset.
 
 ## Scope

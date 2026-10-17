@@ -8,8 +8,8 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
 	type ConversationId,
 	type ConversationView,
-	createRegistry,
 	type Cursor,
+	createRegistry,
 	Harness,
 	ROOT_CONVERSATION_ID,
 	type TaskGraph,
@@ -33,7 +33,11 @@ const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
 export type Frame = {
 	readonly scheduling: string;
 	readonly tasks: readonly Trajectory[];
-	readonly submissions: readonly { readonly id: number; readonly status: string; readonly conversationId: number }[];
+	readonly submissions: readonly {
+		readonly id: number;
+		readonly status: string;
+		readonly conversationId: number;
+	}[];
 };
 
 export type Trajectory = {
@@ -137,7 +141,11 @@ export class Host {
 			tasks: tasks
 				.filter((task) => task.record.kind === KeyTask.definition.name)
 				.map((task) => this.#trajectory(task)),
-			submissions: submissions.map(({ id, status, conversationId }) => ({ id, status, conversationId })),
+			submissions: submissions.map(({ id, status, conversationId }) => ({
+				id,
+				status,
+				conversationId,
+			})),
 		};
 		this.#summaries = await this.#summarise();
 		broadcast(this.#listeners, this.#frame);
@@ -221,9 +229,11 @@ export class Host {
 	async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		const url = new URL(req.url ?? "/", "http://localhost");
 		if (req.method === "GET" && url.pathname === "/") {
-			res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(
-				"key host\n\n  GET  /api/graph             snapshot as JSON\n  GET  /api/stream            graph snapshot, then frames (SSE)\n  GET  /api/conversations     transcripts, then changes (SSE)\n  GET  /api/conversations/:id one transcript, then changes (SSE)\n  POST /api/run               start a context from the body\n",
-			);
+			res
+				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
+				.end(
+					"key host\n\n  GET  /api/graph             snapshot as JSON\n  GET  /api/stream            graph snapshot, then frames (SSE)\n  GET  /api/conversations     transcripts, then changes (SSE)\n  GET  /api/conversations/:id one transcript, then changes (SSE)\n  POST /api/run               start a context from the body\n",
+				);
 			return;
 		}
 		if (req.method === "GET" && url.pathname === "/api/graph") {
@@ -286,7 +296,11 @@ export class Host {
 }
 
 function sseHeaders(): Record<string, string> {
-	return { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" };
+	return {
+		"content-type": "text/event-stream",
+		"cache-control": "no-cache",
+		connection: "keep-alive",
+	};
 }
 
 function broadcast(listeners: Set<ServerResponse>, value: unknown): void {

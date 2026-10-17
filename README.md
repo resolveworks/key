@@ -21,3 +21,10 @@ pnpm key run "<prompt>"
 `pnpm key` with no command prints its own usage — it is the source of
 truth for the CLI. The host reads `.env` from the working directory; a
 missing file is fine until a command needs a model.
+
+## Check
+
+```bash
+pnpm check   # Biome: format + lint, then tsc
+pnpm fix     # apply Biome's safe fixes and formatting
+```

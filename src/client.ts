@@ -1,5 +1,8 @@
 // The client: a dumb terminal. It lists the host's transcripts, shows any of them, and streams the
 // running ones. All state lives in the host; this attaches, renders views, and submits prompts back.
+
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 import {
 	Container,
 	matchesKey,
@@ -11,8 +14,6 @@ import {
 	TuiAltScreen,
 	VStack,
 } from "@earendil-works/pi-tui";
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 import type { Summary } from "./host.ts";
 
 const dim = (text: string) => `\x1b[2m${text}\x1b[0m`;
@@ -80,7 +81,11 @@ export async function open(base: string): Promise<void> {
 			for (const entry of renderView(view)) body.addChild(entry);
 			const label = summaries.find((summary) => summary.id === id);
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
-			footer.setText(dim(`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · esc back`));
+			footer.setText(
+				dim(
+					`  ${running ? "● streaming" : "○ idle"} · ${label?.label ?? `conversation ${id}`} · esc back`,
+				),
+			);
 			tui.requestRender();
 		});
 	};
@@ -129,7 +134,10 @@ function renderView(view: ConversationView): readonly Text[] {
 		parts.push(...renderMessage(live.generation.message as AssistantMessage, true));
 	}
 	for (const tool of live?.tools ?? []) {
-		const head = tool.status === "running" ? green(`${tool.name} running`) : dim(`${tool.name} ${tool.status}`);
+		const head =
+			tool.status === "running"
+				? green(`${tool.name} running`)
+				: dim(`${tool.name} ${tool.status}`);
 		parts.push(new Text(`  ${head}`, 1, 0));
 		if (tool.output !== undefined && tool.output !== "") {
 			parts.push(new Text(dim(indent(tail(String(tool.output), 6))), 2, 0));
@@ -180,9 +188,13 @@ function renderMessage(message: Message, streaming = false): readonly Text[] {
 	}
 }
 
-function textOf(content: string | readonly { readonly type: string; readonly text?: string }[]): string {
+function textOf(
+	content: string | readonly { readonly type: string; readonly text?: string }[],
+): string {
 	if (typeof content === "string") return content;
-	return content.flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : [])).join("");
+	return content
+		.flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : []))
+		.join("");
 }
 
 function indent(text: string): string {
@@ -194,7 +206,10 @@ function indent(text: string): string {
 
 function tail(text: string, lines: number): string {
 	const all = text.split("\n");
-	return all.slice(Math.max(0, all.length - lines)).join("\n").trimEnd();
+	return all
+		.slice(Math.max(0, all.length - lines))
+		.join("\n")
+		.trimEnd();
 }
 
 function oneLine(value: unknown): string {
@@ -203,11 +218,19 @@ function oneLine(value: unknown): string {
 }
 
 /** Attach one transcript's SSE stream; `onView` runs for the snapshot and every later revision. */
-function watchTranscript(base: string, id: number, onView: (view: ConversationView) => void): { readonly stop: () => void } {
+function watchTranscript(
+	base: string,
+	id: number,
+	onView: (view: ConversationView) => void,
+): { readonly stop: () => void } {
 	const abort = new AbortController();
 	void (async () => {
 		try {
-			for await (const view of stream<ConversationView>(`${base}/api/conversations/${id}`, abort.signal)) onView(view);
+			for await (const view of stream<ConversationView>(
+				`${base}/api/conversations/${id}`,
+				abort.signal,
+			))
+				onView(view);
 		} catch (error) {
 			if (!abort.signal.aborted) throw error;
 		}
@@ -217,7 +240,10 @@ function watchTranscript(base: string, id: number, onView: (view: ConversationVi
 
 /** Parse an SSE body into typed frames. */
 async function* stream<T>(url: string, signal?: AbortSignal): AsyncGenerator<T> {
-	const response = await fetch(url, { headers: { accept: "text/event-stream" }, ...(signal === undefined ? {} : { signal }) });
+	const response = await fetch(url, {
+		headers: { accept: "text/event-stream" },
+		...(signal === undefined ? {} : { signal }),
+	});
 	if (!response.ok || response.body === null) throw new Error(`host returned ${response.status}`);
 	const decoder = new TextDecoder();
 	let buffer = "";

@@ -52,7 +52,10 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			// The human handoff is a terminal leaf: no conversation, no model turn.
 			if (task.input.human === true) {
 				await runtime.commit(
-					() => ({ status: "terminal", outcome: { status: "completed", result: task.input.prompt } }),
+					() => ({
+						status: "terminal",
+						outcome: { status: "completed", result: task.input.prompt },
+					}),
 					context,
 				);
 				return;
@@ -62,13 +65,16 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			if (conversationId === undefined) {
 				// Save the intent before acting: a crash after the submit reacquires this same conversation.
 				await runtime.commit(async (tx) => {
-					conversationId = (await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })).id;
+					conversationId = (
+						await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })
+					).id;
 					return { status: "running", checkpoint: { phase: "run", conversationId } };
 				}, context);
 			}
 			if (conversationId === undefined) throw new Error(`key.task ${task.id}: no conversation`);
 			const handle = await runtime.conversation(conversationId, context);
-			if (handle === undefined) throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
+			if (handle === undefined)
+				throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
 
 			// The join prompt: the emitter's last turn (control) plus every leaf's settled result (data).
 			const on = task.input.on;
@@ -94,7 +100,9 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 
 			const entry = await runtime.entry(AssistantEntry, settled.answer, context);
 			const message = entry?.model?.[0] as AssistantMessage | undefined;
-			const result = message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ?? "";
+			const result =
+				message?.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("") ??
+				"";
 
 			// One commit: this context ends and mints its successor from the emit record.
 			await runtime.commit(async (tx) => {
@@ -125,7 +133,11 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 });
 
 /** Every worker this context emitted, in creation order — the durable record the join is built from. */
-async function emittedBy(tx: Tx, emitter: TaskId, call?: string): Promise<readonly TaskId<string>[]> {
+async function emittedBy(
+	tx: Tx,
+	emitter: TaskId,
+	call?: string,
+): Promise<readonly TaskId<string>[]> {
 	const found: TaskId<string>[] = [];
 	let cursor: Cursor | undefined;
 	for (;;) {
