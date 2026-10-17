@@ -39,6 +39,7 @@ const fg = {
 
 /** pi's dark background palette. */
 const bg = {
+	user: hex("#2b3553"),
 	selected: hex("#2b3553"),
 	toolPending: okhslColor(229, 0.05, 0.24),
 	toolSuccess: okhslColor(158, 0.46, 0.25),
@@ -77,6 +78,7 @@ export const style = {
 	inverse: on(undefined, { inverse: true }),
 	thinking: on(fg.thinking, { italic: true }),
 	toolOutput: on(fg.muted),
+	userBg: behind(bg.user),
 	toolBg: {
 		pending: behind(bg.toolPending),
 		success: behind(bg.toolSuccess),

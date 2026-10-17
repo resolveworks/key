@@ -1,5 +1,5 @@
-// A transcript as pi draws one: assistant text as markdown, thinking in italics, and every tool
-// call its own box whose background says how the call is going.
+// A transcript as pi draws one: the human's words in a box, assistant text as markdown, thinking in
+// italics, and every tool call its own box whose background says how the call is going.
 
 import { homedir } from "node:os";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
@@ -80,9 +80,10 @@ function inset(component: Component, margin: number): Component {
 
 function entryBlocks(entry: EntryRecord, calls: Calls): readonly Block[] {
 	switch (entry.kind) {
-		// Every user turn is the task prompt, which the picker already shows as the title.
 		case "pi.user":
-			return [];
+			return (entry.model ?? []).flatMap((message) =>
+				message.role === "user" ? userBlocks(message) : [],
+			);
 		case "pi.assistant":
 			return (entry.model ?? []).flatMap((message) =>
 				message.role === "assistant" ? assistantBlocks(message, calls) : [],
@@ -100,6 +101,18 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Block[] {
 		default:
 			return [];
 	}
+}
+
+/** The human's turn: a full-width box, the way pi draws a user message. */
+function userBlocks(message: Message): readonly Block[] {
+	const text = message.role === "user" ? textOf(message.content).trim() : "";
+	if (text === "") return [];
+	return [
+		{
+			component: new Markdown(text, 1, 1, markdown, { color: style.text, bgColor: style.userBg }),
+			margin: 0,
+		},
+	];
 }
 
 /** Assistant turns: text as markdown, thinking in italics above it. Tool calls get no box of their own. */
