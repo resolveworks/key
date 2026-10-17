@@ -31,6 +31,15 @@ next prompt starts a fresh trajectory.
 truth for the CLI. The host reads `.env` from the working directory; a
 missing file is fine until a command needs a model.
 
+## Agent files
+
+Every context starts with the project's agent instructions. In each directory
+from the working directory up to the filesystem root, the first of
+`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD` is
+loaded; outermost first, so the nearest file reads as the most specific. The
+files are rendered as `<project_context>` and re-read on every model request,
+so an edit reaches the next turn without a restart.
+
 ## Check
 
 ```bash
