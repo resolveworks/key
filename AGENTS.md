@@ -1,9 +1,3 @@
-# AGENTS.md
-
-Guidance for coding agents working in this repo. Read `README.md` and the
-canonical design (`~/Documents/Key/design_initial.md`) before your first
-change.
-
 ## Spirit
 
 Fast-moving, experimental, always current. This is an Arch Linux hacker's
