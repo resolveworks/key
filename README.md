@@ -24,7 +24,8 @@ file is picked up by the next process.
 In the client, type a prompt to start a trajectory. `/resume` lists past
 conversations: `↑`/`↓` to select, `enter` to open. Inside a transcript, type to
 send another message into that same conversation; your message runs as a fresh
-context in the existing trajectory.
+context in the existing trajectory. `/new` abandons the open transcript: the
+next prompt starts a fresh trajectory.
 
 `pnpm key` with no command prints its own usage — it is the source of
 truth for the CLI. The host reads `.env` from the working directory; a

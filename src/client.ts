@@ -86,6 +86,20 @@ export async function open(base: string): Promise<void> {
 		tui.requestRender();
 	};
 
+	/** Abandon the open conversation: the next prompt starts a fresh trajectory. */
+	const showNew = (): void => {
+		mode = "transcript";
+		current = undefined;
+		prompt.setValue("");
+		transcript?.stop();
+		transcript = undefined;
+		body.clear();
+		body.addChild(new Text(dim("  new trajectory · type to start"), 1, 0));
+		tui.setFocus(prompt);
+		footer.setText(dim("  new trajectory · type to start · /resume for past conversations"));
+		tui.requestRender();
+	};
+
 	const showTranscript = (id: number): void => {
 		mode = "transcript";
 		current = id;
@@ -148,6 +162,10 @@ export async function open(base: string): Promise<void> {
 	prompt.onSubmit = (text) => {
 		if (text.trim() === "/resume") {
 			showList();
+			return;
+		}
+		if (text.trim() === "/new") {
+			showNew();
 			return;
 		}
 		void start(text);
