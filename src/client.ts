@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import {
 	Container,
-	Input,
+	Editor,
 	matchesKey,
 	ProcessTerminal,
 	ScrollView,
@@ -43,8 +43,10 @@ export async function open(base: string): Promise<void> {
 		scrollbarTrackStyle: style.scrollbar.track,
 		scrollbarThumbStyle: style.scrollbar.thumb,
 	});
-	const prompt = new Input({
-		prompt: style.accent("> "),
+	// pi's prompt box: a bordered, multi-line editor rather than a bare line.
+	const prompt = new Editor(tui, {
+		borderColor: style.borderMuted,
+		selectList: selectTheme,
 	});
 	const footer = new Text("", 1, 0);
 
@@ -64,7 +66,7 @@ export async function open(base: string): Promise<void> {
 				component: prompt,
 				basis: "auto",
 				shrink: 1,
-				minSize: 1,
+				minSize: 3,
 				visible: () => mode !== "list",
 			},
 			{ component: footer, basis: "auto", shrink: 1, minSize: 1 },
@@ -80,7 +82,7 @@ export async function open(base: string): Promise<void> {
 	/** The resume list: arrows select a conversation, enter opens it. */
 	const showList = (): void => {
 		mode = "list";
-		prompt.setValue("");
+		prompt.setText("");
 		watching?.stop();
 		watching = undefined;
 		body.clear();
@@ -99,7 +101,7 @@ export async function open(base: string): Promise<void> {
 		mode = "transcript";
 		current = undefined;
 		saveCursor(undefined);
-		prompt.setValue("");
+		prompt.setText("");
 		watching?.stop();
 		watching = undefined;
 		body.clear();
@@ -144,7 +146,7 @@ export async function open(base: string): Promise<void> {
 			starting = true;
 			try {
 				await post(base, `/api/conversations/${current}/messages`, value);
-				prompt.setValue("");
+				prompt.setText("");
 				tui.requestRender();
 			} finally {
 				starting = false;
@@ -154,7 +156,7 @@ export async function open(base: string): Promise<void> {
 		starting = true;
 		try {
 			pending = await post(base, "/api/run", value);
-			prompt.setValue("");
+			prompt.setText("");
 			body.clear();
 			body.addChild(new Text(style.dim("starting trajectory…"), 1, 0));
 			footer.setText(style.muted("starting · ctrl+c quit"));
@@ -165,7 +167,7 @@ export async function open(base: string): Promise<void> {
 		}
 	};
 
-	prompt.onSubmit = (text) => {
+	prompt.onSubmit = (text: string): void => {
 		if (text.trim() === "/resume") {
 			showList();
 			return;
