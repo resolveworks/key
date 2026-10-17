@@ -18,10 +18,8 @@ const hex = (value: string): Color => parseColor(value);
 /** pi's dark foreground palette. */
 const fg = {
 	accent: hex("#b281d6"),
-	border: hex("#7681c8"),
 	success: hex("#68d391"),
 	error: hex("#f08c66"),
-	warning: hex("#d6d94e"),
 	borderMuted: okhslColor(229, 0.08, 0.53),
 	muted: okhslColor(229, 0.06, 0.67),
 	dim: okhslColor(229, 0.08, 0.56),
@@ -33,14 +31,11 @@ const fg = {
 	mdListBullet: hex("#b281d6"),
 	diffAdded: hex("#68d391"),
 	diffRemoved: hex("#f08c66"),
-	scrollbarTrack: okhslColor(237, 0.07, 0.33),
-	scrollbarThumb: okhslColor(232, 0.07, 0.65),
 } as const;
 
 /** pi's dark background palette. */
 const bg = {
 	user: hex("#2b3553"),
-	selected: hex("#2b3553"),
 	toolPending: okhslColor(229, 0.05, 0.24),
 	toolSuccess: okhslColor(158, 0.46, 0.25),
 	toolError: okhslColor(19, 0.54, 0.25),
@@ -67,15 +62,12 @@ export const style = {
 	muted: on(fg.muted),
 	dim: on(fg.dim),
 	accent: on(fg.accent),
-	border: on(fg.border),
 	borderMuted: on(fg.borderMuted),
 	success: on(fg.success),
 	error: on(fg.error),
-	warning: on(fg.warning),
 	bold: on(undefined, { bold: true }),
 	italic: on(undefined, { italic: true }),
 	underline: on(undefined, { underline: true }),
-	inverse: on(undefined, { inverse: true }),
 	thinking: on(fg.thinking, { italic: true }),
 	toolOutput: on(fg.muted),
 	userBg: behind(bg.user),
@@ -84,7 +76,6 @@ export const style = {
 		success: behind(bg.toolSuccess),
 		error: behind(bg.toolError),
 	},
-	scrollbar: { track: on(fg.scrollbarTrack), thumb: on(fg.scrollbarThumb) },
 } as const;
 
 /** Named combinations, so call sites read as the pi they imitate. */

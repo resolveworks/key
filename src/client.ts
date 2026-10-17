@@ -6,16 +6,16 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import {
+	type Component,
 	Container,
 	Editor,
 	matchesKey,
 	ProcessTerminal,
-	ScrollView,
 	SelectList,
 	type SelectListTheme,
+	Spacer,
 	Text,
-	TuiAltScreen,
-	VStack,
+	TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import type { Summary } from "./host.ts";
 import { style } from "./theme.ts";
@@ -35,22 +35,21 @@ const selectTheme: SelectListTheme = {
 
 /** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
-	const tui = new TuiAltScreen(new ProcessTerminal());
-	const body = new Container();
-	const scroll = new ScrollView(body, {
-		follow: "end",
-		primary: true,
-		scrollbarTrackStyle: style.scrollbar.track,
-		scrollbarThumbStyle: style.scrollbar.thumb,
-	});
-	// pi's prompt box: a bordered, multi-line editor rather than a bare line.
+	const tui = new TuiMainScreen(new ProcessTerminal());
+	// The terminal owns the screen and the scrollback. Within a view the document only grows, so
+	// rendered lines scroll up into history instead of being redrawn.
+	const document = new Container();
+	const input = new Container();
 	const prompt = new Editor(tui, {
 		borderColor: style.borderMuted,
 		selectList: selectTheme,
 	});
+	input.addChild(prompt);
 	const footer = new Text("", 1, 0);
+	tui.addChild(document);
+	tui.addChild(input);
+	tui.addChild(footer);
 
-	let mode: "list" | "transcript" | undefined;
 	let summaries: readonly Summary[] = [];
 	let watching: { stop: () => void } | undefined;
 	// The open transcript, when typing continues it instead of starting a new trajectory.
@@ -59,19 +58,18 @@ export async function open(base: string): Promise<void> {
 	let pending: number | undefined;
 	let starting = false;
 
-	tui.setLayoutRoot(
-		new VStack([
-			{ component: scroll, basis: 0, grow: 1, minSize: 1 },
-			{
-				component: prompt,
-				basis: "auto",
-				shrink: 1,
-				minSize: 3,
-				visible: () => mode !== "list",
-			},
-			{ component: footer, basis: "auto", shrink: 1, minSize: 1 },
-		]),
-	);
+	/** Replace the document; streaming appends, a view switch starts a new one. */
+	const show = (components: readonly Component[]): void => {
+		document.clear();
+		for (const component of components) document.addChild(component);
+	};
+
+	/** The prompt is part of the transcript only where typing continues it. */
+	const showPrompt = (): void => {
+		input.clear();
+		input.addChild(prompt);
+		tui.setFocus(prompt);
+	};
 
 	const quit = (): void => {
 		watching?.stop();
@@ -81,18 +79,16 @@ export async function open(base: string): Promise<void> {
 
 	/** The resume list: arrows select a conversation, enter opens it. */
 	const showList = (): void => {
-		mode = "list";
 		prompt.setText("");
 		watching?.stop();
 		watching = undefined;
-		body.clear();
 		const list = makeList(summaries);
 		list.onSelect = (item) => showTranscript(Number(item.value));
-		const back = current === undefined ? showNew : () => showTranscript(current as number);
-		list.onCancel = back;
-		body.addChild(list);
+		list.onCancel = current === undefined ? showNew : () => showTranscript(current as number);
+		input.clear();
+		show([new Spacer(1), list]);
 		tui.setFocus(list);
-		footer.setText(style.muted("↑/↓ select · enter open · esc back · ctrl+c/d quit"));
+		footer.setText("↑/↓ select · enter open · esc back · ctrl+c/d quit");
 		tui.requestRender();
 	};
 
@@ -101,33 +97,30 @@ export async function open(base: string): Promise<void> {
 	 * command that asks for it records the cursor, so boot can still read what was last open.
 	 */
 	const showNew = (): void => {
-		mode = "transcript";
 		current = undefined;
 		prompt.setText("");
 		watching?.stop();
 		watching = undefined;
-		body.clear();
-		body.addChild(new Text(style.dim("new trajectory · type to start"), 1, 0));
-		tui.setFocus(prompt);
-		footer.setText(style.muted("new trajectory · type to start · /resume for past conversations"));
+		showPrompt();
+		show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
+		footer.setText("new trajectory · type to start · /resume for past conversations");
 		tui.requestRender();
 	};
 
+	/** Open a conversation; its lines are only ever appended, so history stays in scrollback. */
 	const showTranscript = (id: number): void => {
-		mode = "transcript";
 		current = id;
 		saveCursor(id);
 		watching?.stop();
-		body.clear();
-		body.addChild(new Text(style.dim("connecting…"), 1, 0));
-		tui.setFocus(prompt);
+		showPrompt();
+		show([new Text(style.dim("connecting…"), 0, 0)]);
 		tui.requestRender();
 		watching = watchTranscript(base, id, (view) => {
-			body.clear();
-			for (const entry of transcript(view)) body.addChild(entry);
+			show(transcript(view));
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
-			const state = running ? style.success("● streaming") : style.dim("○ idle");
-			footer.setText(`${state}${style.muted(" · type to continue")}`);
+			footer.setText(
+				`${running ? style.success("● streaming") : style.dim("○ idle")} · type to continue`,
+			);
 			tui.requestRender();
 		});
 	};
@@ -144,7 +137,7 @@ export async function open(base: string): Promise<void> {
 	const start = async (text: string): Promise<void> => {
 		const value = text.trim();
 		if (value === "" || starting || pending !== undefined) return;
-		if (mode === "transcript" && current !== undefined) {
+		if (current !== undefined) {
 			starting = true;
 			try {
 				await post(base, `/api/conversations/${current}/messages`, value);
@@ -159,9 +152,8 @@ export async function open(base: string): Promise<void> {
 		try {
 			pending = await post(base, "/api/run", value);
 			prompt.setText("");
-			body.clear();
-			body.addChild(new Text(style.dim("starting trajectory…"), 1, 0));
-			footer.setText(style.muted("starting · ctrl+c/d quit"));
+			show([new Text(style.dim("starting trajectory…"), 0, 0)]);
+			footer.setText("starting · ctrl+c/d quit");
 			tui.requestRender();
 			update();
 		} finally {
