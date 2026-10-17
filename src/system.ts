@@ -20,7 +20,7 @@ type KeyTaskState =
 
 /**
  * One context: a prompt plus the conversation it runs in. Nothing returns to it; at terminal, if it
- * emitted, it mints the contexts it emitted and one join waiting on them.
+ * emitted, it mints the children it emitted, and a copy of its own message that runs once they settle.
  */
 export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 	name: "key.task",
@@ -103,15 +103,15 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					});
 				});
 
-			// One commit: this context ends, and the contexts it emitted are born in its conversation.
-			// Background keeps the emitter from waiting on them; the join waits on them explicitly.
+			// One commit: this context ends, and its children are born in its conversation. Background
+			// keeps it from waiting on them; the copy of its message waits on them instead.
 			await runtime.commit(async (tx) => {
-				const workers: TaskId<string>[] = [];
-				for (const workerPrompt of emitted) {
-					workers.push(
+				const children: TaskId<string>[] = [];
+				for (const childPrompt of emitted) {
+					children.push(
 						await tx.createTask(
 							KeyTask,
-							{ prompt: workerPrompt },
+							{ prompt: childPrompt },
 							{
 								ownership: { kind: "conversation" },
 								conversationId,
@@ -120,10 +120,10 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 						),
 					);
 				}
-				if (workers.length > 0) {
+				if (children.length > 0) {
 					await tx.createTask(
 						KeyTask,
-						{ prompt: result, on: workers },
+						{ prompt: result, on: children },
 						{
 							ownership: { kind: "conversation" },
 							conversationId,
@@ -142,14 +142,15 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 
 /**
  * The only verb a context uses: one piece of work per call. Call it more than once in a turn for
- * parallel work. The context materializes the calls when its turn ends and mints the join over them.
+ * parallel work. The context materializes the calls when its turn ends, and its message re-runs once
+ * they settle.
  */
 export const Emit = defineTool({
 	name: "emit",
 	description:
-		"Emit one worker context: a fresh context that runs the given task when your turn ends. You do not wait for it. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, every worker is created and a join waiting on all of them starts with your last message as its prompt.",
+		"Emit one child context: it runs the given task when your turn ends. You do not wait for it. Call emit once per piece of work; make several calls in the same turn for parallel work. When your turn ends, every child is created and your last message runs again once they all settle, with their results.",
 	parameters: Type.Object({
-		prompt: Type.String({ description: "The task for the worker context." }),
+		prompt: Type.String({ description: "The task for the child context." }),
 	}),
 	replay: "safe",
 	execute: async () => ({ output: [{ type: "text", text: "Emitted." }] }),
