@@ -38,18 +38,18 @@ const selectTheme: SelectListTheme = {
 export async function open(base: string): Promise<void> {
 	const tui = new TuiMainScreen(new ProcessTerminal());
 	// The terminal owns the screen and the scrollback. Within a view the document only grows, so
-	// rendered lines scroll up into history instead of being redrawn.
+	// rendered lines scroll up into history instead of being redrawn. Every child is mounted once,
+	// before the first frame, and nothing in the dock is ever left rendering zero lines: a main
+	// screen never shrinks, so a slot that blinks out strands rows instead of reclaiming them.
 	const document = new Container();
-	const input = new Container();
 	const prompt = new Editor(tui, {
 		borderColor: style.borderMuted,
 		selectList: selectTheme,
 	});
 	prompt.setAutocompleteProvider(provider(process.cwd()));
-	input.addChild(prompt);
-	const footer = new Text("", 1, 0);
+	const footer = new Text("new trajectory · type to start · /resume for past conversations", 1, 0);
 	tui.addChild(document);
-	tui.addChild(input);
+	tui.addChild(prompt);
 	tui.addChild(footer);
 
 	let summaries: readonly Summary[] = [];
@@ -66,13 +66,6 @@ export async function open(base: string): Promise<void> {
 		for (const component of components) document.addChild(component);
 	};
 
-	/** The prompt is part of the transcript only where typing continues it. */
-	const showPrompt = (): void => {
-		input.clear();
-		input.addChild(prompt);
-		tui.setFocus(prompt);
-	};
-
 	const quit = (): void => {
 		watching?.stop();
 		tui.stop({ preserveScreen: false });
@@ -87,7 +80,6 @@ export async function open(base: string): Promise<void> {
 		const list = makeList(summaries);
 		list.onSelect = (item) => showTranscript(Number(item.value));
 		list.onCancel = current === undefined ? showNew : () => showTranscript(current as number);
-		input.clear();
 		show([new Spacer(1), list]);
 		tui.setFocus(list);
 		footer.setText("↑/↓ select · enter open · esc back · ctrl+c/d quit");
@@ -103,7 +95,7 @@ export async function open(base: string): Promise<void> {
 		prompt.setText("");
 		watching?.stop();
 		watching = undefined;
-		showPrompt();
+		tui.setFocus(prompt);
 		show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
 		footer.setText("new trajectory · type to start · /resume for past conversations");
 		tui.requestRender();
@@ -114,7 +106,7 @@ export async function open(base: string): Promise<void> {
 		current = id;
 		saveCursor(id);
 		watching?.stop();
-		showPrompt();
+		tui.setFocus(prompt);
 		show([new Text(style.dim("connecting…"), 0, 0)]);
 		tui.requestRender();
 		watching = watchTranscript(base, id, (view) => {
@@ -201,9 +193,11 @@ export async function open(base: string): Promise<void> {
 	// a hint, never a fact, and a stale one must land on a fresh trajectory rather than a dead view.
 	const cursor = loadCursor();
 
+	// The first frame is already a complete view, so it starts on the one view that needs no host.
+	showNew();
 	tui.start();
 
-	// The first frame is the verdict on the cursor; every frame after only refreshes the list.
+	// The first summaries are the verdict on the cursor; every frame after only refreshes the list.
 	let restored = false;
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
@@ -211,7 +205,6 @@ export async function open(base: string): Promise<void> {
 			restored = true;
 			if (cursor !== undefined && summaries.some((summary) => summary.id === cursor))
 				showTranscript(cursor);
-			else showNew();
 		}
 		update();
 	}
