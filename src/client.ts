@@ -96,11 +96,13 @@ export async function open(base: string): Promise<void> {
 		tui.requestRender();
 	};
 
-	/** Abandon the open conversation: the next prompt starts a fresh trajectory. */
+	/**
+	 * Abandon the open conversation: the next prompt starts a fresh trajectory. A view only — the
+	 * command that asks for it records the cursor, so boot can still read what was last open.
+	 */
 	const showNew = (): void => {
 		mode = "transcript";
 		current = undefined;
-		saveCursor(undefined);
 		prompt.setText("");
 		watching?.stop();
 		watching = undefined;
@@ -173,6 +175,7 @@ export async function open(base: string): Promise<void> {
 			return;
 		}
 		if (text.trim() === "/new") {
+			saveCursor(undefined);
 			showNew();
 			return;
 		}
@@ -189,17 +192,19 @@ export async function open(base: string): Promise<void> {
 
 	// A restart reopens what was open, but only once the host confirms it still exists: a cursor is
 	// a hint, never a fact, and a stale one must land on a fresh trajectory rather than a dead view.
-	showNew();
 	const cursor = loadCursor();
 
 	tui.start();
 
+	// The first frame is the verdict on the cursor; every frame after only refreshes the list.
+	let restored = false;
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
-		if (cursor !== undefined) {
-			if (!summaries.some((summary) => summary.id === cursor)) continue;
-			showTranscript(cursor);
-			break;
+		if (!restored) {
+			restored = true;
+			if (cursor !== undefined && summaries.some((summary) => summary.id === cursor))
+				showTranscript(cursor);
+			else showNew();
 		}
 		update();
 	}
