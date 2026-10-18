@@ -36,6 +36,8 @@ export type Summary = {
 	/** That context's prompt. */
 	readonly label: string;
 	readonly running: boolean;
+	/** A forked context, or a terminated child: no more messages may reach it. */
+	readonly closed: boolean;
 };
 
 export class Host {
@@ -43,6 +45,13 @@ export class Host {
 	#prompts = new Map<number, string>();
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
+	/** Each conversation's owning task. */
+	#owners = new Map<number, number | undefined>();
+	/** Conversations a context minted children in: minting is its terminal act, so it is closed. */
+	#forked = new Set<number>();
+	/** Task ids that are forked children, and those that have ended. */
+	#children = new Set<number>();
+	#ended = new Set<number>();
 	#server!: Server;
 	#listListeners = new Set<ServerResponse>();
 
@@ -111,6 +120,7 @@ export class Host {
 			context,
 		);
 		if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
+		if (this.#closed(conversationId)) throw new Error(`conversation #${conversationId} is closed`);
 		return this.#harness.commit(
 			(tx) =>
 				tx.createTask(
@@ -125,9 +135,29 @@ export class Host {
 		);
 	}
 
-	#record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
+	#record(record: {
+		readonly id: number;
+		readonly kind: string;
+		readonly conversationId: number;
+		readonly input: unknown;
+		readonly state: { readonly status: string };
+	}): void {
 		if (record.kind !== KeyTask.definition.name) return;
-		this.#prompts.set(record.id, (record.input as KeyTaskInput).prompt);
+		const input = record.input as KeyTaskInput;
+		this.#prompts.set(record.id, input.prompt);
+		if (input.child === true) {
+			this.#children.add(record.id);
+			this.#forked.add(record.conversationId);
+		}
+		if (record.state.status === "completing" || record.state.status === "terminal")
+			this.#ended.add(record.id);
+	}
+
+	/** No more messages: a forked context lives on through its successors, a child through its branch. */
+	#closed(conversationId: number): boolean {
+		if (this.#forked.has(conversationId)) return true;
+		const owner = this.#owners.get(conversationId);
+		return owner !== undefined && this.#children.has(owner) && this.#ended.has(owner);
 	}
 
 	/** Recompute the transcript list and push it to every attached client. */
@@ -155,6 +185,7 @@ export class Host {
 								owner: `task #${owner.taskId}`,
 								label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
 								running: running.has(id),
+								closed: this.#closed(id),
 							},
 						],
 			)
@@ -168,6 +199,7 @@ export class Host {
 			for (;;) {
 				const page = await tx.scanConversations({}, SCAN_PAGE_SIZE, cursor);
 				for (const record of page.items) {
+					if (record.owner !== undefined) this.#owners.set(record.id, record.owner.taskId);
 					found.push({
 						id: record.id,
 						...(record.owner === undefined ? {} : { owner: { taskId: record.owner.taskId } }),

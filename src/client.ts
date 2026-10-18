@@ -121,8 +121,11 @@ export async function open(base: string): Promise<void> {
 		watching = watchTranscript(base, id, (view) => {
 			show(transcript(view));
 			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
+			const closed = summaries.find((summary) => summary.id === id)?.closed ?? false;
 			footer.setText(
-				`${running ? style.success("● streaming") : style.dim("○ idle")} · type to continue`,
+				closed
+					? `${style.dim("○ closed")} · /new for a fresh trajectory`
+					: `${running ? style.success("● streaming") : style.dim("○ idle")} · type to continue`,
 			);
 			tui.requestRender();
 		});
@@ -141,10 +144,18 @@ export async function open(base: string): Promise<void> {
 		const value = text.trim();
 		if (value === "" || starting || pending !== undefined) return;
 		if (current !== undefined) {
+			if (summaries.find((summary) => summary.id === current)?.closed ?? false) {
+				footer.setText("closed · /new for a fresh trajectory");
+				tui.requestRender();
+				return;
+			}
 			starting = true;
 			try {
 				await post(base, `/api/conversations/${current}/messages`, value);
 				prompt.setText("");
+				tui.requestRender();
+			} catch (error) {
+				footer.setText(String(error));
 				tui.requestRender();
 			} finally {
 				starting = false;
@@ -242,7 +253,7 @@ function makeList(summaries: readonly Summary[]): SelectList {
 		summaries.map((summary) => ({
 			value: String(summary.id),
 			label: `#${summary.id}`,
-			description: `${summary.running ? style.success("●") : style.dim("○")} ${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
+			description: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
 		})),
 		20,
 		selectTheme,
