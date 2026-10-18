@@ -9,11 +9,11 @@ import {
 	conversationOf,
 	entries,
 	type KeyRecord,
+	KeyTask,
 	keySetup,
 	MODEL,
 	openKey,
 } from "../tests/harness.ts";
-import { KeyTask } from "./system.ts";
 
 const context = BACKGROUND_CONTEXT;
 

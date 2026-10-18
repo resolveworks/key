@@ -20,7 +20,12 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Agents } from "./agents.ts";
-import { KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
+import { git } from "./git.ts";
+import { type KeyTaskInput, keySystem, keyTask } from "./system.ts";
+
+/** The host's key, its git bound to the real one. */
+const KeySystem = keySystem(git);
+const KeyTask = keyTask(git);
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;

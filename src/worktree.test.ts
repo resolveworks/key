@@ -9,24 +9,23 @@ import {
 	MemoryStorage,
 	type TaskId,
 } from "@earendil-works/pi-durable";
-import { afterEach, describe, expect, it } from "vitest";
-import { FakeGitEnv, REPO } from "../tests/git.ts";
-import { conversationOf, keySetup, openKey } from "../tests/harness.ts";
-import { KeyTask } from "./system.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fakeGit, gitCalls, REPO, resetGit } from "../tests/git.ts";
+import { conversationOf, KeyTask, keySetup, openKey } from "../tests/harness.ts";
 import { branchFor, ensureWorktree } from "./worktree.ts";
 
 const context = BACKGROUND_CONTEXT;
 
 describe("ensureWorktree", () => {
+	beforeEach(resetGit);
+
 	it("asks git for a worktree under .key, on branch agent/<name>", async () => {
-		const env = new FakeGitEnv();
-		const tree = await ensureWorktree("fix-the-bug", env, context);
+		const tree = await ensureWorktree("fix-the-bug", fakeGit);
 		expect(tree).toEqual({
 			path: join(REPO, ".key", "worktrees", "fix-the-bug"),
 			branch: branchFor("fix-the-bug"),
 		});
-		expect(env.calls).toContainEqual([
-			"git",
+		expect(gitCalls()).toContainEqual([
 			"worktree",
 			"add",
 			"--quiet",
@@ -38,9 +37,8 @@ describe("ensureWorktree", () => {
 	});
 
 	it("a name that is not kebab-case fails loudly", async () => {
-		const env = new FakeGitEnv();
-		await expect(ensureWorktree("Not Kebab", env, context)).rejects.toThrow(/lowercase kebab-case/);
-		expect(env.calls).toEqual([]);
+		await expect(ensureWorktree("Not Kebab", fakeGit)).rejects.toThrow(/lowercase kebab-case/);
+		expect(gitCalls()).toEqual([]);
 	});
 });
 

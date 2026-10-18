@@ -20,8 +20,8 @@ import {
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
-import { KeySystem, KeyTask, type KeyTaskInput } from "../src/system.ts";
-import { FakeGitEnv } from "./git.ts";
+import { type KeyTaskInput, keySystem, keyTask } from "../src/system.ts";
+import { FakeEnv, fakeGit } from "./git.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -42,16 +42,19 @@ export function keySetup(): KeySetup {
 	models.setProvider(faux.provider);
 	const registry = createRegistry();
 	registry.install(CodingTools);
-	registry.install(KeySystem);
+	registry.install(keySystem(fakeGit));
 	registry.install(Agents);
 	return { faux, models, registry, reports: [] };
 }
+
+/** The key.task of the fake git: the kind tests create, behavior resolved from the installed key. */
+export const KeyTask = keyTask(fakeGit);
 
 /** Open one host process's Harness over `storage`; closing it and opening another on the same setup is a restart. */
 export function openKey(
 	storage: Storage,
 	setup: KeySetup,
-	env: FakeGitEnv = new FakeGitEnv(),
+	env: FakeEnv = new FakeEnv(),
 ): Promise<Harness> {
 	return Harness.open(
 		storage,

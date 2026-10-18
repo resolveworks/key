@@ -4,8 +4,9 @@ import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "./agents.ts";
+import { git } from "./git.ts";
 import { Host, type Summary } from "./host.ts";
-import { KeySystem } from "./system.ts";
+import { keySystem } from "./system.ts";
 
 /** A host's SSE stream, read frame by frame with data lines joined the way the client joins them. */
 class Frames {
@@ -59,7 +60,7 @@ describe("host", () => {
 		host = new Host({
 			models: () => models,
 			storage: () => new MemoryStorage(),
-			extensions: [CodingTools, KeySystem, Agents],
+			extensions: [CodingTools, keySystem(git), Agents],
 			port: 0,
 		});
 		await host.open();
@@ -114,7 +115,7 @@ describe("host", () => {
 	});
 
 	test("a transcript streams its view", async () => {
-		const { id, task } = await startRun("say hello");
+		const { id } = await startRun("say hello");
 
 		const response = await fetch(`${base}/api/conversations/${id}`);
 		expect(response.headers.get("content-type")).toBe("text/event-stream");

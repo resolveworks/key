@@ -10,9 +10,8 @@ import {
 	type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FakeGitEnv, REPO } from "../tests/git.ts";
-import { conversationOf, entries, keySetup, MODEL, openKey } from "../tests/harness.ts";
-import { KeyTask } from "./system.ts";
+import { FakeEnv, REPO } from "../tests/git.ts";
+import { conversationOf, entries, KeyTask, keySetup, MODEL, openKey } from "../tests/harness.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -38,7 +37,7 @@ async function restart(
 	storage: ReopenableStorage,
 	harness: Harness,
 	setup: ReturnType<typeof keySetup>,
-	env: FakeGitEnv,
+	env: FakeEnv,
 ) {
 	await harness.close(context);
 	opened.splice(opened.indexOf(harness), 1);
@@ -101,7 +100,7 @@ async function crashedMidRun(harness: Harness, task: TaskId) {
 describe("restart", () => {
 	it("a context that saved its conversation id reuses that conversation after a restart", async () => {
 		const setup = keySetup();
-		const env = new FakeGitEnv();
+		const env = new FakeEnv();
 		const storage = new ReopenableStorage();
 		const first = await openKey(storage, setup, env);
 		opened.push(first);
@@ -136,7 +135,7 @@ describe("restart", () => {
 
 	it("fork calls made before a crash still mint their children exactly once", async () => {
 		const setup = keySetup();
-		const env = new FakeGitEnv();
+		const env = new FakeEnv();
 		const storage = new ReopenableStorage();
 		const first = await openKey(storage, setup, env);
 		opened.push(first);
