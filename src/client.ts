@@ -13,6 +13,7 @@ import {
 	ProcessTerminal,
 	SelectList,
 	type SelectListTheme,
+	Spacer,
 	Text,
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
@@ -37,8 +38,8 @@ const selectTheme: SelectListTheme = {
 export async function open(base: string): Promise<void> {
 	const tui = new TuiMainScreen(new ProcessTerminal());
 	// The terminal owns the screen and the scrollback. Within a view the document only grows, so
-	// rendered lines scroll up into history instead of being redrawn. A selector takes the prompt's
-	// place in the dock rather than the document, so opening one never shrinks the transcript.
+	// rendered lines scroll up into history instead of being redrawn. A selector replaces the
+	// document and clears the dock, so the list owns a clean screen.
 	const document = new Container();
 	const dock = new Container();
 	const prompt = new Editor(tui, {
@@ -88,7 +89,7 @@ export async function open(base: string): Promise<void> {
 		list.onSelect = (item) => showTranscript(Number(item.value));
 		list.onCancel = current === undefined ? showNew : () => showTranscript(current as number);
 		dock.clear();
-		dock.addChild(list);
+		show([new Spacer(1), list]);
 		tui.setFocus(list);
 		footer.setText("↑/↓ select · enter open · esc back · ctrl+c/d quit");
 		tui.requestRender();
