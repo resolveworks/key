@@ -8,14 +8,11 @@ import {
 	type KeyFixture,
 	type KeyRecord,
 	openKey,
-	script,
-	settled,
 } from "../tests/harness.ts";
 
 let key: KeyFixture | undefined;
 afterEach(async () => {
 	await key?.close();
-	key?.cleanup();
 	key = undefined;
 });
 
@@ -67,7 +64,7 @@ async function entriesOf(key: KeyFixture, conversationId: ConversationId) {
 /** Start a cascade and return its task ID. */
 async function started(key: KeyFixture, prompt: string): Promise<number> {
 	const id = await key.run(prompt);
-	await settled(key.harness, id);
+	await key.settled(id);
 	return id;
 }
 
@@ -88,7 +85,7 @@ describe("the fork cascade", () => {
 	it("one fork call mints one child and a fresh successor", async () => {
 		key = await openKey();
 		// The second answer is the round after the fork: it is the text the successor inherits.
-		script(key, turn("I forked a.", ["a"]), turn("a is on its way"));
+		key.answer([turn("I forked a.", ["a"]), turn("a is on its way")]);
 
 		await started(key, "kick off");
 		const next = await waitForSuccessor(key);
@@ -100,7 +97,7 @@ describe("the fork cascade", () => {
 
 	it("several fork calls in a turn mint several children", async () => {
 		key = await openKey();
-		script(key, turn("I forked a and b.", ["a", "b"]), turn("both are underway"));
+		key.answer([turn("I forked a and b.", ["a", "b"]), turn("both are underway")]);
 
 		await started(key, "kick off");
 		const next = await waitForSuccessor(key);
@@ -110,37 +107,13 @@ describe("the fork cascade", () => {
 		expect(next.input.on).toEqual(forked.map((record) => record.id));
 	});
 
-	it("a successor waits for every child before it starts", async () => {
-		key = await openKey();
-		// The child's answer is never scripted, so it cannot settle and the successor cannot start.
-		script(key, turn("I forked a.", ["a"]), turn("a is on its way"));
-
-		await started(key, "kick off");
-		const next = await waitForSuccessor(key);
-		let waiting: { state: unknown } | undefined;
-		await vi.waitFor(
-			async () => {
-				const live = (await key?.harness.inspect(BACKGROUND_CONTEXT))?.tasks ?? [];
-				waiting = live.find((task) => task.record.id === next.id);
-				expect(waiting?.state).toMatchObject({ kind: "waiting" });
-			},
-			{ interval: 5 },
-		);
-
-		expect(waiting?.state).toMatchObject({
-			kind: "waiting",
-			on: children(await key.cascade()).map((record) => record.id),
-		});
-	});
-
 	it("the parent never receives its child's result", async () => {
 		key = await openKey();
-		script(
-			key,
+		key.answer([
 			turn("parent answer", ["a"]),
 			turn("the parent ends here"),
 			turn("CHILD-ANSWER-BENEATH-THE-SURFACE"),
-		);
+		]);
 
 		const parent = await started(key, "kick off");
 		const next = await waitForSuccessor(key);
@@ -158,11 +131,11 @@ describe("the fork cascade", () => {
 
 	it("a successor is a new context, not the parent resumed", async () => {
 		key = await openKey();
-		script(key, turn("I forked a.", ["a"]), turn("a is on its way"), turn("a answers"));
+		key.answer([turn("I forked a.", ["a"]), turn("a is on its way"), turn("a answers")]);
 
 		const parent = await started(key, "kick off");
 		const next = await waitForSuccessor(key);
-		await settled(key.harness, next.id);
+		await key.settled(next.id);
 
 		const parentConversation = await conversationOf(key, parent);
 		expect(await conversationOf(key, next.id)).not.toBe(parentConversation);
@@ -176,7 +149,7 @@ describe("the fork cascade", () => {
 
 	it("a context that forks nothing ends the cascade", async () => {
 		key = await openKey();
-		script(key, turn("just an answer"));
+		key.answer([turn("just an answer")]);
 
 		const parent = await started(key, "kick off");
 		const records = await key.cascade();
@@ -191,12 +164,12 @@ describe("the fork cascade", () => {
 	it("a child cannot fork", async () => {
 		key = await openKey();
 		// The child's conversation has fork removed, so its call is refused and mints nothing.
-		script(key, turn("I forked a.", ["a"]), turn("a is on its way"));
+		key.answer([turn("I forked a.", ["a"]), turn("a is on its way")]);
 		const kickoff = await key.run("kick off");
 		// The child's refusal is scripted behind its prompt request: answer the child once, then refuse.
 		await vi.waitFor(() => expect(key?.requests.length).toBeGreaterThanOrEqual(2), { interval: 5 });
 		key.answer([turn("a forks b", ["b"])]);
-		await settled(key.harness, kickoff);
+		await key.settled(kickoff);
 
 		expect(children(await key.cascade()).map((record) => record.input.name)).toEqual(["a"]);
 	});
@@ -205,8 +178,7 @@ describe("the fork cascade", () => {
 describe("what a context scans for forks", () => {
 	it("a fork call whose result is an error mints nothing", async () => {
 		key = await openKey();
-		script(
-			key,
+		key.answer([
 			turn("I forked a.", ["a"]),
 			turn("a is on its way"),
 			// The successor's turn contains the attempt; the scan considers every assistant message of a run.
@@ -215,11 +187,11 @@ describe("what a context scans for forks", () => {
 				{ stopReason: "toolUse" },
 			),
 			turn("done"),
-		);
+		]);
 
 		await started(key, "kick off");
 		const next = await waitForSuccessor(key);
-		await settled(key.harness, next.id);
+		await key.settled(next.id);
 
 		// b was refused, so the only child is a.
 		expect(children(await key.cascade()).map((record) => record.input.name)).toEqual(["a"]);

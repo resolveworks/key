@@ -1,10 +1,5 @@
 // A restart is the crash-recovery path: a new Harness on the same storage takes up the run the first one
 // left, and nothing it already committed happens twice.
-import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	createModels,
@@ -25,9 +20,9 @@ import {
 	type Storage,
 	type TaskId,
 } from "@earendil-works/pi-durable";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { FakeGitEnv, REPO } from "../tests/git.ts";
 import { KeySystem, KeyTask } from "./system.ts";
 
 const MODEL = { provider: "faux", modelId: "faux-1" };
@@ -60,43 +55,32 @@ function host(): Host {
 	return { faux, models, registry };
 }
 
-const directories: string[] = [];
 const opened: Harness[] = [];
 
 afterEach(async () => {
 	for (const harness of opened.splice(0)) await harness.close(BACKGROUND_CONTEXT);
-	for (const directory of directories.splice(0))
-		await rm(directory, { recursive: true, force: true });
 });
 
-/** A repository with one commit, so a child's worktree has a `HEAD` to branch from. */
-async function repository(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "key-restart-"));
-	directories.push(directory);
-	const git = (...args: string[]) => execFileSync("git", args, { cwd: directory, stdio: "pipe" });
-	git("init", "--quiet", "--initial-branch=main");
-	git("config", "user.name", "Key Test");
-	git("config", "user.email", "key@example.com");
-	git("commit", "--quiet", "--allow-empty", "-m", "root");
-	return directory;
-}
-
 /** One host process: a Harness over `storage`, with the host's models and registry. */
-async function open(storage: Storage, { models, registry }: Host, cwd: string): Promise<Harness> {
+async function open(
+	storage: Storage,
+	{ models, registry }: Host,
+	env: FakeGitEnv,
+): Promise<Harness> {
 	const harness = await Harness.open(
 		storage,
-		{ models, registry, env: () => new NodeExecutionEnv({ cwd }) },
+		{ models, registry, env: () => env },
 		BACKGROUND_CONTEXT,
 	);
 	opened.push(harness);
 	return harness;
 }
 
-async function restart(storage: ReopenableStorage, harness: Harness, setup: Host, cwd: string) {
+async function restart(storage: ReopenableStorage, harness: Harness, setup: Host, env: FakeGitEnv) {
 	await harness.close(BACKGROUND_CONTEXT);
 	opened.splice(opened.indexOf(harness), 1);
 	storage.reopen();
-	return open(storage, setup, cwd);
+	return open(storage, setup, env);
 }
 
 /** A faux response that never answers: the run stays mid-generation until the harness cancels it. */
@@ -113,18 +97,6 @@ function unanswered(): { readonly step: FauxResponseStep; readonly reached: Prom
 			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
 		});
 	return { step, reached: arrived };
-}
-
-/** Poll for a condition a run reaches asynchronously; never sleep for a fixed time. */
-async function waitFor(
-	condition: () => boolean | Promise<boolean>,
-	timeoutMs = 5000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (!(await condition())) {
-		if (Date.now() > deadline) throw new Error("condition was not reached");
-		await delay(5);
-	}
 }
 
 const scanTasks = (harness: Harness) =>
@@ -157,11 +129,10 @@ async function entriesOf(harness: Harness, id: ConversationId) {
 async function run(
 	harness: Harness,
 	prompt: string,
-	cwd: string,
 ): Promise<{ readonly task: TaskId; readonly conversation: ConversationId }> {
 	return harness.commit(async (tx) => {
 		const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
-		await configure(tx, conversation.id, { model: MODEL, cwd });
+		await configure(tx, conversation.id, { model: MODEL, cwd: REPO });
 		const task = await tx.createTask(
 			KeyTask,
 			{ prompt },
@@ -183,20 +154,20 @@ async function crashedMidRun(harness: Harness, task: TaskId): Promise<Conversati
 
 describe("restart", () => {
 	it("recovers a running context without duplicating work", async () => {
-		const cwd = await repository();
 		const setup = host();
+		const env = new FakeGitEnv();
 		const storage = new ReopenableStorage();
-		const first = await open(storage, setup, cwd);
+		const first = await open(storage, setup, env);
 		const busy = unanswered();
 		setup.faux.setResponses([busy.step]);
-		const { task } = await run(first, "write the report", cwd);
+		const { task } = await run(first, "write the report");
 		first.resume();
 		await busy.reached;
 		const conversation = await crashedMidRun(first, task);
 		const calls = setup.faux.state.callCount;
 
 		// The crashed process never saw an answer, so the restart asks exactly once more.
-		const second = await restart(storage, first, setup, cwd);
+		const second = await restart(storage, first, setup, env);
 		setup.faux.setResponses([fauxAssistantMessage("the report")]);
 		second.resume();
 		await second.waitForTask(task, BACKGROUND_CONTEXT);
@@ -213,19 +184,19 @@ describe("restart", () => {
 	});
 
 	it("a context that saved its conversation id reuses that conversation after a restart", async () => {
-		const cwd = await repository();
 		const setup = host();
+		const env = new FakeGitEnv();
 		const storage = new ReopenableStorage();
-		const first = await open(storage, setup, cwd);
+		const first = await open(storage, setup, env);
 		const busy = unanswered();
 		setup.faux.setResponses([busy.step]);
-		const { task } = await run(first, "write the report", cwd);
+		const { task } = await run(first, "write the report");
 		first.resume();
 		await busy.reached;
 		const conversation = await crashedMidRun(first, task);
 		const before = await scanConversations(first);
 
-		const second = await restart(storage, first, setup, cwd);
+		const second = await restart(storage, first, setup, env);
 		setup.faux.setResponses([fauxAssistantMessage("the report")]);
 		second.resume();
 		await second.waitForTask(task, BACKGROUND_CONTEXT);
@@ -239,10 +210,10 @@ describe("restart", () => {
 	});
 
 	it("fork calls made before a crash still mint their children exactly once", async () => {
-		const cwd = await repository();
 		const setup = host();
+		const env = new FakeGitEnv();
 		const storage = new ReopenableStorage();
-		const first = await open(storage, setup, cwd);
+		const first = await open(storage, setup, env);
 		setup.faux.setResponses([
 			fauxAssistantMessage(
 				[
@@ -254,7 +225,7 @@ describe("restart", () => {
 			// The context ends by minting its children: this is the last response the first process saw.
 			fauxAssistantMessage("forked"),
 		]);
-		const { task } = await run(first, "split the work", cwd);
+		const { task } = await run(first, "split the work");
 		first.resume();
 		await first.waitForTask(task, BACKGROUND_CONTEXT);
 		const minted = await contexts(first);
@@ -263,7 +234,7 @@ describe("restart", () => {
 			"kid-b",
 		]);
 
-		const second = await restart(storage, first, setup, cwd);
+		const second = await restart(storage, first, setup, env);
 		setup.faux.setResponses([
 			fauxAssistantMessage("child a done"),
 			fauxAssistantMessage("child b done"),
@@ -271,12 +242,10 @@ describe("restart", () => {
 		]);
 		second.resume();
 		// The children run in their worktrees, then the successor runs on their results and ends.
-		await waitFor(async () => {
+		await vi.waitFor(async () => {
 			const after = await contexts(second);
-			return (
-				after.length === minted.length &&
-				after.every((record) => record.state.status === "terminal")
-			);
+			expect(after).toHaveLength(minted.length);
+			for (const record of after) expect(record.state.status).toBe("terminal");
 		});
 		const after = await contexts(second);
 		expect(after.map((record) => record.id).sort()).toEqual(

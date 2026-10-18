@@ -15,8 +15,7 @@ Focused file first, full suite before finishing.
 
 ## Stack
 
-Vitest in a single `node` project, one process per file. `tests/setup.ts`
-restores the working directory and real timers after each test. The config pins
+Vitest in a single `node` project, one process per file. The config pins
 `TZ=UTC`; use a frozen clock when asserting timestamps rather than sleeping.
 
 ## Layout
@@ -31,13 +30,19 @@ building on it.
 
 ## Isolation
 
-Run the real mechanism where it is cheap:
+Run Key's own logic for real; mock every subsystem it talks to. If a test would
+exercise or assert on what a dependency — git, the model provider, durable's
+scheduling — does with what Key hands it, that is the dependency's own
+contract, tested where it lives, not ours:
 
 - Open a `Harness` on `MemoryStorage`, not SQLite. Never touch
   `.key/session.sqlite`.
 - Script model responses with pi-ai's `fauxProvider`, not the network. Tests
   never need `DEEPSEEK_API_KEY` or `.env`.
-- Create temp directories and git repositories per test; remove them after.
+- Other processes go through a fake at the seam Key uses (`FakeGitEnv` in
+  `tests/git.ts` records the commands and answers nothing): assert what Key
+  asks for, never what the subsystem did. No repositories, temp directories,
+  or commits.
 - Start a real `Host` on a free port when testing HTTP; call exported functions
   directly when the transport is not what is under test.
 
