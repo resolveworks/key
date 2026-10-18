@@ -23,15 +23,6 @@ make it visibly wrong — silence and recovery are where bugs hide.
 - The pre-commit hook runs biome (with auto-fix), `pnpm check`, and
   `pnpm test`. Do not run these unprompted.
 
-## Scope
-
-One task kind, one `fork` tool.
-
-Out — do not build, even if it looks easy: push notifications, phone or
-desktop clients, WebSocket server / auth / remote anything, the proactive
-ticker, compaction tuning, UI beyond terminal lines, multiple sessions,
-scale-out.
-
 ## Style
 
 Comments carry intent only, as in the pi repo.
