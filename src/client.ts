@@ -284,7 +284,7 @@ function makeList(summaries: readonly Summary[]): SelectList {
 		summaries.map((summary) => ({
 			value: String(summary.id),
 			label: `#${summary.id}`,
-			description: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.cwd === undefined ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
+			description: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
 		})),
 		20,
 		selectTheme,

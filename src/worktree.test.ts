@@ -65,12 +65,12 @@ describe("a child's run", () => {
 		harness: Harness,
 		name: string,
 	): Promise<{ readonly task: TaskId; readonly conversation: ConversationRecord }> {
-		const root = await harness.root(context);
+		const root = await harness.root(context, { agent: { cwd: REPO } });
 		const task = await root.commit(
 			(tx) =>
 				tx.createTask(
 					KeyTask,
-					{ prompt: "ask the child", name, child: true, cwd: REPO },
+					{ prompt: "ask the child", name, child: true },
 					{ ownership: { kind: "conversation" } },
 				),
 			context,

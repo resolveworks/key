@@ -21,8 +21,6 @@ export type KeyTaskInput = {
 	readonly child?: true;
 	/** A human's message to an existing context: run it in that context's conversation. */
 	readonly continue?: true;
-	/** The directory this context runs in, minted on to every successor and child. */
-	readonly cwd?: string;
 	readonly on?: readonly TaskId<string>[];
 };
 
@@ -71,26 +69,27 @@ export const keyTask = (git: Git) => {
 				let conversationId = record.state.checkpoint.conversationId;
 				if (conversationId === undefined) {
 					const target = record.input.continue === true ? runtime.conversationId : undefined;
-					// A fresh conversation runs where its line runs: the input's `cwd`, never the process's.
-					const cwd = record.input.cwd;
-					if (cwd === undefined) throw new Error(`key.task ${record.id}: no cwd`);
+					// A fresh conversation copies this conversation's agent — cwd included — so only a child,
+					// which moves to its checkout, configures anything.
 					let worktree: Worktree | undefined;
 					if (target === undefined && record.input.child === true) {
 						if (record.input.name === undefined)
 							throw new Error(`key.task ${record.id}: child has no name`);
-						worktree = await ensureWorktree(record.input.name, git, cwd);
+						const repo = (await runtime.agent(context)).cwd;
+						if (repo === undefined)
+							throw new Error(`key.task ${record.id}: no cwd to make a worktree from`);
+						worktree = await ensureWorktree(record.input.name, git, repo);
 					}
 					await runtime.commit(async (tx) => {
 						conversationId =
 							target ??
 							(await tx.createConversation({ ownership: { kind: "task", taskId: record.id } })).id;
-						// A worktree child moves to its checkout and cannot fork; every other fresh
-						// conversation runs where its source line runs.
-						await configure(
-							tx,
-							conversationId,
-							worktree === undefined ? { cwd } : { cwd: worktree.path, tools: { remove: [Fork] } },
-						);
+						// A worktree child moves to its checkout and cannot fork.
+						if (worktree !== undefined)
+							await configure(tx, conversationId, {
+								cwd: worktree.path,
+								tools: { remove: [Fork] },
+							});
 						return { status: "running", checkpoint: { phase: "run", conversationId } };
 					}, context);
 				}
@@ -151,7 +150,7 @@ export const keyTask = (git: Git) => {
 						children.push(
 							await tx.createTask(
 								task,
-								{ prompt: childPrompt, name, child: true, cwd: record.input.cwd },
+								{ prompt: childPrompt, name, child: true },
 								{
 									ownership: { kind: "conversation" },
 									conversationId,
@@ -163,7 +162,7 @@ export const keyTask = (git: Git) => {
 					if (children.length > 0) {
 						await tx.createTask(
 							task,
-							{ prompt: result, on: children, cwd: record.input.cwd },
+							{ prompt: result, on: children },
 							{
 								ownership: { kind: "conversation" },
 								conversationId,

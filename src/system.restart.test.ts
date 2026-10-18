@@ -80,7 +80,7 @@ async function run(
 		await configure(tx, conversation.id, { model: MODEL, cwd: REPO });
 		const task = await tx.createTask(
 			KeyTask,
-			{ prompt, cwd: REPO },
+			{ prompt },
 			{ ownership: { kind: "conversation" }, conversationId: conversation.id },
 		);
 		return { task, conversation: conversation.id };

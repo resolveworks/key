@@ -7,6 +7,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
+	AgentDoc,
 	type ConversationId,
 	type ConversationView,
 	type Cursor,
@@ -63,7 +64,7 @@ export type Summary = {
 	/** That context's prompt. */
 	readonly label: string;
 	/** The directory that context runs in. */
-	readonly cwd: string | undefined;
+	readonly cwd: string;
 	readonly running: boolean;
 	/** A forked context, or a terminated child: no more messages may reach it. */
 	readonly closed: boolean;
@@ -72,8 +73,8 @@ export type Summary = {
 export class Host {
 	#harness!: Harness;
 	#prompts = new Map<number, string>();
-	/** Each task's directory, by task id: the one hint of a conversation's project. */
-	#cwds = new Map<number, string | undefined>();
+	/** Each conversation's directory, by id: the cwd of its `pi.agent` document. */
+	#agentCwds = new Map<number, string>();
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
 	/** Each conversation's owning task. */
@@ -152,7 +153,7 @@ export class Host {
 			await configure(tx, conversation.id, { model: MODEL, cwd });
 			return tx.createTask(
 				KeyTask,
-				{ prompt, cwd },
+				{ prompt },
 				{
 					ownership: { kind: "conversation" },
 					conversationId: conversation.id,
@@ -193,7 +194,6 @@ export class Host {
 		if (record.kind !== KeyTask.definition.name) return;
 		const input = record.input as KeyTaskInput;
 		this.#prompts.set(record.id, input.prompt);
-		this.#cwds.set(record.id, input.cwd);
 		if (input.child === true) {
 			this.#children.add(record.id);
 			this.#forked.add(record.conversationId);
@@ -224,6 +224,10 @@ export class Host {
 			for (const owned of node.conversations) running.add(owned);
 		}
 		// Every context's conversation is owned by its task; an ownerless conversation is just a holder.
+		for (const { id } of conversations) {
+			const cwd = (await this.#harness.snapshot(AgentDoc, id as ConversationId, context))?.cwd;
+			if (cwd !== undefined) this.#agentCwds.set(id, cwd);
+		}
 		return conversations
 			.flatMap(({ id, owner }) =>
 				owner === undefined
@@ -233,7 +237,7 @@ export class Host {
 								id,
 								owner: `task #${owner.taskId}`,
 								label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
-								cwd: this.#cwds.get(owner.taskId),
+								cwd: this.#agentCwds.get(id) ?? "",
 								running: running.has(id),
 								closed: this.#closed(id),
 							},

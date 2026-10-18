@@ -67,7 +67,7 @@ async function run(harness: Harness, prompt: string): Promise<TaskId<string>> {
 		await configure(tx, conversation.id, { model: MODEL, cwd: REPO });
 		return tx.createTask(
 			KeyTask,
-			{ prompt, cwd: REPO },
+			{ prompt },
 			{ ownership: { kind: "conversation" }, conversationId: conversation.id },
 		);
 	}, context);
@@ -105,8 +105,8 @@ describe("the fork cascade", () => {
 		const next = await waitForSuccessor(harness);
 		const child = children(await cascade(harness))[0];
 
-		expect(child.input).toEqual({ prompt: "task for a", name: "a", child: true, cwd: REPO });
-		expect(next.input).toEqual({ prompt: "a is on its way", on: [child.id], cwd: REPO });
+		expect(child.input).toEqual({ prompt: "task for a", name: "a", child: true });
+		expect(next.input).toEqual({ prompt: "a is on its way", on: [child.id] });
 	});
 
 	it("several fork calls in a turn mint several children", async () => {
