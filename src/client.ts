@@ -1,5 +1,5 @@
 // The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
-// streams it. All state lives in the host; this renders views and submits prompts back.
+// streams it. All state lives in the host; the client keeps a mode and renders from it on change.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +34,12 @@ const selectTheme: SelectListTheme = {
 	noMatch: (text) => style.dim(text),
 };
 
+/** What the screen shows: a fresh trajectory, the resume list, or one open conversation. */
+type Mode =
+	| { readonly kind: "new" }
+	| { readonly kind: "list"; readonly back: "new" | number; selected: number | undefined }
+	| { readonly kind: "transcript"; readonly id: number };
+
 /** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
 	const tui = new TuiMainScreen(new ProcessTerminal());
@@ -48,18 +54,26 @@ export async function open(base: string): Promise<void> {
 	});
 	prompt.setAutocompleteProvider(provider(process.cwd()));
 	dock.addChild(prompt);
-	const footer = new Text("new trajectory · type to start · /resume for past conversations", 1, 0);
+	const footer = new Text("", 1, 0);
 	tui.addChild(document);
 	tui.addChild(dock);
 	tui.addChild(footer);
 
+	// All client state. Every change flows through `render`, which derives the whole screen from it.
+	let mode: Mode = { kind: "new" };
 	let summaries: readonly Summary[] = [];
-	let watching: { stop: () => void } | undefined;
-	// The open transcript, for returning from the resume list.
-	let current: number | undefined;
-	// The task whose conversation is not in the summaries yet; we open it as soon as it appears.
+	let view: ConversationView | undefined;
+	/** The task whose conversation is not in the summaries yet; we open it as soon as it appears. */
 	let pending: number | undefined;
+	/** A failed action, shown once and replaced by whatever the state says next. */
+	let notice: string | undefined;
 	let starting = false;
+
+	// Effects: the transcript stream runs exactly while a transcript is open, and the dock holds
+	// the prompt exactly when typing is possible.
+	let watching: { readonly stop: () => void } | undefined;
+	let watchedId: number | undefined;
+	let docked = true;
 
 	/** Replace the document; streaming appends, a view switch starts a new one. */
 	const show = (components: readonly Component[]): void => {
@@ -67,12 +81,95 @@ export async function open(base: string): Promise<void> {
 		for (const component of components) document.addChild(component);
 	};
 
-	/** The prompt occupies the dock unless a selector displaced it. */
 	const showPrompt = (): void => {
+		if (docked) return;
 		dock.clear();
 		dock.addChild(prompt);
 		tui.setFocus(prompt);
+		docked = true;
 	};
+
+	const hidePrompt = (): void => {
+		if (!docked) return;
+		dock.clear();
+		docked = false;
+	};
+
+	/** The one effect: keep the transcript stream in step with the mode. */
+	const syncWatch = (): void => {
+		const id = mode.kind === "transcript" ? mode.id : undefined;
+		if (id === watchedId) return;
+		watching?.stop();
+		watching = undefined;
+		watchedId = id;
+		view = undefined;
+		if (id !== undefined)
+			watching = watchTranscript(base, id, (frame) => {
+				view = frame;
+				notice = undefined;
+				render();
+			});
+	};
+
+	/** View = f(state): the whole screen derives from the client state, on every change. */
+	const render = (): void => {
+		syncWatch();
+		if (mode.kind === "list") {
+			const page = mode;
+			prompt.setText("");
+			hidePrompt();
+			const list = makeList(summaries);
+			const index = summaries.findIndex((summary) => summary.id === page.selected);
+			if (index >= 0) list.setSelectedIndex(index);
+			list.onSelectionChange = (item) => {
+				if (mode.kind === "list") mode.selected = Number(item.value);
+			};
+			list.onSelect = (item) => open(Number(item.value));
+			list.onCancel = () => (page.back === "new" ? enter({ kind: "new" }) : open(page.back));
+			show([new Spacer(1), list]);
+			tui.setFocus(list);
+			footer.setText("↑/↓ select · enter open · esc back · ctrl+c/d quit");
+		} else if (mode.kind === "new") {
+			showPrompt();
+			show([
+				pending === undefined
+					? new Text(style.dim("new trajectory · type to start"), 0, 0)
+					: new Text(style.dim("starting trajectory…"), 0, 0),
+			]);
+			footer.setText(
+				pending === undefined
+					? "new trajectory · type to start · /resume for past conversations"
+					: "starting · ctrl+c/d quit",
+			);
+		} else {
+			const page = mode;
+			showPrompt();
+			if (view === undefined) show([new Text(style.dim("connecting…"), 0, 0)]);
+			else {
+				show(transcript(view));
+				const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
+				const closed = summaries.find((summary) => summary.id === page.id)?.closed ?? false;
+				footer.setText(
+					closed
+						? `${style.dim("○ closed")} · /new for a fresh trajectory`
+						: `${running ? style.success("● streaming") : style.dim("○ idle")} · type to continue`,
+				);
+			}
+		}
+		if (notice !== undefined) footer.setText(notice);
+		tui.requestRender();
+	};
+
+	/** Enter a mode: records the cursor, then renders. The one way the view ever changes. */
+	const enter = (next: Mode): void => {
+		if (next.kind === "transcript") saveCursor(next.id);
+		mode = next;
+		notice = undefined;
+		render();
+	};
+
+	/** Open a conversation; its lines are only ever appended, so history stays in scrollback. */
+	const open = (id: number): void => enter({ kind: "transcript", id });
 
 	const quit = (): void => {
 		watching?.stop();
@@ -80,96 +177,22 @@ export async function open(base: string): Promise<void> {
 		process.exit(0);
 	};
 
-	/** The resume list: arrows select a conversation, enter opens it. */
-	const showList = (): void => {
-		prompt.setText("");
-		watching?.stop();
-		watching = undefined;
-		const list = makeList(summaries);
-		list.onSelect = (item) => showTranscript(Number(item.value));
-		list.onCancel = current === undefined ? showNew : () => showTranscript(current as number);
-		dock.clear();
-		show([new Spacer(1), list]);
-		tui.setFocus(list);
-		footer.setText("↑/↓ select · enter open · esc back · ctrl+c/d quit");
-		tui.requestRender();
-	};
-
-	/**
-	 * Abandon the open conversation: the next prompt starts a fresh trajectory. A view only — the
-	 * command that asks for it records the cursor, so boot can still read what was last open.
-	 */
-	const showNew = (): void => {
-		current = undefined;
-		prompt.setText("");
-		watching?.stop();
-		watching = undefined;
-		showPrompt();
-		show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
-		footer.setText("new trajectory · type to start · /resume for past conversations");
-		tui.requestRender();
-	};
-
-	/** Open a conversation; its lines are only ever appended, so history stays in scrollback. */
-	const showTranscript = (id: number): void => {
-		current = id;
-		saveCursor(id);
-		watching?.stop();
-		showPrompt();
-		show([new Text(style.dim("connecting…"), 0, 0)]);
-		tui.requestRender();
-		watching = watchTranscript(base, id, (view) => {
-			show(transcript(view));
-			const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
-			const closed = summaries.find((summary) => summary.id === id)?.closed ?? false;
-			footer.setText(
-				closed
-					? `${style.dim("○ closed")} · /new for a fresh trajectory`
-					: `${running ? style.success("● streaming") : style.dim("○ idle")} · type to continue`,
-			);
-			tui.requestRender();
-		});
-	};
-
-	/** Open the pending trajectory once the host has created its conversation. */
-	const update = (): void => {
-		if (pending === undefined) return;
-		const created = summaries.find((summary) => summary.owner === `task #${pending}`);
-		if (created === undefined) return;
-		pending = undefined;
-		showTranscript(created.id);
-	};
-
 	const start = async (text: string): Promise<void> => {
 		const value = text.trim();
 		if (value === "" || starting || pending !== undefined) return;
-		if (current !== undefined) {
-			if (summaries.find((summary) => summary.id === current)?.closed ?? false) {
-				footer.setText("closed · /new for a fresh trajectory");
-				tui.requestRender();
-				return;
-			}
-			starting = true;
-			try {
-				await post(base, `/api/conversations/${current}/messages`, value);
-				prompt.setText("");
-				tui.requestRender();
-			} catch (error) {
-				footer.setText(String(error));
-				tui.requestRender();
-			} finally {
-				starting = false;
-			}
-			return;
-		}
 		starting = true;
 		try {
-			pending = await post(base, "/api/run", value);
+			if (mode.kind === "transcript") {
+				await post(base, `/api/conversations/${mode.id}/messages`, value);
+			} else {
+				pending = await post(base, "/api/run", value);
+			}
 			prompt.setText("");
-			show([new Text(style.dim("starting trajectory…"), 0, 0)]);
-			footer.setText("starting · ctrl+c/d quit");
-			tui.requestRender();
-			update();
+			notice = undefined;
+			render();
+		} catch (error) {
+			notice = String(error);
+			render();
 		} finally {
 			starting = false;
 		}
@@ -177,19 +200,23 @@ export async function open(base: string): Promise<void> {
 
 	prompt.onSubmit = (text: string): void => {
 		if (text.trim() === "/resume") {
-			showList();
+			enter({
+				kind: "list",
+				back: mode.kind === "transcript" ? mode.id : "new",
+				selected: undefined,
+			});
 			return;
 		}
 		if (text.trim() === "/new") {
 			saveCursor(undefined);
-			showNew();
+			enter({ kind: "new" });
 			return;
 		}
 		void start(text);
 	};
 
-	// pi's exit convention: ctrl+c clears the prompt and quits on a second press; ctrl+d quits on
-	// an empty prompt. With text in the prompt ctrl+d falls through to delete-forward.
+	// pi's exit convention: ctrl+c clears the prompt and quits on a second press; ctrl+d quits on an
+	// empty prompt. With text in the prompt ctrl+d falls through to delete-forward.
 	let lastCtrlC = 0;
 	tui.addInputListener((data) => {
 		if (matchesKey(data, "ctrl+c")) {
@@ -209,24 +236,31 @@ export async function open(base: string): Promise<void> {
 		return undefined;
 	});
 
-	// A restart reopens what was open, but only once the host confirms it still exists: a cursor is
-	// a hint, never a fact, and a stale one must land on a fresh trajectory rather than a dead view.
-	const cursor = loadCursor();
-
 	// The first frame is already a complete view, so it starts on the one view that needs no host.
-	showNew();
+	render();
 	tui.start();
 
-	// The first summaries are the verdict on the cursor; every frame after only refreshes the list.
+	// The first summaries are the verdict on the cursor: a cursor is a hint, never a fact, and a
+	// stale one must land on a fresh trajectory rather than a dead view. Every frame after only
+	// refreshes the screen — the list's status dots included.
+	const cursor = loadCursor();
 	let restored = false;
 	for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
 		summaries = next;
 		if (!restored) {
 			restored = true;
 			if (cursor !== undefined && summaries.some((summary) => summary.id === cursor))
-				showTranscript(cursor);
+				enter({ kind: "transcript", id: cursor });
 		}
-		update();
+		// Open the pending trajectory once the host has created its conversation.
+		if (pending !== undefined) {
+			const created = summaries.find((summary) => summary.owner === `task #${pending}`);
+			if (created !== undefined) {
+				pending = undefined;
+				open(created.id);
+			}
+		}
+		render();
 	}
 }
 

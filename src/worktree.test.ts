@@ -1,25 +1,26 @@
 // A child runs in a worktree inside the repo, on its own branch, and is told so in its prompt.
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { createModels } from "@earendil-works/pi-ai/models";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
 	type AgentState,
-	type ConversationId,
 	type ConversationRecord,
-	createRegistry,
-	Harness,
+	type Harness,
 	MemoryStorage,
+	type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeGitEnv, REPO } from "../tests/git.ts";
-import { KeySystem, KeyTask } from "./system.ts";
+import { conversationOf, keySetup, openKey } from "../tests/harness.ts";
+import { KeyTask } from "./system.ts";
 import { branchFor, ensureWorktree } from "./worktree.ts";
+
+const context = BACKGROUND_CONTEXT;
 
 describe("ensureWorktree", () => {
 	it("asks git for a worktree under .key, on branch agent/<name>", async () => {
 		const env = new FakeGitEnv();
-		const tree = await ensureWorktree("fix-the-bug", env, BACKGROUND_CONTEXT);
+		const tree = await ensureWorktree("fix-the-bug", env, context);
 		expect(tree).toEqual({
 			path: join(REPO, ".key", "worktrees", "fix-the-bug"),
 			branch: branchFor("fix-the-bug"),
@@ -38,80 +39,68 @@ describe("ensureWorktree", () => {
 
 	it("a name that is not kebab-case fails loudly", async () => {
 		const env = new FakeGitEnv();
-		await expect(ensureWorktree("Not Kebab", env, BACKGROUND_CONTEXT)).rejects.toThrow(
-			/lowercase kebab-case/,
-		);
+		await expect(ensureWorktree("Not Kebab", env, context)).rejects.toThrow(/lowercase kebab-case/);
 		expect(env.calls).toEqual([]);
 	});
 });
 
 describe("a child's run", () => {
 	const harnesses: Harness[] = [];
-	const created: ConversationRecord[] = [];
 
 	afterEach(async () => {
-		for (const harness of harnesses.splice(0)) await harness.close(BACKGROUND_CONTEXT);
+		for (const harness of harnesses.splice(0)) await harness.close(context);
 	});
 
-	/** A harness with fake git underneath: faux model, memory storage, one env rooted at the repo. */
+	/** One harness with fake git underneath; the model just answers "done". */
 	async function open(): Promise<Harness> {
-		const faux = fauxProvider();
-		faux.setResponses([fauxAssistantMessage("done"), fauxAssistantMessage("done")]);
-		const models = createModels();
-		models.setProvider(faux.provider);
-		const registry = createRegistry();
-		registry.install(KeySystem);
-		const env = new FakeGitEnv();
-		const harness = await Harness.open(
-			new MemoryStorage(),
-			{
-				models,
-				registry,
-				env: () => env,
-				conversationCreated: (_tx, conversation: ConversationRecord) => {
-					created.push(conversation);
-				},
-			},
-			BACKGROUND_CONTEXT,
-		);
+		const setup = keySetup();
+		setup.faux.setResponses([fauxAssistantMessage("done"), fauxAssistantMessage("done")]);
+		const harness = await openKey(new MemoryStorage(), setup);
 		harnesses.push(harness);
 		return harness;
 	}
 
-	/** Run one child task in the root conversation and wait for it. */
-	async function runChild(harness: Harness, name: string): Promise<void> {
-		const root = await harness.root(BACKGROUND_CONTEXT);
-		const id = await root.commit(
+	/** Run one child task in the root conversation, wait for it, and return it with its conversation. */
+	async function runChild(
+		harness: Harness,
+		name: string,
+	): Promise<{ readonly task: TaskId; readonly conversation: ConversationRecord }> {
+		const root = await harness.root(context);
+		const task = await root.commit(
 			(tx) =>
 				tx.createTask(
 					KeyTask,
 					{ prompt: "ask the child", name, child: true },
 					{ ownership: { kind: "conversation" } },
 				),
-			BACKGROUND_CONTEXT,
+			context,
 		);
-		await harness.waitForTask(id, BACKGROUND_CONTEXT);
+		await harness.waitForTask(task, context);
+		const conversation = await harness.conversation(await conversationOf(harness, task), context);
+		if (conversation === undefined) throw new Error(`no conversation for task #${task}`);
+		return { task, conversation };
 	}
 
-	async function userMessages(harness: Harness, id: ConversationId): Promise<string[]> {
-		const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
-		const view = await conversation?.context(BACKGROUND_CONTEXT);
+	async function userMessages(harness: Harness, id: ConversationRecord["id"]): Promise<string[]> {
+		const conversation = await harness.conversation(id, context);
+		const view = await conversation?.context(context);
 		return (view?.messages ?? []).flatMap((message) =>
 			message.role === "user" && typeof message.content === "string" ? [message.content] : [],
 		);
 	}
 
-	async function agentState(harness: Harness, id: ConversationId): Promise<AgentState | undefined> {
-		const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
-		const view = await conversation?.viewState(BACKGROUND_CONTEXT);
+	async function agentState(
+		harness: Harness,
+		id: ConversationRecord["id"],
+	): Promise<AgentState | undefined> {
+		const conversation = await harness.conversation(id, context);
+		const view = await conversation?.viewState(context);
 		return view?.value.docs["pi.agent"] as AgentState | undefined;
 	}
 
 	it("a child runs inside the worktree its name mints", async () => {
 		const harness = await open();
-		await runChild(harness, "fix-the-bug");
-		const conversation = created.at(-1);
-		if (conversation === undefined) throw new Error("no conversation created");
+		const { conversation } = await runChild(harness, "fix-the-bug");
 		const agent = await agentState(harness, conversation.id);
 		// Inside the repo, so project files are still found.
 		expect(agent?.cwd).toBe(join(REPO, ".key", "worktrees", "fix-the-bug"));
@@ -119,9 +108,7 @@ describe("a child's run", () => {
 
 	it("a child's prompt names its branch and tells it to commit", async () => {
 		const harness = await open();
-		await runChild(harness, "commit-it");
-		const conversation = created.at(-1);
-		if (conversation === undefined) throw new Error("no conversation created");
+		const { conversation } = await runChild(harness, "commit-it");
 		const [prompt] = await userMessages(harness, conversation.id);
 		expect(prompt).toMatch(/^You work in an isolated git worktree on branch agent\/commit-it\./);
 		expect(prompt).toMatch(/Commit/);
