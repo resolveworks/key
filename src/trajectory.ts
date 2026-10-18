@@ -28,7 +28,8 @@ export function transcript(view: ConversationView): readonly Component[] {
   if (live?.generation === undefined && (live?.tools ?? []).length === 0 && blocks.length === 0) {
     blocks.push(new Text(style.dim("empty transcript"), 1, 0));
   }
-  return layout(blocks);
+  // The transcript never ends flush against the prompt.
+  return [...layout(blocks), new Spacer(1)];
 }
 
 /**

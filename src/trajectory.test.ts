@@ -180,6 +180,10 @@ describe("transcript", () => {
     expect(text(view([]))).toContain("empty transcript");
   });
 
+  it("a transcript ends with a blank line, never flush against the prompt", () => {
+    expect(lines(view([user("hello")])).at(-1)).toBe("");
+  });
+
   it("a reset and a compaction each render a note", () => {
     expect(text(view([entry("pi.reset")]))).toContain("context reset");
     expect(text(view([entry("pi.compaction")]))).toContain("compacted");
