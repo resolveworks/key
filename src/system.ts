@@ -101,6 +101,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 							? `You work in an isolated git worktree on branch ${branchFor(name)}. Commit all work before you finish.\n\n${text}`
 							: text,
 					requestId: `key.task:${task.id}`,
+					whenBusy: "steer",
 				},
 				context,
 			);
