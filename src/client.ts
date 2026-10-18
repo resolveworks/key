@@ -53,7 +53,6 @@ export async function open(base: string): Promise<void> {
 		selectList: selectTheme,
 	});
 	prompt.setAutocompleteProvider(provider(process.cwd()));
-	dock.addChild(prompt);
 	const footer = new Text("", 1, 0);
 	tui.addChild(document);
 	tui.addChild(dock);
@@ -73,7 +72,6 @@ export async function open(base: string): Promise<void> {
 	// the prompt exactly when typing is possible.
 	let watching: { readonly stop: () => void } | undefined;
 	let watchedId: number | undefined;
-	let docked = true;
 
 	/** Replace the document; streaming appends, a view switch starts a new one. */
 	const show = (components: readonly Component[]): void => {
@@ -82,18 +80,12 @@ export async function open(base: string): Promise<void> {
 	};
 
 	const showPrompt = (): void => {
-		if (docked) return;
 		dock.clear();
 		dock.addChild(prompt);
 		tui.setFocus(prompt);
-		docked = true;
 	};
 
-	const hidePrompt = (): void => {
-		if (!docked) return;
-		dock.clear();
-		docked = false;
-	};
+	const hidePrompt = (): void => dock.clear();
 
 	/** The one effect: keep the transcript stream in step with the mode. */
 	const syncWatch = (): void => {
