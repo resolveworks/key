@@ -17,9 +17,7 @@ make it visibly wrong — silence and recovery are where bugs hide.
 
 ## Constraints
 
-- There is no test suite, and you do not write smoke tests to check
-  yourself. Trust your work the way you trust the user: if it is badly
-  wrong, it will surface in use.
+- Behavior tests live under `tests/`; `tests/AGENTS.md` is the policy.
 - The restart is the crash-recovery path; do not add a hot-reload that
   skips it.
 
