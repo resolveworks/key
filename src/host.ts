@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
 	type ConversationId,
@@ -10,7 +11,9 @@ import {
 	type Cursor,
 	configure,
 	createRegistry,
+	type Extension,
 	Harness,
+	type Storage,
 	type TaskGraph,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -22,11 +25,29 @@ import { KeySystem, KeyTask, type KeyTaskInput } from "./system.ts";
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
 
-/** One box, one host: these are constants, not configuration. */
+/** The port `key serve` binds; the client and a plain `new Host()` agree on it. */
 export const PORT = 7317;
 const workspace = process.cwd();
 const dataDirectory = join(workspace, ".key");
 const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
+
+/** What the host runs on. `new Host()` is one box: deepseek on SQLite at `PORT`. */
+export type HostOptions = {
+	readonly models: () => Models;
+	readonly storage: () => Storage | Promise<Storage>;
+	readonly extensions: readonly Extension[];
+	readonly port: number;
+};
+
+const production = (): HostOptions => ({
+	models: () => builtinModels(),
+	storage: async () => {
+		mkdirSync(dataDirectory, { recursive: true });
+		return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
+	},
+	extensions: [CodingTools, KeySystem, Agents],
+	port: PORT,
+});
 
 /** One line in the transcript picker: a context's conversation, and whether it is running. */
 export type Summary = {
@@ -53,18 +74,30 @@ export class Host {
 	#children = new Set<number>();
 	#ended = new Set<number>();
 	#server!: Server;
+	#port!: number;
 	#listListeners = new Set<ServerResponse>();
+	#options: HostOptions;
+
+	constructor(options: HostOptions = production()) {
+		this.#options = options;
+	}
+
+	/** The port the server bound: the configured one, or the one the kernel chose for port 0. */
+	get port(): number {
+		return this.#port;
+	}
+
+	get url(): string {
+		return `http://127.0.0.1:${this.#port}`;
+	}
 
 	async open(): Promise<void> {
-		mkdirSync(dataDirectory, { recursive: true });
 		const registry = createRegistry();
-		registry.install(CodingTools);
-		registry.install(KeySystem);
-		registry.install(Agents);
+		for (const extension of this.#options.extensions) registry.install(extension);
 		this.#harness = await Harness.open(
-			await openNodeSqliteStorage(join(dataDirectory, "session.sqlite")),
+			await this.#options.storage(),
 			{
-				models: builtinModels(),
+				models: this.#options.models(),
 				registry,
 				env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? workspace }),
 				onReport: (error) => console.error("key:", error),
@@ -219,9 +252,11 @@ export class Host {
 				if (!res.headersSent) res.writeHead(500).end(String(error));
 			});
 		});
-		this.#server.listen(PORT, "127.0.0.1");
+		this.#server.listen(this.#options.port, "127.0.0.1");
 		await new Promise((resolve) => this.#server.once("listening", resolve));
-		process.stdout.write(`key host on http://127.0.0.1:${PORT}\n`);
+		const address = this.#server.address() as { port: number };
+		this.#port = address.port;
+		process.stdout.write(`key host on ${this.url}\n`);
 		this.#harness.resume();
 	}
 
@@ -293,8 +328,9 @@ export class Host {
 
 	async close(): Promise<void> {
 		for (const listener of this.#listListeners) listener.end();
-		this.#server.close();
+		const closed = new Promise((resolve) => this.#server.close(resolve));
 		await this.#harness.close(context);
+		await closed;
 	}
 }
 

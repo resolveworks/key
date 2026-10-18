@@ -2,6 +2,7 @@ import { Type } from "@earendil-works/pi-ai";
 import {
 	type ConversationId,
 	configure,
+	defineDoc,
 	defineExtension,
 	defineTask,
 	defineTool,
@@ -20,6 +21,19 @@ export type KeyTaskInput = {
 	readonly continue?: true;
 	readonly on?: readonly TaskId<string>[];
 };
+
+/**
+ * The forks one run called, as the tool tasks that settled them: the fork call, and the result a reader sees.
+ * A call's result is recorded only when the call ran, so a refused fork is never in it.
+ */
+const ForkRecord = defineDoc({
+	kind: "key.forks",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "current",
+	initial: () => ({ forks: [] as { readonly prompt: string; readonly name: string }[] }),
+});
 
 type KeyTaskState =
 	| { readonly phase: "wait" }
@@ -117,22 +131,8 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			const result = message.content
 				.flatMap((part) => (part.type === "text" ? [part.text] : []))
 				.join("");
-			// Every fork call the run made, across its tool rounds; the transcript is the fork record.
-			const forked = view.entries
-				.filter((entry) => entry.id >= settled.entry && entry.id <= settled.answer)
-				.flatMap((entry) => entry.model ?? [])
-				.flatMap((message) => {
-					if (message.role !== "assistant") return [];
-					return message.content.flatMap((part) => {
-						if (part.type !== "toolCall" || part.name !== Fork.name) return [];
-						const { prompt, name } = part.arguments;
-						if (typeof prompt !== "string")
-							throw new Error(`key.task ${task.id}: fork ${part.id} has no prompt`);
-						if (typeof name !== "string")
-							throw new Error(`key.task ${task.id}: fork ${part.id} has no name`);
-						return [{ prompt, name }];
-					});
-				});
+			// Every fork this run made, across its tool rounds, as the tool recorded them.
+			const forked = (await runtime.snapshot(ForkRecord, conversationId, context))?.forks ?? [];
 
 			// This context ends and its children are born in its conversation. Background keeps it from
 			// waiting on them; the successor waits on them explicitly.
@@ -188,7 +188,13 @@ export const Fork = defineTool({
 		prompt: Type.String({ description: "The task for the child context." }),
 	}),
 	replay: "safe",
-	execute: async () => ({ output: [{ type: "text", text: "Forked." }] }),
+	execute: async ({ prompt, name }, call, context) => {
+		await call.commit(async (tx) => {
+			const record = await tx.doc(ForkRecord, call.conversationId);
+			record.forks.push({ prompt, name });
+		}, context);
+		return { output: [{ type: "text", text: "Forked." }] };
+	},
 });
 
 export const KeySystem = defineExtension({
