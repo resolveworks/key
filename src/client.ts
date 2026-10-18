@@ -16,7 +16,10 @@ import {
   Spacer,
   Text,
   TuiMainScreen,
+  truncateToWidth,
+  visibleWidth,
 } from "@earendil-works/pi-tui";
+import { Footer, type Stats, WorkingLabel } from "./footer.ts";
 import type { Summary } from "./host.ts";
 import { provider } from "./prompt.ts";
 import { style } from "./theme.ts";
@@ -25,6 +28,17 @@ import { transcript } from "./trajectory.ts";
 const RECONNECT_MS = 250;
 /** Where a client restart picks up: the transcript that was open, if any. */
 const cursorFile = join(process.cwd(), ".key", "client.json");
+
+/** The prompt, with what it is waiting on written into its top border. */
+class Prompt extends Editor {
+  readonly working = new WorkingLabel();
+
+  protected override renderTopBorder(width: number, hiddenLineCount: number): string {
+    const overflow = hiddenLineCount > 0 ? ` ↑${hiddenLineCount}` : "";
+    const border = this.working.border(this.borderColor, width - visibleWidth(overflow));
+    return truncateToWidth(`${border}${this.borderColor(overflow)}`, width);
+  }
+}
 
 const selectTheme: SelectListTheme = {
   selectedPrefix: (text) => style.accent(text),
@@ -48,12 +62,14 @@ export async function open(base: string): Promise<void> {
   // document and clears the dock, so the list owns a clean screen.
   const document = new Container();
   const dock = new Container();
-  const prompt = new Editor(tui, {
+  const prompt = new Prompt(tui, {
     borderColor: style.borderMuted,
     selectList: selectTheme,
   });
   prompt.setAutocompleteProvider(provider(process.cwd()));
-  const footer = new Text("", 1, 0);
+  prompt.working.animate(tui);
+  // The last two lines: where this transcript runs, and what it has spent so far.
+  const footer = new Footer(process.cwd());
   tui.addChild(document);
   tui.addChild(dock);
   tui.addChild(footer);
@@ -62,6 +78,7 @@ export async function open(base: string): Promise<void> {
   let mode: Mode = { kind: "new" };
   let summaries: readonly Summary[] = [];
   let view: ConversationView | undefined;
+  let stats: Stats | undefined;
   /** The task whose conversation is not in the summaries yet; we open it as soon as it appears. */
   let pending: number | undefined;
   /** A failed action, shown once and replaced by whatever the state says next. */
@@ -95,9 +112,11 @@ export async function open(base: string): Promise<void> {
     watching = undefined;
     watchedId = id;
     view = undefined;
+    stats = undefined;
     if (id !== undefined)
       watching = watchTranscript(base, id, (frame) => {
-        view = frame;
+        view = frame.view;
+        stats = frame.stats;
         notice = undefined;
         render();
       });
@@ -106,6 +125,8 @@ export async function open(base: string): Promise<void> {
   /** View = f(state): the whole screen derives from the client state, on every change. */
   const render = (): void => {
     syncWatch();
+    // The prompt's border says what it waits on; nothing outside a transcript has a prompt.
+    prompt.working.show("idle", "");
     if (mode.kind === "list") {
       const page = mode;
       prompt.setText("");
@@ -120,7 +141,7 @@ export async function open(base: string): Promise<void> {
       list.onCancel = () => (page.back === "new" ? enter({ kind: "new" }) : open(page.back));
       show([new Spacer(1), list]);
       tui.setFocus(list);
-      footer.setText("↑/↓ select · enter open · esc back · ctrl+c/d quit");
+      footer.show(process.cwd());
     } else if (mode.kind === "new") {
       showPrompt();
       show([
@@ -128,27 +149,22 @@ export async function open(base: string): Promise<void> {
           ? new Text(style.dim("new trajectory · type to start"), 0, 0)
           : new Text(style.dim("starting trajectory…"), 0, 0),
       ]);
-      footer.setText(
-        pending === undefined
-          ? "new trajectory · type to start · /resume for past conversations"
-          : "starting · ctrl+c/d quit",
-      );
+      footer.show(process.cwd());
     } else {
       const page = mode;
+      const summary = summaries.find((candidate) => candidate.id === page.id);
       showPrompt();
-      if (view === undefined) show([new Text(style.dim("connecting…"), 0, 0)]);
-      else {
+      if (view === undefined) {
+        show([new Text(style.dim("connecting…"), 0, 0)]);
+        footer.show(summary?.cwd ?? process.cwd());
+      } else {
         show(transcript(view));
-        const running = (view.docs["pi.live"] as LiveState | undefined)?.run !== undefined;
-        const closed = summaries.find((summary) => summary.id === page.id)?.closed ?? false;
-        footer.setText(
-          closed
-            ? `${style.dim("○ closed")} · /new for a fresh trajectory`
-            : `${running ? style.success("● streaming") : style.dim("○ idle")} · type to continue`,
-        );
+        if (stats !== undefined) footer.watch(view, stats);
+        const live = view.docs["pi.live"] as LiveState | undefined;
+        prompt.working.show(live?.run === undefined ? "idle" : "working", summary?.owner ?? "");
       }
     }
-    if (notice !== undefined) footer.setText(notice);
+    if (notice !== undefined) show([new Text(style.error(notice), 0, 0)]);
     tui.requestRender();
   };
 
@@ -292,19 +308,19 @@ function makeList(summaries: readonly Summary[]): SelectList {
   );
 }
 
-/** Attach one transcript's SSE stream; `onView` runs for the snapshot and every later revision. */
+/** One frame of a transcript: its view, and the stats the view cannot carry. */
+type Frame = { readonly view: ConversationView; readonly stats: Stats };
+
+/** Attach one transcript's SSE stream; `onFrame` runs for the snapshot and every later revision. */
 function watchTranscript(
   base: string,
   id: number,
-  onView: (view: ConversationView) => void,
+  onFrame: (frame: Frame) => void,
 ): { readonly stop: () => void } {
   const abort = new AbortController();
   void (async () => {
-    for await (const view of stream<ConversationView>(
-      `${base}/api/conversations/${id}`,
-      abort.signal,
-    ))
-      onView(view);
+    for await (const frame of stream<Frame>(`${base}/api/conversations/${id}`, abort.signal))
+      onFrame(frame);
   })();
   return { stop: () => abort.abort() };
 }

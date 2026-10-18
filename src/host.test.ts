@@ -4,9 +4,13 @@ import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "./agents.ts";
+import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { Host, type Summary } from "./host.ts";
 import { keySystem } from "./system.ts";
+
+/** One transcript frame: the conversation's view, and what its footer needs beyond it. */
+type Transcript = { readonly view: ConversationView; readonly stats: Stats };
 
 /** A host's SSE stream, read frame by frame with data lines joined the way the client joins them. */
 class Frames {
@@ -131,7 +135,7 @@ describe("host", () => {
     await frames.close();
   });
 
-  test("a transcript streams its view", async () => {
+  test("a transcript streams its view and the stats the view cannot carry", async () => {
     const { id } = await startRun("say hello");
 
     const response = await fetch(`${base}/api/conversations/${id}`);
@@ -139,7 +143,9 @@ describe("host", () => {
     const frames = new Frames(response.body as ReadableStream<Uint8Array>);
 
     // The first frame is a whole view, and later frames carry each revision the run commits.
-    const snapshot = await frames.until((view: ConversationView) => view.conversation.id === id);
+    const { view: snapshot, stats } = await frames.until<Transcript>(
+      ({ view }: Transcript) => view.conversation.id === id,
+    );
     expect(snapshot.entries.map((entry) => entry.kind)).toEqual([
       "pi.user",
       "pi.system",
@@ -147,6 +153,8 @@ describe("host", () => {
     ]);
     const answer = snapshot.entries.at(-1)?.model?.[0];
     expect(answer).toMatchObject({ role: "assistant", content: [{ text: "hello" }] });
+    expect(stats).toMatchObject({ model: "deepseek-flash" });
+    expect(stats.contextWindow).toBeGreaterThan(0);
     await frames.close();
   });
 

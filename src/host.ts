@@ -22,6 +22,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Agents } from "./agents.ts";
+import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { type KeyTaskInput, keySystem, keyTask } from "./system.ts";
 
@@ -323,13 +324,27 @@ export class Host {
       res.writeHead(404).end("no such conversation");
       return;
     }
+    const stats = await this.#statsOf(id);
     res.writeHead(200, sseHeaders());
     const watch = await conversation.watch(context);
-    res.write(`data: ${JSON.stringify(watch.value)}\n\n`);
+    res.write(`data: ${JSON.stringify({ view: watch.value, stats })}\n\n`);
     watch.start(async (view: ConversationView) => {
-      res.write(`data: ${JSON.stringify(view)}\n\n`);
+      res.write(`data: ${JSON.stringify({ view, stats: await this.#statsOf(id) })}\n\n`);
     });
     req.on("close", () => void watch.stop());
+  }
+
+  /** What the view cannot say: the branch its directory is on, and the window its model gives. */
+  async #statsOf(id: number): Promise<Stats> {
+    const agent = await this.#harness.snapshot(AgentDoc, id as ConversationId, context);
+    const model = agent?.model ?? MODEL;
+    const branch = await branchOf(agent?.cwd);
+    return {
+      ...(branch === undefined ? {} : { branch }),
+      contextWindow:
+        this.#options.models().getModel(model.provider, model.modelId)?.contextWindow ?? 0,
+      model: model.modelId,
+    };
   }
 
   #stream(res: ServerResponse, snapshot: unknown, listeners: Set<ServerResponse>): void {
@@ -358,6 +373,15 @@ function sseHeaders(): Record<string, string> {
 function broadcast(listeners: Set<ServerResponse>, value: unknown): void {
   const payload = `data: ${JSON.stringify(value)}\n\n`;
   for (const listener of listeners) listener.write(payload);
+}
+
+/** A working directory's branch, when it is a repository: the footer shows it beside the path. */
+async function branchOf(cwd: string | undefined): Promise<string | undefined> {
+  if (cwd === undefined) return undefined;
+  const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd)
+    .then((stdout) => stdout.trim())
+    .catch(() => "");
+  return branch === "" ? undefined : branch;
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
