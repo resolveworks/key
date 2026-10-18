@@ -20,7 +20,7 @@ describe("ensureWorktree", () => {
 	beforeEach(resetGit);
 
 	it("asks git for a worktree under .key, on branch agent/<name>", async () => {
-		const tree = await ensureWorktree("fix-the-bug", fakeGit);
+		const tree = await ensureWorktree("fix-the-bug", fakeGit, REPO);
 		expect(tree).toEqual({
 			path: join(REPO, ".key", "worktrees", "fix-the-bug"),
 			branch: branchFor("fix-the-bug"),
@@ -37,7 +37,9 @@ describe("ensureWorktree", () => {
 	});
 
 	it("a name that is not kebab-case fails loudly", async () => {
-		await expect(ensureWorktree("Not Kebab", fakeGit)).rejects.toThrow(/lowercase kebab-case/);
+		await expect(ensureWorktree("Not Kebab", fakeGit, REPO)).rejects.toThrow(
+			/lowercase kebab-case/,
+		);
 		expect(gitCalls()).toEqual([]);
 	});
 });
@@ -68,7 +70,7 @@ describe("a child's run", () => {
 			(tx) =>
 				tx.createTask(
 					KeyTask,
-					{ prompt: "ask the child", name, child: true },
+					{ prompt: "ask the child", name, child: true, cwd: REPO },
 					{ ownership: { kind: "conversation" } },
 				),
 			context,

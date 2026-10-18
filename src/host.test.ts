@@ -93,11 +93,28 @@ describe("host", () => {
 	});
 
 	test("an empty prompt is rejected", async () => {
-		for (const path of ["/api/run", "/api/conversations/1/messages"]) {
-			const response = await fetch(`${base}${path}`, { method: "POST", body: "  \n\t" });
-			expect(response.status).toBe(400);
-			expect(await response.text()).toBe("empty prompt");
-		}
+		const run = await fetch(`${base}/api/run`, {
+			method: "POST",
+			body: JSON.stringify({ prompt: "  \n\t", cwd: "/key/repo" }),
+		});
+		expect(run.status).toBe(400);
+		expect(await run.text()).toBe("empty prompt or cwd");
+
+		const message = await fetch(`${base}/api/conversations/1/messages`, {
+			method: "POST",
+			body: "  \n\t",
+		});
+		expect(message.status).toBe(400);
+		expect(await message.text()).toBe("empty prompt");
+	});
+
+	test("a run without a cwd is rejected", async () => {
+		const response = await fetch(`${base}/api/run`, {
+			method: "POST",
+			body: JSON.stringify({ prompt: "say hello", cwd: "" }),
+		});
+		expect(response.status).toBe(400);
+		expect(await response.text()).toBe("empty prompt or cwd");
 	});
 
 	test("the conversation list streams a snapshot and later changes", async () => {
@@ -107,7 +124,7 @@ describe("host", () => {
 		expect(await frames.until((frame: readonly Summary[]) => frame.length === 0)).toEqual([]);
 
 		faux.setResponses([fauxAssistantMessage("hello")]);
-		await fetch(`${base}/api/run`, { method: "POST", body: "say hello" });
+		await run("say hello");
 
 		const listed = await frames.until((frame: readonly Summary[]) => frame.length > 0);
 		expect(listed.map(({ label }) => label)).toEqual(["say hello"]);
@@ -133,15 +150,21 @@ describe("host", () => {
 		await frames.close();
 	});
 
+	/** Start a context from a prompt, as a client does: the prompt and its directory. */
+	async function run(prompt: string): Promise<Response> {
+		return fetch(`${base}/api/run`, {
+			method: "POST",
+			body: JSON.stringify({ prompt, cwd: "/key/repo" }),
+		});
+	}
+
 	/** Start a context from a prompt and find the conversation its task owns. */
 	async function startRun(prompt: string): Promise<{ id: number; task: number }> {
 		faux.setResponses([fauxAssistantMessage("hello")]);
 		const list = new Frames(
 			(await fetch(`${base}/api/conversations`)).body as ReadableStream<Uint8Array>,
 		);
-		const { task } = (await (
-			await fetch(`${base}/api/run`, { method: "POST", body: prompt })
-		).json()) as { task: number };
+		const { task } = (await (await run(prompt)).json()) as { task: number };
 		const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
 		expect(listed[0].owner).toBe(`task #${task}`);
 		await list.close();

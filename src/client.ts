@@ -2,7 +2,7 @@
 // streams it. All state lives in the host; the client keeps a mode and renders from it on change.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
 import {
@@ -177,7 +177,12 @@ export async function open(base: string): Promise<void> {
 			if (mode.kind === "transcript") {
 				await post(base, `/api/conversations/${mode.id}/messages`, value);
 			} else {
-				pending = await post(base, "/api/run", value);
+				// The client's directory is the trajectory's: launch it from the project root.
+				pending = await post(
+					base,
+					"/api/run",
+					JSON.stringify({ prompt: value, cwd: process.cwd() }),
+				);
 			}
 			prompt.setText("");
 			notice = undefined;
@@ -279,7 +284,7 @@ function makeList(summaries: readonly Summary[]): SelectList {
 		summaries.map((summary) => ({
 			value: String(summary.id),
 			label: `#${summary.id}`,
-			description: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
+			description: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.cwd === undefined ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
 		})),
 		20,
 		selectTheme,
@@ -338,10 +343,10 @@ async function* stream<T>(url: string, signal?: AbortSignal): AsyncGenerator<T> 
 }
 
 /** Ask the host to mint a context from the prompt, and return the task it created. */
-async function post(base: string, path: string, prompt: string): Promise<number> {
+async function post(base: string, path: string, body: string): Promise<number> {
 	for (;;) {
 		try {
-			const response = await fetch(`${base}${path}`, { method: "POST", body: prompt });
+			const response = await fetch(`${base}${path}`, { method: "POST", body });
 			if (!response.ok)
 				throw new Error(`host returned ${response.status}: ${await response.text()}`);
 			return ((await response.json()) as { readonly task: number }).task;

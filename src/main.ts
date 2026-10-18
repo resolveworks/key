@@ -1,11 +1,10 @@
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { open } from "./client.ts";
 import { Host, PORT } from "./host.ts";
 
-const workspace = process.cwd();
-
-const base = `http://127.0.0.1:${PORT}`;
+const base = process.env.KEY_HOST ?? `http://127.0.0.1:${PORT}`;
 
 const usage = `usage: key <command> [args...]
 
@@ -48,7 +47,7 @@ async function main(): Promise<void> {
 }
 
 async function serve(): Promise<void> {
-	process.loadEnvFile(join(workspace, ".env"));
+	process.loadEnvFile(join(homedir(), ".key", ".env"));
 	const host = new Host();
 	await host.open();
 	await host.listen();

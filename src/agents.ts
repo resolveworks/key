@@ -41,6 +41,8 @@ function render(files: readonly ProjectFile[]): string | undefined {
 export const Agents = defineExtension({
 	name: "agents",
 	sections: [
-		section("project_context", (input) => render(projectFiles(input.agent.cwd ?? process.cwd()))),
+		section("project_context", (input) =>
+			input.agent.cwd === undefined ? undefined : render(projectFiles(input.agent.cwd)),
+		),
 	],
 });

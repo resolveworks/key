@@ -1,6 +1,7 @@
 // The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
 import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
@@ -32,8 +33,8 @@ const SCAN_PAGE_SIZE = 256;
 
 /** The port `key serve` binds; the client and a plain `new Host()` agree on it. */
 export const PORT = 7317;
-const workspace = process.cwd();
-const dataDirectory = join(workspace, ".key");
+/** Everything the host owns lives here, outside every project: store, env. */
+const dataDirectory = join(homedir(), ".key");
 const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
 
 /** What the host runs on. `new Host()` is one box: deepseek on SQLite at `PORT`. */
@@ -61,6 +62,8 @@ export type Summary = {
 	readonly owner: string;
 	/** That context's prompt. */
 	readonly label: string;
+	/** The directory that context runs in. */
+	readonly cwd: string | undefined;
 	readonly running: boolean;
 	/** A forked context, or a terminated child: no more messages may reach it. */
 	readonly closed: boolean;
@@ -69,6 +72,8 @@ export type Summary = {
 export class Host {
 	#harness!: Harness;
 	#prompts = new Map<number, string>();
+	/** Each task's directory, by task id: the one hint of a conversation's project. */
+	#cwds = new Map<number, string | undefined>();
 	#summaries: readonly Summary[] = [];
 	#graph: TaskGraph = { tasks: {} };
 	/** Each conversation's owning task. */
@@ -104,7 +109,12 @@ export class Host {
 			{
 				models: this.#options.models(),
 				registry,
-				env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? workspace }),
+				env: (target) => {
+					// A conversation without a root is a bug to surface, not to paper over.
+					if (target.cwd === undefined)
+						throw new Error(`conversation ${target.conversationId} has no cwd`);
+					return new NodeExecutionEnv({ cwd: target.cwd });
+				},
 				onReport: (error) => console.error("key:", error),
 			},
 			context,
@@ -135,14 +145,14 @@ export class Host {
 		});
 	}
 
-	/** Start a trajectory: one fresh context, in one commit, in a new conversation. */
-	async run(prompt: string): Promise<number> {
+	/** Start a trajectory in a directory: one fresh context, in one commit, in a new conversation. */
+	run(cwd: string, prompt: string): Promise<number> {
 		return this.#harness.commit(async (tx) => {
 			const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
-			await configure(tx, conversation.id, { model: MODEL, cwd: workspace });
+			await configure(tx, conversation.id, { model: MODEL, cwd });
 			return tx.createTask(
 				KeyTask,
-				{ prompt },
+				{ prompt, cwd },
 				{
 					ownership: { kind: "conversation" },
 					conversationId: conversation.id,
@@ -183,6 +193,7 @@ export class Host {
 		if (record.kind !== KeyTask.definition.name) return;
 		const input = record.input as KeyTaskInput;
 		this.#prompts.set(record.id, input.prompt);
+		this.#cwds.set(record.id, input.cwd);
 		if (input.child === true) {
 			this.#children.add(record.id);
 			this.#forked.add(record.conversationId);
@@ -222,6 +233,7 @@ export class Host {
 								id,
 								owner: `task #${owner.taskId}`,
 								label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
+								cwd: this.#cwds.get(owner.taskId),
 								running: running.has(id),
 								closed: this.#closed(id),
 							},
@@ -271,7 +283,7 @@ export class Host {
 			res
 				.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
 				.end(
-					"key host\n\n  GET  /api/conversations              transcripts, then changes (SSE)\n  GET  /api/conversations/:id          one transcript, then changes (SSE)\n  POST /api/run                        start a context from the body\n  POST /api/conversations/:id/messages  message a context from the body\n",
+					"key host\n\n  GET  /api/conversations              transcripts, then changes (SSE)\n  GET  /api/conversations/:id          one transcript, then changes (SSE)\n  POST /api/run                        {prompt, cwd}: start a context in that directory\n  POST /api/conversations/:id/messages  message a context from the body\n",
 				);
 			return;
 		}
@@ -296,12 +308,15 @@ export class Host {
 			return;
 		}
 		if (req.method === "POST" && url.pathname === "/api/run") {
-			const prompt = (await readBody(req)).trim();
-			if (prompt === "") {
-				res.writeHead(400).end("empty prompt");
+			const { prompt, cwd } = JSON.parse(await readBody(req)) as {
+				prompt: string;
+				cwd: string;
+			};
+			if (prompt.trim() === "" || cwd === "") {
+				res.writeHead(400).end("empty prompt or cwd");
 				return;
 			}
-			const task = await this.run(prompt);
+			const task = await this.run(cwd, prompt);
 			res.writeHead(202, { "content-type": "application/json" }).end(JSON.stringify({ task }));
 			return;
 		}
