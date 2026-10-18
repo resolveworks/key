@@ -60,8 +60,6 @@ const production = (): HostOptions => ({
 /** One line in the transcript picker: a context's conversation, and whether it is running. */
 export type Summary = {
   readonly id: number;
-  /** The context `task #N` whose transcript this is. */
-  readonly owner: string;
   /** That context's prompt. */
   readonly label: string;
   /** The directory that context runs in. */
@@ -225,7 +223,6 @@ export class Host {
           : [
               {
                 id,
-                owner: `task #${owner.taskId}`,
                 label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
                 cwd: this.#agentCwds.get(id) ?? "",
                 running: running.has(id),

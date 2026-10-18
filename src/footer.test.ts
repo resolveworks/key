@@ -110,22 +110,20 @@ describe("footer", () => {
     expect(footer.render(100)).toHaveLength(2);
   });
 
-  test("the working label names the task and spins only while the generation runs", () => {
+  test("the working label spins only while the generation runs", () => {
     const label = new WorkingLabel();
-    label.show("working", "task #3");
+    label.show("working");
     const working = stripTerminalSequences(label.border((text) => text, 40));
-    expect(working).toContain("task #3");
     expect(working).toContain("⠋");
 
-    label.show("idle", "task #3");
+    label.show("idle");
     const idle = stripTerminalSequences(label.border((text) => text, 40));
     expect(idle).toContain("○");
     expect(idle).not.toContain("⠋");
   });
 
-  test("an empty label leaves the border whole", () => {
+  test("no label leaves the border whole", () => {
     const label = new WorkingLabel();
-    label.show("idle", "");
     expect(label.border((text) => text, 10)).toBe("──────────");
   });
 });

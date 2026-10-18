@@ -113,23 +113,21 @@ const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "
  * dot while it waits on the human.
  */
 export class WorkingLabel {
-  #state: Working = "idle";
-  #task = "";
+  #state: Working | undefined;
   #tick = 0;
   #timer: ReturnType<typeof setInterval> | undefined;
   #tui: { requestRender(): void } | undefined;
 
-  /** Show one transcript's state, with the task that owns it. */
-  show(state: Working, task: string): void {
+  /** Say what the open transcript is doing; no transcript has no border label. */
+  show(state: Working | undefined): void {
     this.#state = state;
-    this.#task = task;
     this.#spin(state === "working");
   }
 
   /** Draw the label into the border, or the border alone when there is nothing to say. */
   border(color: (text: string) => string, width: number): string {
-    if (this.#task === "") return color("─".repeat(Math.max(0, width)));
-    const label = truncateToWidth(this.#label(), Math.max(1, width - 4), "…");
+    if (this.#state === undefined) return color("─".repeat(Math.max(0, width)));
+    const label = this.#label();
     // ─ + space + label + space + rule, filled to exactly the given width.
     const rule = "─".repeat(Math.max(0, width - 3 - visibleWidth(label)));
     return `${color("─")} ${label} ${color(rule)}`;
@@ -141,8 +139,7 @@ export class WorkingLabel {
   }
 
   #label(): string {
-    const mark = this.#state === "working" ? style.accent(this.#frameChar()) : style.dim("○");
-    return `${mark} ${style.muted(this.#task)}`;
+    return this.#state === "working" ? style.accent(this.#frameChar()) : style.dim("○");
   }
 
   #frameChar(): string {

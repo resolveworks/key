@@ -136,7 +136,7 @@ describe("host", () => {
   });
 
   test("a transcript streams its view and the stats the view cannot carry", async () => {
-    const { id } = await startRun("say hello");
+    const id = await startRun("say hello");
 
     const response = await fetch(`${base}/api/conversations/${id}`);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
@@ -167,15 +167,14 @@ describe("host", () => {
   }
 
   /** Start a context from a prompt and find the conversation its task owns. */
-  async function startRun(prompt: string): Promise<{ id: number; task: number }> {
+  async function startRun(prompt: string): Promise<number> {
     faux.setResponses([fauxAssistantMessage("hello")]);
     const list = new Frames(
       (await fetch(`${base}/api/conversations`)).body as ReadableStream<Uint8Array>,
     );
-    const { task } = (await (await run(prompt)).json()) as { task: number };
+    await run(prompt);
     const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
-    expect(listed[0].owner).toBe(`task #${task}`);
     await list.close();
-    return { id: listed[0].id, task };
+    return listed[0].id;
   }
 });

@@ -79,8 +79,8 @@ export async function open(base: string): Promise<void> {
   let summaries: readonly Summary[] = [];
   let view: ConversationView | undefined;
   let stats: Stats | undefined;
-  /** The task whose conversation is not in the summaries yet; we open it as soon as it appears. */
-  let pending: number | undefined;
+  /** The prompt of a trajectory we started; we open its conversation as soon as it appears. */
+  let pending: string | undefined;
   /** A failed action, shown once and replaced by whatever the state says next. */
   let notice: string | undefined;
   let starting = false;
@@ -126,7 +126,7 @@ export async function open(base: string): Promise<void> {
   const render = (): void => {
     syncWatch();
     // The prompt's border says what it waits on; nothing outside a transcript has a prompt.
-    prompt.working.show("idle", "");
+    prompt.working.show("idle");
     if (mode.kind === "list") {
       const page = mode;
       prompt.setText("");
@@ -152,16 +152,16 @@ export async function open(base: string): Promise<void> {
       footer.show(process.cwd());
     } else {
       const page = mode;
-      const summary = summaries.find((candidate) => candidate.id === page.id);
       showPrompt();
       if (view === undefined) {
         show([new Text(style.dim("connecting…"), 0, 0)]);
+        const summary = summaries.find((candidate) => candidate.id === page.id);
         footer.show(summary?.cwd ?? process.cwd());
       } else {
         show(transcript(view));
         if (stats !== undefined) footer.watch(view, stats);
         const live = view.docs["pi.live"] as LiveState | undefined;
-        prompt.working.show(live?.run === undefined ? "idle" : "working", summary?.owner ?? "");
+        prompt.working.show(live?.run === undefined ? "idle" : "working");
       }
     }
     if (notice !== undefined) show([new Text(style.error(notice), 0, 0)]);
@@ -194,12 +194,8 @@ export async function open(base: string): Promise<void> {
         await post(base, `/api/conversations/${mode.id}/messages`, value);
       } else {
         // The client's directory is the trajectory's: launch it from the project root.
-        const created = await post(
-          base,
-          "/api/run",
-          JSON.stringify({ prompt: value, cwd: process.cwd() }),
-        );
-        pending = ((await created.json()) as { readonly task: number }).task;
+        await post(base, "/api/run", JSON.stringify({ prompt: value, cwd: process.cwd() }));
+        pending = value;
       }
       prompt.setText("");
       notice = undefined;
@@ -268,7 +264,7 @@ export async function open(base: string): Promise<void> {
     }
     // Open the pending trajectory once the host has created its conversation.
     if (pending !== undefined) {
-      const created = summaries.find((summary) => summary.owner === `task #${pending}`);
+      const created = summaries.find((summary) => summary.label === pending);
       if (created !== undefined) {
         pending = undefined;
         open(created.id);
@@ -295,16 +291,16 @@ function saveCursor(conversation: number | undefined): void {
   writeFileSync(cursorFile, JSON.stringify({ conversation: conversation ?? null }));
 }
 
-/** One selectable transcript. */
+/** One selectable transcript: what was asked, where it ran, and whether it runs now. */
 function makeList(summaries: readonly Summary[]): SelectList {
   return new SelectList(
     summaries.map((summary) => ({
       value: String(summary.id),
-      label: `#${summary.id}`,
-      description: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.owner}${summary.label === "" ? "" : ` · ${summary.label}`}`,
+      label: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`,
     })),
     20,
     selectTheme,
+    { minPrimaryColumnWidth: 64, maxPrimaryColumnWidth: 64 },
   );
 }
 
