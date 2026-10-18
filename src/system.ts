@@ -8,9 +8,12 @@ import {
 	section,
 	type TaskId,
 } from "@earendil-works/pi-durable";
+import { branchFor, CHILD_NAME, ensureWorktree, type Worktree } from "./worktree.ts";
 
 export type KeyTaskInput = {
 	readonly prompt: string;
+	/** The child's name: it names the worktree and branch agent/<name>. */
+	readonly name?: string;
 	/** Set for a context a parent forked: it runs in a fresh conversation without fork. */
 	readonly child?: true;
 	/** A human's message to an existing context: run it in that context's conversation. */
@@ -49,12 +52,23 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			let conversationId = task.state.checkpoint.conversationId;
 			if (conversationId === undefined) {
 				const target = task.input.continue === true ? runtime.conversationId : undefined;
+				let worktree: Worktree | undefined;
+				if (target === undefined && task.input.child === true) {
+					if (task.input.name === undefined)
+						throw new Error(`key.task ${task.id}: child has no name`);
+					const env = await runtime.env(context);
+					if (env === undefined) throw new Error(`key.task ${task.id}: child has no environment`);
+					worktree = await ensureWorktree(task.input.name, env, context);
+				}
 				await runtime.commit(async (tx) => {
 					conversationId =
 						target ??
 						(await tx.createConversation({ ownership: { kind: "task", taskId: task.id } })).id;
-					if (target === undefined && task.input.child === true) {
-						await configure(tx, conversationId, { tools: { remove: [Fork] } });
+					if (worktree !== undefined) {
+						await configure(tx, conversationId, {
+							tools: { remove: [Fork] },
+							cwd: worktree.path,
+						});
 					}
 					return { status: "running", checkpoint: { phase: "run", conversationId } };
 				}, context);
@@ -66,7 +80,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 				throw new Error(`key.task ${task.id}: conversation ${conversationId} is gone`);
 
 			// The prompt: the input (control) plus every waited-on task's settled result (data).
-			const { prompt, on } = task.input;
+			const { prompt, name, on } = task.input;
 			const upstream =
 				on === undefined
 					? []
@@ -75,13 +89,17 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 								? `task #${on[index]} completed:\n${outcome.result}`
 								: `task #${on[index]} ${outcome.status}`,
 						);
+			const text =
+				upstream.length === 0
+					? prompt
+					: `${prompt}\n\nUpstream results:\n\n${upstream.join("\n\n")}`;
 			const submission = await handle.submit(
 				{
 					type: "input",
 					content:
-						upstream.length === 0
-							? prompt
-							: `${prompt}\n\nUpstream results:\n\n${upstream.join("\n\n")}`,
+						task.input.child === true && name !== undefined
+							? `You work in an isolated git worktree on branch ${branchFor(name)}. Commit all work before you finish.\n\n${text}`
+							: text,
 					requestId: `key.task:${task.id}`,
 				},
 				context,
@@ -106,9 +124,12 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 					if (message.role !== "assistant") return [];
 					return message.content.flatMap((part) => {
 						if (part.type !== "toolCall" || part.name !== Fork.name) return [];
-						if (typeof part.arguments.prompt !== "string")
+						const { prompt, name } = part.arguments;
+						if (typeof prompt !== "string")
 							throw new Error(`key.task ${task.id}: fork ${part.id} has no prompt`);
-						return [part.arguments.prompt];
+						if (typeof name !== "string")
+							throw new Error(`key.task ${task.id}: fork ${part.id} has no name`);
+						return [{ prompt, name }];
 					});
 				});
 
@@ -116,11 +137,11 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 			// waiting on them; the successor waits on them explicitly.
 			await runtime.commit(async (tx) => {
 				const children: TaskId<string>[] = [];
-				for (const childPrompt of forked) {
+				for (const { prompt: childPrompt, name } of forked) {
 					children.push(
 						await tx.createTask(
 							KeyTask,
-							{ prompt: childPrompt, child: true },
+							{ prompt: childPrompt, name, child: true },
 							{
 								ownership: { kind: "conversation" },
 								conversationId,
@@ -157,8 +178,12 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
 export const Fork = defineTool({
 	name: "fork",
 	description:
-		"Fork one child context: it runs the given task when your turn ends. You do not wait for it; the context ends when its turn ends. Call fork once per child; calling it several times in the same turn forks several children. A fresh successor runs once they settle, with their results. A child does not fork.",
+		"Fork one child context: it runs the given task in its own git worktree when your turn ends. The name becomes the child's branch agent/<name>; commit all work before finishing. You do not wait for it; the context ends when its turn ends. Call fork once per child; calling it several times in the same turn forks several children. A fresh successor runs once they settle, with their results. A child does not fork.",
 	parameters: Type.Object({
+		name: Type.String({
+			pattern: CHILD_NAME.source,
+			description: "Lowercase kebab-case child name; also its branch agent/<name>.",
+		}),
 		prompt: Type.String({ description: "The task for the child context." }),
 	}),
 	replay: "safe",
