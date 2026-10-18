@@ -20,6 +20,8 @@ make it visibly wrong — silence and recovery are where bugs hide.
 - Behavior tests live under `tests/`; `tests/AGENTS.md` is the policy.
 - The restart is the crash-recovery path; do not add a hot-reload that
   skips it.
+- The pre-commit hook runs biome (with auto-fix), `pnpm check`, and
+  `pnpm test`. Do not run these unprompted.
 
 ## Scope
 
@@ -27,8 +29,8 @@ One task kind, one `fork` tool.
 
 Out — do not build, even if it looks easy: push notifications, phone or
 desktop clients, WebSocket server / auth / remote anything, the proactive
-ticker, git hooks or merge enforcement, compaction tuning, UI beyond
-terminal lines, multiple sessions, scale-out.
+ticker, compaction tuning, UI beyond terminal lines, multiple sessions,
+scale-out.
 
 ## Style
 
