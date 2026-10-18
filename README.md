@@ -29,8 +29,8 @@ successor contexts. It can fork and join many times. The first context is the
 human kickoff; every later context is a loop iteration.
 
 Every cascade context runs in a conversation of its own; the cascade never resumes
-one. A human message is the one way back in: it starts a fresh context in the open
-conversation. Each forked child is its own branch; only its settled result crosses
+one. A human message is the one way back in: it steers the open conversation
+directly. Each forked child is its own branch; only its settled result crosses
 into the parent's successor.
 
 ```text

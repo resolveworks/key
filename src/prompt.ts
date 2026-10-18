@@ -5,8 +5,8 @@ import { spawnSync } from "node:child_process";
 import { CombinedAutocompleteProvider, type SlashCommand } from "@earendil-works/pi-tui";
 
 const commands: SlashCommand[] = [
-	{ name: "resume", description: "list past conversations" },
-	{ name: "new", description: "abandon the open transcript; the next prompt starts fresh" },
+  { name: "resume", description: "list past conversations" },
+  { name: "new", description: "abandon the open transcript; the next prompt starts fresh" },
 ];
 
 /** fd walks gitignored trees fast; without it tab still edits the line, and @ completes nothing. */

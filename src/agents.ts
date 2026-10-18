@@ -11,38 +11,38 @@ type ProjectFile = { readonly path: string; readonly content: string };
 
 /** From `cwd` up to the filesystem root, outermost first: nearer files read as the more specific ones. */
 function projectFiles(cwd: string): readonly ProjectFile[] {
-	const files: ProjectFile[] = [];
-	for (let dir = cwd; ; ) {
-		const path = CANDIDATES.map((name) => join(dir, name)).find(isFile);
-		if (path !== undefined) {
-			files.unshift({ path, content: readFileSync(path, "utf8").replace(/^\uFEFF/, "") });
-		}
-		const parent = dirname(dir);
-		if (parent === dir) return files;
-		dir = parent;
-	}
+  const files: ProjectFile[] = [];
+  for (let dir = cwd; ; ) {
+    const path = CANDIDATES.map((name) => join(dir, name)).find(isFile);
+    if (path !== undefined) {
+      files.unshift({ path, content: readFileSync(path, "utf8").replace(/^\uFEFF/, "") });
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return files;
+    dir = parent;
+  }
 }
 
 function isFile(path: string): boolean {
-	return existsSync(path) && statSync(path).isFile();
+  return existsSync(path) && statSync(path).isFile();
 }
 
 function render(files: readonly ProjectFile[]): string | undefined {
-	if (files.length === 0) return undefined;
-	return [
-		"Project-specific instructions and guidelines:",
-		...files.map(
-			({ path, content }) =>
-				`<project_instructions path="${path}">\n${content}\n</project_instructions>`,
-		),
-	].join("\n\n");
+  if (files.length === 0) return undefined;
+  return [
+    "Project-specific instructions and guidelines:",
+    ...files.map(
+      ({ path, content }) =>
+        `<project_instructions path="${path}">\n${content}\n</project_instructions>`,
+    ),
+  ].join("\n\n");
 }
 
 export const Agents = defineExtension({
-	name: "agents",
-	sections: [
-		section("project_context", (input) =>
-			input.agent.cwd === undefined ? undefined : render(projectFiles(input.agent.cwd)),
-		),
-	],
+  name: "agents",
+  sections: [
+    section("project_context", (input) =>
+      input.agent.cwd === undefined ? undefined : render(projectFiles(input.agent.cwd)),
+    ),
+  ],
 });

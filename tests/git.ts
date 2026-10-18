@@ -10,34 +10,34 @@ export const REPO = "/key/repo";
 
 /** The harness environment: nothing on disk, and no test runs a process through it. */
 export class FakeEnv extends NodeExecutionEnv {
-	constructor() {
-		super({ cwd: REPO });
-	}
+  constructor() {
+    super({ cwd: REPO });
+  }
 
-	override async exec(
-		command: string | readonly string[],
-		_options: ShellExecOptions | undefined,
-		_context: Context,
-	): Promise<Result<ShellExecResult, never>> {
-		throw new Error(`fake env: no answer for ${JSON.stringify(command)}`);
-	}
+  override async exec(
+    command: string | readonly string[],
+    _options: ShellExecOptions | undefined,
+    _context: Context,
+  ): Promise<Result<ShellExecResult, never>> {
+    throw new Error(`fake env: no answer for ${JSON.stringify(command)}`);
+  }
 }
 
 let calls: readonly (readonly string[])[] = [];
 
 /** Every git invocation, as its argument vector, in order. */
 export function gitCalls(): readonly (readonly string[])[] {
-	return calls;
+  return calls;
 }
 
 /** Forget the git calls recorded so far. */
 export function resetGit(): void {
-	calls = [];
+  calls = [];
 }
 
 /** The fake git port: `rev-parse` names the REPO every path derives from; everything else answers empty. */
 export const fakeGit: Git = async (args, _cwd) => {
-	calls = [...calls, args];
-	if (args[0] === "rev-parse") return `${REPO}\n`;
-	return "";
+  calls = [...calls, args];
+  if (args[0] === "rev-parse") return `${REPO}\n`;
+  return "";
 };
