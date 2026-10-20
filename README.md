@@ -3,7 +3,38 @@
 **Cascading contexts.** Information only flows forward. There is no call/return
 anywhere.
 
+Key is a host and a terminal client. One process — the host — owns every
+cascade on a durable session and serves it over HTTP; the client is a dumb
+terminal chat that starts trajectories, streams them, and browses past ones.
+The agents are coding agents: each context runs in a project directory you
+point it at, on `deepseek/deepseek-flash`.
+
 The implementation may change. The idea below does not.
+
+## Usage
+
+Needs Node 26 and pnpm.
+
+```
+pnpm install
+pnpm serve      # own the session and serve the graph on 127.0.0.1:7317
+pnpm client     # chat with a running host
+```
+
+Put `DEEPSEEK_API_KEY=...` in `~/.key/.env`; the host loads it on start.
+Everything the host owns lives in `~/.key` — the session store is SQLite at
+`~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
+
+## HTTP API
+
+The host's whole surface, served by hono; both streams are SSE.
+
+```
+GET  /api/conversations               transcripts, then changes (SSE)
+GET  /api/conversations/:id           one transcript, then changes (SSE)
+POST /api/run                         {prompt, cwd}: start a context in that directory
+POST /api/conversations/:id/messages  {prompt}: message a context
+```
 
 ## Core idea
 
@@ -45,4 +76,12 @@ cascade
 Information only ever enters a fresh context. Nothing returns to the context
 that forked it.
 
-Working agreements live in `AGENTS.md`.
+## Development
+
+```
+pnpm check     # biome + tsc
+pnpm test      # vitest
+```
+
+Hooks live in `.githooks` — wire them with
+`git config core.hooksPath .githooks`.
