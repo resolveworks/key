@@ -4,6 +4,7 @@ import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "./agents.ts";
+import type { api } from "./api.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { Host, type Summary } from "./host.ts";
@@ -54,7 +55,7 @@ class Frames {
 describe("host", () => {
   let host: Host;
   let faux: ReturnType<typeof fauxProvider>;
-  let base: string;
+  let app: ReturnType<typeof api>;
 
   beforeEach(async () => {
     // The host configures deepseek/deepseek-flash, so the faux provider serves that pair.
@@ -68,8 +69,9 @@ describe("host", () => {
       port: 0,
     });
     await host.open();
-    await host.listen();
-    base = host.url;
+    host.resume();
+    // In-process: `app.request()` answers without a port, exactly as `hono request` drives it.
+    app = host.app;
   });
 
   afterEach(async () => {
@@ -77,7 +79,7 @@ describe("host", () => {
   });
 
   test("the root lists the routes", async () => {
-    const response = await fetch(`${base}/`);
+    const response = await app.request("/");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/plain");
     const body = await response.text();
@@ -85,26 +87,26 @@ describe("host", () => {
   });
 
   test("an unknown path is not found", async () => {
-    const response = await fetch(`${base}/nothing/here`);
+    const response = await app.request("/nothing/here");
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("not found");
   });
 
   test("an unknown transcript is not found", async () => {
-    const response = await fetch(`${base}/api/conversations/999999`);
+    const response = await app.request("/api/conversations/999999");
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("no such conversation");
   });
 
   test("an empty prompt is rejected", async () => {
-    const run = await fetch(`${base}/api/run`, {
+    const run = await app.request("/api/run", {
       method: "POST",
       body: JSON.stringify({ prompt: "  \n\t", cwd: "/key/repo" }),
     });
     expect(run.status).toBe(400);
     expect(await run.text()).toBe("empty prompt or cwd");
 
-    const message = await fetch(`${base}/api/conversations/1/messages`, {
+    const message = await app.request("/api/conversations/1/messages", {
       method: "POST",
       body: "  \n\t",
     });
@@ -113,7 +115,7 @@ describe("host", () => {
   });
 
   test("a run without a cwd is rejected", async () => {
-    const response = await fetch(`${base}/api/run`, {
+    const response = await app.request("/api/run", {
       method: "POST",
       body: JSON.stringify({ prompt: "say hello", cwd: "" }),
     });
@@ -122,7 +124,7 @@ describe("host", () => {
   });
 
   test("the conversation list streams a snapshot and later changes", async () => {
-    const response = await fetch(`${base}/api/conversations`);
+    const response = await app.request("/api/conversations");
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     const frames = new Frames(response.body as ReadableStream<Uint8Array>);
     expect(await frames.until((frame: readonly Summary[]) => frame.length === 0)).toEqual([]);
@@ -138,13 +140,15 @@ describe("host", () => {
   test("a transcript streams its view and the stats the view cannot carry", async () => {
     const id = await startRun("say hello");
 
-    const response = await fetch(`${base}/api/conversations/${id}`);
+    const response = await app.request(`/api/conversations/${id}`);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     const frames = new Frames(response.body as ReadableStream<Uint8Array>);
 
-    // The first frame is a whole view, and later frames carry each revision the run commits.
+    // The first frame is a whole view, and later frames carry each revision the run commits:
+    // the verdict is the completed one, not the user entry the run starts from.
     const { view: snapshot, stats } = await frames.until<Transcript>(
-      ({ view }: Transcript) => view.conversation.id === id,
+      ({ view }: Transcript) =>
+        view.conversation.id === id && view.entries.some((entry) => entry.kind === "pi.assistant"),
     );
     expect(snapshot.entries.map((entry) => entry.kind)).toEqual([
       "pi.user",
@@ -160,7 +164,7 @@ describe("host", () => {
 
   /** Start a context from a prompt, as a client does: the prompt and its directory. */
   async function run(prompt: string): Promise<Response> {
-    return fetch(`${base}/api/run`, {
+    return app.request("/api/run", {
       method: "POST",
       body: JSON.stringify({ prompt, cwd: "/key/repo" }),
     });
@@ -170,7 +174,7 @@ describe("host", () => {
   async function startRun(prompt: string): Promise<number> {
     faux.setResponses([fauxAssistantMessage("hello")]);
     const list = new Frames(
-      (await fetch(`${base}/api/conversations`)).body as ReadableStream<Uint8Array>,
+      (await app.request("/api/conversations")).body as ReadableStream<Uint8Array>,
     );
     await run(prompt);
     const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);

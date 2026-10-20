@@ -1,6 +1,5 @@
 // The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
 import { mkdirSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -9,7 +8,6 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AgentDoc,
   type ConversationId,
-  type ConversationView,
   type Cursor,
   configure,
   createRegistry,
@@ -21,7 +19,10 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { type ServerType, serve } from "@hono/node-server";
+import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
+import { api } from "./api.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { type KeyTaskInput, keySystem, keyTask } from "./system.ts";
@@ -83,9 +84,10 @@ export class Host {
   /** Task ids that are forked children, and those that have ended. */
   #children = new Set<number>();
   #ended = new Set<number>();
-  #server!: Server;
+  #server!: ServerType;
   #port!: number;
-  #listListeners = new Set<ServerResponse>();
+  #app?: Hono;
+  #listeners = new Set<(summaries: readonly Summary[]) => void>();
   #options: HostOptions;
 
   constructor(options: HostOptions = production()) {
@@ -99,6 +101,39 @@ export class Host {
 
   get url(): string {
     return `http://127.0.0.1:${this.#port}`;
+  }
+
+  /** The transcript list as it stands right now. */
+  get summaries(): readonly Summary[] {
+    return this.#summaries;
+  }
+
+  /** Subscribe to every later transcript list; the returned function unsubscribes. */
+  onSummaries(listener: (summaries: readonly Summary[]) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  /** One conversation's live view, when the conversation exists. */
+  async watch(id: number) {
+    const conversation = await this.#harness.conversation(id as ConversationId, context);
+    return conversation?.watch(context);
+  }
+
+  /** What a view cannot say: the branch, the context window, the model. */
+  stats(id: number): Promise<Stats> {
+    return this.#statsOf(id);
+  }
+
+  /** The host's HTTP surface, in-process: `app.request()` answers without a port. */
+  get app(): Hono {
+    this.#app ??= api(this);
+    return this.#app;
+  }
+
+  /** Start task scheduling. Idempotent, so `listen` resumes again without harm. */
+  resume(): void {
+    this.#harness.resume();
   }
 
   async open(): Promise<void> {
@@ -200,7 +235,7 @@ export class Host {
   /** Recompute the transcript list and push it to every attached client. */
   async #publish(): Promise<void> {
     this.#summaries = await this.#summarise();
-    broadcast(this.#listListeners, this.#summaries);
+    for (const listener of this.#listeners) listener(this.#summaries);
   }
 
   async #summarise(): Promise<readonly Summary[]> {
@@ -254,81 +289,15 @@ export class Host {
   }
 
   async listen(): Promise<void> {
-    this.#server = createServer((req, res) => {
-      void this.#handle(req, res).catch((error: unknown) => {
-        console.error(error);
-        if (!res.headersSent) res.writeHead(500).end(String(error));
-      });
+    const bound = new Promise<{ port: number }>((resolve) => {
+      this.#server = serve(
+        { fetch: this.app.fetch, port: this.#options.port, hostname: "127.0.0.1" },
+        ({ port }) => resolve({ port }),
+      );
     });
-    this.#server.listen(this.#options.port, "127.0.0.1");
-    await new Promise((resolve) => this.#server.once("listening", resolve));
-    const address = this.#server.address() as { port: number };
-    this.#port = address.port;
+    this.#port = (await bound).port;
     process.stdout.write(`key host on ${this.url}\n`);
     this.#harness.resume();
-  }
-
-  async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url as string, "http://localhost");
-    if (req.method === "GET" && url.pathname === "/") {
-      res
-        .writeHead(200, { "content-type": "text/plain; charset=utf-8" })
-        .end(
-          "key host\n\n  GET  /api/conversations              transcripts, then changes (SSE)\n  GET  /api/conversations/:id          one transcript, then changes (SSE)\n  POST /api/run                        {prompt, cwd}: start a context in that directory\n  POST /api/conversations/:id/messages  message a context from the body\n",
-        );
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/conversations") {
-      this.#stream(res, this.#summaries, this.#listListeners);
-      return;
-    }
-    const transcript = /^\/api\/conversations\/(\d+)$/.exec(url.pathname);
-    if (req.method === "GET" && transcript !== null) {
-      await this.#transcript(Number(transcript[1]), req, res);
-      return;
-    }
-    const message = /^\/api\/conversations\/(\d+)\/messages$/.exec(url.pathname);
-    if (req.method === "POST" && message !== null) {
-      const prompt = (await readBody(req)).trim();
-      if (prompt === "") {
-        res.writeHead(400).end("empty prompt");
-        return;
-      }
-      await this.continue(Number(message[1]), prompt);
-      res.writeHead(202).end();
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/run") {
-      const { prompt, cwd } = JSON.parse(await readBody(req)) as {
-        prompt: string;
-        cwd: string;
-      };
-      if (prompt.trim() === "" || cwd === "") {
-        res.writeHead(400).end("empty prompt or cwd");
-        return;
-      }
-      const task = await this.run(cwd, prompt);
-      res.writeHead(202, { "content-type": "application/json" }).end(JSON.stringify({ task }));
-      return;
-    }
-    res.writeHead(404).end("not found");
-  }
-
-  /** Attach one transcript: the current view, then every later revision through durable's own watch. */
-  async #transcript(id: number, req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const conversation = await this.#harness.conversation(id as ConversationId, context);
-    if (conversation === undefined) {
-      res.writeHead(404).end("no such conversation");
-      return;
-    }
-    const stats = await this.#statsOf(id);
-    res.writeHead(200, sseHeaders());
-    const watch = await conversation.watch(context);
-    res.write(`data: ${JSON.stringify({ view: watch.value, stats })}\n\n`);
-    watch.start(async (view: ConversationView) => {
-      res.write(`data: ${JSON.stringify({ view, stats: await this.#statsOf(id) })}\n\n`);
-    });
-    req.on("close", () => void watch.stop());
   }
 
   /** What the view cannot say: the branch its directory is on, and the window its model gives. */
@@ -344,32 +313,11 @@ export class Host {
     };
   }
 
-  #stream(res: ServerResponse, snapshot: unknown, listeners: Set<ServerResponse>): void {
-    res.writeHead(200, sseHeaders());
-    res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
-    listeners.add(res);
-    res.on("close", () => listeners.delete(res));
-  }
-
   async close(): Promise<void> {
-    for (const listener of this.#listListeners) listener.end();
-    const closed = new Promise((resolve) => this.#server.close(resolve));
+    const closed = this.#server?.close() ?? Promise.resolve();
     await this.#harness.close(context);
     await closed;
   }
-}
-
-function sseHeaders(): Record<string, string> {
-  return {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-    connection: "keep-alive",
-  };
-}
-
-function broadcast(listeners: Set<ServerResponse>, value: unknown): void {
-  const payload = `data: ${JSON.stringify(value)}\n\n`;
-  for (const listener of listeners) listener.write(payload);
 }
 
 /** A working directory's branch, when it is a repository: the footer shows it beside the path. */
@@ -379,10 +327,4 @@ async function branchOf(cwd: string | undefined): Promise<string | undefined> {
     .then((stdout) => stdout.trim())
     .catch(() => "");
   return branch === "" ? undefined : branch;
-}
-
-async function readBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
 }
