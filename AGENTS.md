@@ -17,7 +17,7 @@ make it visibly wrong — silence and recovery are where bugs hide.
 
 ## Constraints
 
-- Behavior tests live under `tests/`; `tests/AGENTS.md` is the policy.
+- Behavior tests live under `tests/`.
 - The restart is the crash-recovery path; do not add a hot-reload that
   skips it.
 - The pre-commit hook runs biome (with auto-fix), `pnpm check`, and

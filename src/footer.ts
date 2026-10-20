@@ -2,7 +2,6 @@
 // spent — tokens, cache hits, cost — against the model's context window, with the model on the right.
 
 import { homedir } from "node:os";
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { ConversationView, UsageState } from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -27,11 +26,11 @@ export function tokens(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
-/** `~/Projects/key` rather than the whole home path, unless the path is outside the home. */
+/** `~/Projects/key` rather than the whole home path; anything else stays as it is. */
 export function shortenHome(path: string): string {
-  const inside = relative(resolve(homedir()), resolve(path));
-  if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return path;
-  return inside === "" ? "~" : `~${sep}${inside}`;
+  const home = homedir();
+  if (path === home) return "~";
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
 /** One conversation's own spend: its answers and summarizations, and the tools that reported usage. */

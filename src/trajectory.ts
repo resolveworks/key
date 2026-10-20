@@ -1,7 +1,6 @@
 // A transcript as pi draws one: the human's words in a box, assistant text as markdown, thinking in
 // italics, and every tool call its own box whose background says how the call is going.
 
-import { homedir } from "node:os";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import type {
   ConversationView,
@@ -10,6 +9,7 @@ import type {
   ToolSlot,
 } from "@earendil-works/pi-durable";
 import { Box, type Component, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { shortenHome } from "./footer.ts";
 import { diff, markdown, style } from "./theme.ts";
 
 /** Collapsed tool output shows this many lines; pi's preview depth for a shell. */
@@ -204,12 +204,6 @@ function toolTitle(name: string, args: unknown): string {
   const oneLine = shortenHome(first).replace(/\s+/g, " ").trim();
   const preview = oneLine.length > 100 ? `${oneLine.slice(0, 97)}…` : oneLine;
   return `${style.bold(name)} ${style.dim(preview)}`;
-}
-
-/** `~/Projects/key` rather than the whole home path, the way pi names a file it read. */
-function shortenHome(path: string): string {
-  const home = homedir();
-  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
 /** The argument a call is best identified by: a shell command, a path, a pattern, else its first string. */

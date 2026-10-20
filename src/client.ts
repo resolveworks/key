@@ -19,6 +19,8 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import { hc } from "hono/client";
+import type { api } from "./api.ts";
 import { Footer, type Stats, WorkingLabel } from "./footer.ts";
 import type { Summary } from "./host.ts";
 import { provider } from "./prompt.ts";
@@ -57,6 +59,7 @@ type Mode =
 /** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
   const tui = new TuiMainScreen(new ProcessTerminal());
+  const client = hc<ReturnType<typeof api>>(base);
   // The terminal owns the screen and the scrollback. Within a view the document only grows, so
   // rendered lines scroll up into history instead of being redrawn. A selector replaces the
   // document and clears the dock, so the list owns a clean screen.
@@ -113,13 +116,16 @@ export async function open(base: string): Promise<void> {
     watchedId = id;
     view = undefined;
     stats = undefined;
-    if (id !== undefined)
-      watching = watchTranscript(base, id, (frame) => {
+    if (id === undefined) return;
+    const url = client.api.conversations[":id"].$url({ param: { id: String(id) } });
+    watching = {
+      stop: follow<Frame>(url, (frame) => {
         view = frame.view;
         stats = frame.stats;
         notice = undefined;
         render();
-      });
+      }),
+    };
   };
 
   /** View = f(state): the whole screen derives from the client state, on every change. */
@@ -191,10 +197,16 @@ export async function open(base: string): Promise<void> {
     starting = true;
     try {
       if (mode.kind === "transcript") {
-        await post(base, `/api/conversations/${mode.id}/messages`, value);
+        const id = mode.id;
+        await call(() =>
+          client.api.conversations[":id"].messages.$post({
+            param: { id: String(id) },
+            json: { prompt: value },
+          }),
+        );
       } else {
         // The client's directory is the trajectory's: launch it from the project root.
-        await post(base, "/api/run", JSON.stringify({ prompt: value, cwd: process.cwd() }));
+        await call(() => client.api.run.$post({ json: { prompt: value, cwd: process.cwd() } }));
         pending = value;
       }
       prompt.setText("");
@@ -255,7 +267,7 @@ export async function open(base: string): Promise<void> {
   // refreshes the screen — the list's status dots included.
   const cursor = loadCursor();
   let restored = false;
-  for await (const next of stream<readonly Summary[]>(`${base}/api/conversations`)) {
+  follow<readonly Summary[]>(client.api.conversations.$url(), (next) => {
     summaries = next;
     if (!restored) {
       restored = true;
@@ -271,7 +283,7 @@ export async function open(base: string): Promise<void> {
       }
     }
     render();
-  }
+  });
 }
 
 /** The transcript the last client had open, if it is still there. */
@@ -307,62 +319,40 @@ function makeList(summaries: readonly Summary[]): SelectList {
 /** One frame of a transcript: its view, and the stats the view cannot carry. */
 type Frame = { readonly view: ConversationView; readonly stats: Stats };
 
-/** Attach one transcript's SSE stream; `onFrame` runs for the snapshot and every later revision. */
-function watchTranscript(
-  base: string,
-  id: number,
-  onFrame: (frame: Frame) => void,
-): { readonly stop: () => void } {
-  const abort = new AbortController();
-  void (async () => {
-    for await (const frame of stream<Frame>(`${base}/api/conversations/${id}`, abort.signal))
-      onFrame(frame);
-  })();
-  return { stop: () => abort.abort() };
+/** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts. The platform's
+ * EventSource owns the connection; `pnpm client` runs it behind --experimental-eventsource. */
+function follow<T>(url: URL, onFrame: (frame: T) => void): () => void {
+  let stopped = false;
+  let current: EventSource | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  const attach = (): void => {
+    if (stopped) return;
+    const source = new EventSource(url);
+    current = source;
+    source.onmessage = (message) => onFrame(JSON.parse(message.data) as T);
+    source.onerror = () => {
+      source.close();
+      retry = setTimeout(attach, RECONNECT_MS);
+    };
+  };
+  attach();
+  return () => {
+    stopped = true;
+    clearTimeout(retry);
+    current?.close();
+  };
 }
 
-/** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts. */
-async function* stream<T>(url: string, signal?: AbortSignal): AsyncGenerator<T> {
+/** Run one client call, retrying only a restarting one; a failure throws with the host's word. */
+async function call(
+  request: () => Promise<{ ok: boolean; status: number; text(): Promise<string> }>,
+): Promise<void> {
   for (;;) {
     try {
-      const response = await fetch(url, {
-        headers: { accept: "text/event-stream" },
-        ...(signal === undefined ? {} : { signal }),
-      });
-      if (!response.ok || response.body === null)
-        throw new Error(`host returned ${response.status}`);
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for await (const chunk of response.body) {
-        buffer += decoder.decode(chunk as Uint8Array, { stream: true });
-        let end = buffer.indexOf("\n\n");
-        while (end !== -1) {
-          const data = buffer
-            .slice(0, end)
-            .split("\n")
-            .filter((line) => line.startsWith("data:"))
-            .map((line) => line.slice(5).trim())
-            .join("");
-          buffer = buffer.slice(end + 2);
-          if (data !== "") yield JSON.parse(data) as T;
-          end = buffer.indexOf("\n\n");
-        }
-      }
-    } catch {
-      if (signal?.aborted) return;
-    }
-    await delay(RECONNECT_MS);
-  }
-}
-
-/** POST to the host, retrying only a restarting one; the caller reads the answer it needs. */
-async function post(base: string, path: string, body: string): Promise<Response> {
-  for (;;) {
-    try {
-      const response = await fetch(`${base}${path}`, { method: "POST", body });
+      const response = await request();
       if (!response.ok)
         throw new Error(`host returned ${response.status}: ${await response.text()}`);
-      return response;
+      return;
     } catch (error) {
       // A restarting host refuses the connection; anything else is a real failure.
       if (!(error instanceof TypeError)) throw error;

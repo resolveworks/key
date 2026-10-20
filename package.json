@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "serve": "node src/main.ts serve",
-    "client": "node src/main.ts client",
+    "client": "node --experimental-eventsource src/main.ts client",
     "check": "biome check && tsc",
     "fix": "biome check --write",
     "lint": "biome lint",

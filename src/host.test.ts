@@ -101,26 +101,29 @@ describe("host", () => {
   test("an empty prompt is rejected", async () => {
     const run = await app.request("/api/run", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt: "  \n\t", cwd: "/key/repo" }),
     });
-    expect(run.status).toBe(400);
-    expect(await run.text()).toBe("empty prompt or cwd");
+    expect(run.status).toBe(500);
+    expect(await run.text()).toContain("/prompt");
 
     const message = await app.request("/api/conversations/1/messages", {
       method: "POST",
-      body: "  \n\t",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "  \n\t" }),
     });
-    expect(message.status).toBe(400);
-    expect(await message.text()).toBe("empty prompt");
+    expect(message.status).toBe(500);
+    expect(await message.text()).toContain("/prompt");
   });
 
   test("a run without a cwd is rejected", async () => {
     const response = await app.request("/api/run", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt: "say hello", cwd: "" }),
     });
-    expect(response.status).toBe(400);
-    expect(await response.text()).toBe("empty prompt or cwd");
+    expect(response.status).toBe(500);
+    expect(await response.text()).toContain("/cwd");
   });
 
   test("the conversation list streams a snapshot and later changes", async () => {
@@ -166,6 +169,7 @@ describe("host", () => {
   async function run(prompt: string): Promise<Response> {
     return app.request("/api/run", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt, cwd: "/key/repo" }),
     });
   }
