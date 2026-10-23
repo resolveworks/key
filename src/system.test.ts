@@ -154,7 +154,12 @@ describe("the fork cascade", () => {
 
   it("a successor is a new context, not the parent resumed", async () => {
     const { faux, harness } = await fresh();
-    faux.setResponses([turn("I forked a.", ["a"]), turn("a is on its way"), turn("a answers")]);
+    faux.setResponses([
+      turn("I forked a.", ["a"]),
+      turn("a is on its way"),
+      turn("a answers"),
+      turn("summed"),
+    ]);
 
     const parent = await started(harness, "kick off");
     const next = await waitForSuccessor(harness);
@@ -185,11 +190,14 @@ describe("the fork cascade", () => {
   it("a child cannot fork", async () => {
     const { faux, harness } = await fresh();
     // The child's conversation has fork removed, so its call is refused and mints nothing.
-    faux.setResponses([turn("I forked a.", ["a"]), turn("a is on its way")]);
+    faux.setResponses([
+      turn("I forked a.", ["a"]),
+      turn("a is on its way"),
+      turn("a forks b", ["b"]),
+      turn("a cannot fork"),
+      turn("summed"),
+    ]);
     const kickoff = await run(harness, "kick off");
-    // The parent asked twice; the child's request is next. Answer the child once, then it is refused.
-    await vi.waitFor(() => expect(faux.state.callCount).toBeGreaterThanOrEqual(2), { interval: 5 });
-    faux.setResponses([turn("a forks b", ["b"])]);
     await harness.waitForTask(kickoff, context);
 
     expect(children(await cascade(harness)).map(nameOf)).toEqual(["a"]);
@@ -208,6 +216,7 @@ describe("what a context scans for forks", () => {
         { stopReason: "toolUse" },
       ),
       turn("done"),
+      turn("summed"),
     ]);
 
     await started(harness, "kick off");

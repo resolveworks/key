@@ -45,6 +45,8 @@ const ForkRecord = defineDoc({
   history: "latest",
   fork: "current",
   initial: () => ({ forks: [] as { readonly prompt: string; readonly name: string }[] }),
+  // A context empties the record at its terminus; a base then resets the deltas a reader replays.
+  checkpointWhen: (value) => value.forks.length === 0,
 });
 
 type KeyTaskState =
@@ -168,7 +170,10 @@ export const keyTask = (git: Git) => {
           return;
         }
         if (settled.status !== "done" || settled.type !== "input") {
-          throw new Error(`key.task ${record.id}: run ended ${settled.status}`);
+          throw new Error(
+            `key.task ${record.id}: run ended ${settled.status}` +
+              (settled.status === "unanswered" ? `: ${settled.reason}` : ""),
+          );
         }
 
         const result = answerOf(
