@@ -83,6 +83,8 @@ export type Summary = {
   readonly label: string;
   /** The directory that context runs in. */
   readonly cwd: string;
+  /** Steps in under the conversation whose context minted this one: 0 for a cascade's kickoff. */
+  readonly depth: number;
   readonly running: boolean;
 };
 
@@ -289,6 +291,8 @@ export class Host {
                 id,
                 label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
                 cwd: cwds.get(id) ?? "",
+                // Flat until the host's cascade ordering lands: 0 renders as today.
+                depth: 0,
                 running: running.has(id),
               },
             ],
