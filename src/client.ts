@@ -392,6 +392,12 @@ export async function open(base: string): Promise<void> {
       if (next !== undefined) swap(next === "new" ? composer : { kind: "transcript", id: next });
       return { consume: true };
     }
+    // Ctrl+l covers the screen with the list — the /list command at a press, minus its spend:
+    // nothing was typed, so the covered view keeps its draft for the return.
+    if (matchesKey(data, "ctrl+l")) {
+      showList();
+      return { consume: true };
+    }
     // In the list the home row steps it: n and e one line, y and o one cascade block — the plain
     // keys under their ctrl cousins, which walk the ring instead of the rows.
     if (mode.kind === "list") {
