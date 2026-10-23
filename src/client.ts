@@ -260,6 +260,20 @@ export async function open(base: string): Promise<void> {
     if (matchesKey(data, "escape") && prompt.getText() === "") {
       if (mode.kind === "transcript" && runs(mode.id)) void interrupt();
     }
+    // Ctrl+tab cycles the running contexts, alt+tab-style: the list's order is the ring, and
+    // it wraps. A legacy terminal sends byte-identical tab, so there the binding never fires
+    // — the terminal's honest answer, not one to work around.
+    const cycle = [
+      ["ctrl+tab", 1],
+      ["shift+ctrl+tab", -1],
+    ] as const;
+    const direction = cycle.find(([key]) => matchesKey(data, key))?.[1];
+    if (direction !== undefined) {
+      const current = mode.kind === "transcript" ? mode.id : undefined;
+      const id = cycleRunning(summaries, current, direction);
+      if (id !== undefined) open(id);
+      return { consume: true };
+    }
     return undefined;
   });
 
@@ -319,6 +333,21 @@ function makeList(summaries: readonly Summary[]): SelectList {
     selectTheme,
     { minPrimaryColumnWidth: 64, maxPrimaryColumnWidth: 64 },
   );
+}
+
+/** The running contexts as a ring in the list's order, newest first. From a running one, its
+ * neighbor in `direction`, wrapping; from any other view, the first running forward and the
+ * last back. Nothing running leaves nowhere to go. */
+export function cycleRunning(
+  summaries: readonly Summary[],
+  current: number | undefined,
+  direction: 1 | -1,
+): number | undefined {
+  const ring = summaries.filter((summary) => summary.running);
+  if (ring.length === 0) return undefined;
+  const index = ring.findIndex((summary) => summary.id === current);
+  if (index === -1) return (direction === 1 ? ring[0] : ring[ring.length - 1]).id;
+  return ring[(index + direction + ring.length) % ring.length].id;
 }
 
 /** One frame of a transcript: its view, and the stats the view cannot carry. */
