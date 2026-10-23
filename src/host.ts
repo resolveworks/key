@@ -29,7 +29,7 @@ import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
-import { isParkedContext, type KeyTaskInput, keySystem } from "./system.ts";
+import { type KeyTaskInput, keySystem } from "./system.ts";
 
 /** The host's key, its git bound to the real one. */
 const { extension: KeySystem, task: KeyTask } = keySystem(git);
@@ -266,8 +266,8 @@ export class Host {
   }
 
   /** Interrupt a context: abort the current work of its conversation, and nothing else. Every
-   * context task is background, so the abort cannot reach one — the interrupted context parks
-   * without a terminus and whoever waits on it keeps waiting. */
+   * context task is background, so the abort cannot reach the task — the run observes it and
+   * ends aborted. */
   async interrupt(conversationId: number): Promise<void> {
     const id = conversationId as ConversationId;
     const conversation = await this.#harness.conversation(id, context);
@@ -335,11 +335,10 @@ export class Host {
   }
 
   /** A conversation runs while a live task of it runs or waits: a waiting successor keeps the
-   * chain live, and a parked context is live but idle, so it does not light the dot. */
+   * chain live. A terminal task leaves the graph, so the dot goes hollow on its own. */
   #running(): ReadonlySet<number> {
     const running = new Set<number>();
     for (const node of Object.values(this.#graph.tasks)) {
-      if (isParkedContext(node)) continue;
       running.add(node.conversationId);
       for (const owned of node.conversations) running.add(owned);
     }

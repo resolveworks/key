@@ -74,12 +74,11 @@ one. A human message is the one way back in: it steers the open conversation
 directly. Each forked child is its own branch; only its settled result crosses
 into the parent's successor.
 
-An **interrupt** aborts one context's run where it stands. The context parks
-without a terminus — no answer, no minted forks — so whoever waits on it keeps
-waiting; nothing else in the cascade changes. The transcript records the
-interrupt where it landed. A message to its conversation
-continues the work as a fresh context, and forks the interrupted run had recorded
-mint at that context's terminus.
+An **interrupt** aborts one context's run where it stands. The context ends
+terminal aborted — no answer, and the forks it recorded die with it — so
+whoever waits on it settles and runs. The transcript records the interrupt
+where it landed. A message to its conversation continues the work as a fresh
+context, which mints only its own forks.
 
 ```text
 cascade

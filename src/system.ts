@@ -9,7 +9,6 @@ import {
   type EntryId,
   type EntryRecord,
   section,
-  type TaskGraphNode,
   type TaskId,
 } from "@earendil-works/pi-durable";
 import type { Git } from "./git.ts";
@@ -48,14 +47,12 @@ const ForkRecord = defineDoc({
   checkpointWhen: (value) => value.forks.length === 0,
 });
 
-/** The task kind key defines, and the phase an interrupted context waits in. */
+/** The task kind key defines. */
 const KEY_TASK = "key.task";
-const PARKED = "parked";
 
 type KeyTaskState =
   | { readonly phase: "wait" }
-  | { readonly phase: "run"; readonly conversationId?: ConversationId }
-  | { readonly phase: typeof PARKED };
+  | { readonly phase: "run"; readonly conversationId?: ConversationId };
 
 /** The answer of a run: the final assistant text of the entry its submission settled on. */
 const answerOf = (entries: readonly EntryRecord[], entryId: EntryId): string => {
@@ -63,10 +60,6 @@ const answerOf = (entries: readonly EntryRecord[], entryId: EntryId): string => 
   if (message?.role !== "assistant") throw new Error(`answer ${entryId} has no assistant message`);
   return contentText(message.content, "");
 };
-
-/** A parked context: live, without a terminus, so whoever waits on it keeps waiting. */
-export const isParkedContext = (node: TaskGraphNode): boolean =>
-  node.kind === KEY_TASK && node.state.status === "running" && node.state.phase === PARKED;
 
 /**
  * One context: a prompt and the conversation it runs in — a fresh one of its own, or the one a
@@ -80,7 +73,7 @@ export const keyTask = (git: Git) => {
     version: 1,
     initial: () => ({ phase: "wait" }),
     phases: {
-      // A context with wait edges parks until they settle; anything else starts at once.
+      // A context with wait edges holds until they settle; anything else starts at once.
       wait: async (record, runtime, context) => {
         const on = "on" in record.input ? record.input.on : undefined;
         if (on !== undefined && on.length > 0) {
@@ -161,12 +154,11 @@ export const keyTask = (git: Git) => {
         );
         const settled = await submission.wait(context);
         if (settled.status === "unanswered" && settled.reason === "aborted") {
-          // An interrupted context parks. The checkpoint keeps it parked across restarts; aborting
-          // the task ends it.
-          await runtime.commit(
-            () => ({ status: "running", checkpoint: { phase: PARKED } }),
-            context,
-          );
+          // An interrupted context ends aborted; the forks it recorded die with it.
+          await runtime.commit(async (tx) => {
+            (await tx.doc(ForkRecord, handle.id)).forks.splice(0);
+            return { status: "terminal", outcome: { status: "aborted" } };
+          }, context);
           return;
         }
         if (settled.status !== "done" || settled.type !== "input") {
@@ -212,11 +204,6 @@ export const keyTask = (git: Git) => {
           }
           return { status: "terminal", outcome: { status: "completed", result } };
         }, context);
-      },
-      [PARKED]: async (_record, _runtime, context) => {
-        await new Promise<void>((resolve) =>
-          context.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
-        );
       },
     },
     abort: async (_record, runtime, context) => {
