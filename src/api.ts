@@ -25,6 +25,7 @@ const index = `key host
   GET  /api/conversations/:id          one transcript, then changes (SSE)
   POST /api/run                        {prompt, cwd}: start a context in that directory
   POST /api/conversations/:id/messages  {prompt}: message a context
+  POST /api/conversations/:id/abort     interrupt a context: abort its current run
 `;
 
 /** What one thrown error answers: the error as text — but a parse failure keeps its details on
@@ -74,6 +75,10 @@ export function api(host: Host) {
           return c.body(null, 202);
         },
       )
+      .post("/api/conversations/:id/abort", async (c) => {
+        await host.interrupt(Number(c.req.param("id")));
+        return c.body(null, 202);
+      })
       .post(
         "/api/run",
         validator("json", (body) => Parse(RunInput, body)),

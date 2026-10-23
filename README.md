@@ -34,6 +34,7 @@ GET  /api/conversations               transcripts, then changes (SSE)
 GET  /api/conversations/:id           one transcript, then changes (SSE)
 POST /api/run                         {prompt, cwd}: start a context in that directory
 POST /api/conversations/:id/messages  {prompt}: message a context
+POST /api/conversations/:id/abort     interrupt a context: abort its conversation's current work
 ```
 
 ## Core idea
@@ -63,6 +64,12 @@ Every cascade context runs in a conversation of its own; the cascade never resum
 one. A human message is the one way back in: it steers the open conversation
 directly. Each forked child is its own branch; only its settled result crosses
 into the parent's successor.
+
+An **interrupt** aborts one context's run where it stands. The context parks
+without a terminus — no answer, no minted forks — so whoever waits on it keeps
+waiting; nothing else in the cascade changes. A message to its conversation
+continues the work as a fresh context, and forks the interrupted run had recorded
+mint at that context's terminus.
 
 ```text
 cascade

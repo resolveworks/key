@@ -220,6 +220,18 @@ export async function open(base: string): Promise<void> {
     }
   };
 
+  /** Interrupt the open context: abort the current work of its conversation. */
+  const interrupt = async (): Promise<void> => {
+    if (mode.kind !== "transcript") return;
+    const id = mode.id;
+    try {
+      await call(() => client.api.conversations[":id"].abort.$post({ param: { id: String(id) } }));
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
+  };
+
   prompt.onSubmit = (text: string): void => {
     if (text.trim() === "/resume") {
       enter({
@@ -254,6 +266,12 @@ export async function open(base: string): Promise<void> {
     if (matchesKey(data, "ctrl+d") && prompt.getText() === "") {
       quit();
       return { consume: true };
+    }
+    // Esc interrupts the open context's run, as pi's esc esc does. Only an empty prompt: with a
+    // draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
+    if (matchesKey(data, "escape") && prompt.getText() === "") {
+      const live = view?.docs["pi.live"] as LiveState | undefined;
+      if (mode.kind === "transcript" && live?.run !== undefined) void interrupt();
     }
     return undefined;
   });

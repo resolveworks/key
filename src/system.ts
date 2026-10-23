@@ -149,6 +149,15 @@ export const keyTask = (git: Git) => {
           context,
         );
         const settled = await submission.wait(context);
+        if (settled.status === "unanswered" && settled.reason === "aborted") {
+          // An interrupted context parks here: live, without a terminus, so whoever waits on it keeps
+          // waiting. A restart finds the same settled submission by its request ID and parks again;
+          // aborting the task is the one way out.
+          await new Promise<void>((resolve) =>
+            context.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
+          );
+          return;
+        }
         if (settled.status !== "done" || settled.type !== "input") {
           throw new Error(`key.task ${record.id}: run ended ${settled.status}`);
         }

@@ -4,6 +4,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createModels,
   type FauxProviderHandle,
+  type FauxResponseStep,
   fauxProvider,
   type Models,
 } from "@earendil-works/pi-ai";
@@ -102,4 +103,27 @@ export async function entries(
   const conversation = await harness.conversation(id, context);
   if (conversation === undefined) throw new Error(`no conversation #${id}`);
   return (await conversation.context(context)).entries;
+}
+
+/** Interrupt a context as the host does: abort the current work of its conversation. */
+export async function interrupt(harness: Harness, task: TaskId): Promise<void> {
+  const conversation = await harness.conversation(await conversationOf(harness, task), context);
+  if (conversation === undefined) throw new Error(`no conversation of task ${task}`);
+  await conversation.abort(context);
+}
+
+/** A faux response that never answers: the run stays mid-generation until its request is aborted. */
+export function unanswered(): { readonly step: FauxResponseStep; readonly reached: Promise<void> } {
+  let reached!: () => void;
+  const arrived = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const step: FauxResponseStep = (_context, options) =>
+    new Promise((_resolve, reject) => {
+      reached();
+      const signal = options?.signal;
+      if (signal === undefined) throw new Error("faux: the request has no abort signal");
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  return { step, reached: arrived };
 }

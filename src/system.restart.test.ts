@@ -1,7 +1,7 @@
 // A restart is the crash-recovery path: a new Harness on the same storage takes up the run the first one
 // left, and nothing it already committed happens twice.
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   type ConversationId,
   configure,
@@ -11,7 +11,15 @@ import {
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeEnv, REPO } from "../tests/git.ts";
-import { conversationOf, entries, KeyTask, keySetup, MODEL, openKey } from "../tests/harness.ts";
+import {
+  conversationOf,
+  entries,
+  KeyTask,
+  keySetup,
+  MODEL,
+  openKey,
+  unanswered,
+} from "../tests/harness.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -45,22 +53,7 @@ async function restart(
   return openKey(storage, setup, env);
 }
 
-/** A faux response that never answers: the run stays mid-generation until the harness cancels it. */
-function unanswered(): { readonly step: FauxResponseStep; readonly reached: Promise<void> } {
-  let reached!: () => void;
-  const arrived = new Promise<void>((resolve) => {
-    reached = resolve;
-  });
-  const step: FauxResponseStep = (_context, options) =>
-    new Promise((_resolve, reject) => {
-      reached();
-      const signal = options?.signal;
-      if (signal === undefined) throw new Error("faux: the request has no abort signal");
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-    });
-  return { step, reached: arrived };
-}
-
+/** Every key.task so far, terminal ones included. */
 const contexts = async (harness: Harness) =>
   (await harness.commit(async (tx) => (await tx.scanTasks({}, 100)).items, context)).filter(
     (record) => record.kind === KeyTask.definition.name,
@@ -81,7 +74,7 @@ async function run(
     const task = await tx.createTask(
       KeyTask,
       { prompt },
-      { ownership: { kind: "conversation" }, conversationId: conversation.id },
+      { ownership: { kind: "conversation" }, conversationId: conversation.id, background: true },
     );
     return { task, conversation: conversation.id };
   }, context);

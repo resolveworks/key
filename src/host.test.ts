@@ -126,6 +126,16 @@ describe("host", () => {
     expect(await response.text()).toContain("/cwd");
   });
 
+  test("an interrupt is accepted and an unknown transcript is refused", async () => {
+    const id = await startRun("say hello");
+    const abort = await app.request(`/api/conversations/${id}/abort`, { method: "POST" });
+    expect(abort.status).toBe(202);
+
+    const unknown = await app.request("/api/conversations/999999/abort", { method: "POST" });
+    expect(unknown.status).toBe(500);
+    expect(await unknown.text()).toBe("Error: no conversation #999999");
+  });
+
   test("the conversation list streams a snapshot and later changes", async () => {
     const response = await app.request("/api/conversations");
     expect(response.headers.get("content-type")).toBe("text/event-stream");

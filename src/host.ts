@@ -191,6 +191,7 @@ export class Host {
         {
           ownership: { kind: "conversation" },
           conversationId: conversation.id,
+          background: true,
         },
       );
     }, context);
@@ -207,10 +208,20 @@ export class Host {
         tx.createTask(
           KeyTask,
           { prompt, conversationId: id },
-          { ownership: { kind: "conversation" }, conversationId: id },
+          { ownership: { kind: "conversation" }, conversationId: id, background: true },
         ),
       context,
     );
+  }
+
+  /** Interrupt a context: abort the current work of its conversation, and nothing else. Every
+   * context task is background, so the abort cannot reach one — the interrupted context parks
+   * without a terminus and whoever waits on it keeps waiting. */
+  async interrupt(conversationId: number): Promise<void> {
+    const id = conversationId as ConversationId;
+    const conversation = await this.#harness.conversation(id, context);
+    if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
+    await conversation.abort(context);
   }
 
   #record(record: {
