@@ -11,7 +11,7 @@ import {
 
 const commands: SlashCommand[] = [
   { name: "resume", description: "list past conversations" },
-  { name: "new", description: "abandon the open transcript; the next prompt starts fresh" },
+  { name: "new", description: "start fresh; an optional path sets the directory it runs in" },
 ];
 
 /** The client's provider: `complete` is the host's answer for one line of prompt. */

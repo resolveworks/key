@@ -1,8 +1,9 @@
 // The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
 // streams it. All state lives in the host; the client keeps a mode and renders from it on change.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import {
@@ -52,9 +53,10 @@ const selectTheme: SelectListTheme = {
   noMatch: (text) => style.dim(text),
 };
 
-/** What the screen shows: a fresh trajectory, the resume list, or one open conversation. */
+/** What the screen shows: a fresh trajectory, the resume list, or one open conversation. A fresh
+ * trajectory runs where `/new` named — by default where the conversation before it ran. */
 type Mode =
-  | { readonly kind: "new" }
+  | { readonly kind: "new"; readonly cwd?: string }
   | { readonly kind: "list"; readonly back: "new" | number; selected: number | undefined }
   | { readonly kind: "transcript"; readonly id: number };
 
@@ -180,7 +182,7 @@ export async function open(base: string): Promise<void> {
           ? new Text(style.dim("new trajectory · type to start"), 0, 0)
           : new Text(style.dim("starting trajectory…"), 0, 0),
       ]);
-      footer.show(process.cwd());
+      footer.show(mode.cwd ?? process.cwd());
     } else {
       const page = mode;
       showPrompt();
@@ -229,8 +231,10 @@ export async function open(base: string): Promise<void> {
           }),
         );
       } else {
-        // The client's directory is the trajectory's: launch it from the project root.
-        await call(() => client.api.run.$post({ json: { prompt: value, cwd: process.cwd() } }));
+        // The trajectory runs where `/new` pointed it; only unnamed and uninherited does it
+        // start where the client stands.
+        const cwd = mode.kind === "new" ? (mode.cwd ?? process.cwd()) : process.cwd();
+        await call(() => client.api.run.$post({ json: { prompt: value, cwd } }));
         pending = value;
       }
       prompt.setText("");
@@ -265,9 +269,21 @@ export async function open(base: string): Promise<void> {
       });
       return;
     }
-    if (text.trim() === "/new") {
-      saveCursor(undefined);
-      enter({ kind: "new" });
+    const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());
+    if (fresh !== null) {
+      // A path names where the fresh trajectory runs; unnamed it keeps the abandoned
+      // conversation's directory, and the footer shows the default it took. Either way the
+      // directory answers here, at the prompt — not as a trajectory failing its first step.
+      const leaving = mode.kind === "transcript" ? mode.id : undefined;
+      const abandoned = summaries.find((summary) => summary.id === leaving);
+      try {
+        const cwd = targetCwd(freshCwd(fresh[1], abandoned, process.cwd()));
+        saveCursor(undefined);
+        enter({ kind: "new", cwd });
+      } catch (error) {
+        notice = String(error);
+        render();
+      }
       return;
     }
     void start(text);
@@ -360,6 +376,27 @@ function loadCursor(): number | undefined {
 function saveCursor(conversation: number | undefined): void {
   mkdirSync(join(process.cwd(), ".key"), { recursive: true });
   writeFileSync(cursorFile, JSON.stringify({ conversation: conversation ?? null }));
+}
+
+/** The directory `/new` names: `~` is home, everything else resolves against the client's own
+ * cwd. Whatever does not name a directory throws — the notice says it where it was typed. */
+export function targetCwd(path: string): string {
+  const home = homedir();
+  const expanded = path === "~" || path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
+  const resolved = resolve(expanded);
+  if (!statSync(resolved).isDirectory()) throw new Error(`not a directory: ${resolved}`);
+  return resolved;
+}
+
+/** Where `/new` starts the next trajectory: the path it named, else the directory of the
+ * conversation it abandoned, else the client's own. The footer shows the answer, so the default
+ * is on screen and a path is an invitation to differ from it. */
+export function freshCwd(
+  named: string | undefined,
+  abandoned: Summary | undefined,
+  client: string,
+): string {
+  return named ?? (abandoned?.cwd || client);
 }
 
 /** One selectable transcript: what was asked, where it ran, and whether it runs now. */
