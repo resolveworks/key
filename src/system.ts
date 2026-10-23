@@ -154,11 +154,11 @@ export const keyTask = (git: Git) => {
         );
         const settled = await submission.wait(context);
         if (settled.status === "unanswered" && settled.reason === "aborted") {
-          // An interrupted context ends aborted; the forks it recorded wait unminted.
-          await runtime.commit(
-            () => ({ status: "terminal", outcome: { status: "aborted" } }),
-            context,
-          );
+          // An interrupted context ends aborted; the forks it recorded die with it.
+          await runtime.commit(async (tx) => {
+            (await tx.doc(ForkRecord, handle.id)).forks.splice(0);
+            return { status: "terminal", outcome: { status: "aborted" } };
+          }, context);
           return;
         }
         if (settled.status !== "done" || settled.type !== "input") {

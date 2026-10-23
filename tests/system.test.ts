@@ -287,7 +287,7 @@ describe("an interruption", () => {
     await interrupt(harness, kickoff);
     await harness.waitForTask(kickoff, context);
 
-    // The context ends aborted; the fork it recorded waits unminted.
+    // The context ends aborted; the fork it recorded dies with it.
     const records = await cascade(harness);
     expect(records.find((record) => record.id === kickoff)?.state.outcome).toEqual({
       status: "aborted",
@@ -321,14 +321,15 @@ describe("an interruption", () => {
     expect(JSON.stringify(transcript)).toContain(`task #${child.id} aborted`);
   });
 
-  it("a continuation mints the forks an interrupted run recorded", async () => {
+  it("a continuation after an interrupt mints only its own forks", async () => {
     const { faux, harness } = await fresh();
     const stuck = unanswered();
     faux.setResponses([
       turn("I forked a.", ["a"]),
       stuck.step,
+      turn("I forked b.", ["b"]),
       turn("wrapped up"),
-      turn("a answers"),
+      turn("b answers"),
       turn("summed"),
     ]);
 
@@ -353,7 +354,7 @@ describe("an interruption", () => {
     const next = await waitForSuccessor(harness);
     await harness.waitForTask(next.id, context);
 
-    // The interrupted run never emptied the record; the continuation's terminus mints what it holds.
-    expect(children(await cascade(harness)).map(nameOf)).toEqual(["a"]);
+    // The interrupted run's fork died with it; the continuation minted only its own.
+    expect(children(await cascade(harness)).map(nameOf)).toEqual(["b"]);
   });
 });
