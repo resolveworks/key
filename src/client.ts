@@ -9,12 +9,16 @@ import {
   type Component,
   Container,
   Editor,
+  type KeybindingsConfig,
+  KeybindingsManager,
   matchesKey,
   ProcessTerminal,
   SelectList,
   type SelectListTheme,
   Spacer,
+  setKeybindings,
   Text,
+  TUI_KEYBINDINGS,
   TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import { hc } from "hono/client";
@@ -28,6 +32,14 @@ import { transcript } from "./trajectory.ts";
 const RECONNECT_MS = 250;
 /** Where a client restart picks up: the transcript that was open, if any. */
 const cursorFile = join(process.cwd(), ".key", "client.json");
+
+/** This client's opinions over pi-tui's editing grammar. Absent inherits the default, an
+ * entry rebinds, and [] claims a key outright: the input listener owns ctrl+c, so nothing
+ * below it may answer to that key. */
+export const keybinds: KeybindingsConfig = {
+  "tui.input.copy": [],
+  "tui.select.cancel": ["escape"],
+};
 
 const selectTheme: SelectListTheme = {
   selectedPrefix: (text) => style.accent(text),
@@ -45,6 +57,7 @@ type Mode =
 
 /** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
+  setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, keybinds));
   const tui = new TuiMainScreen(new ProcessTerminal());
   const client = hc<ReturnType<typeof api>>(base);
   // The terminal owns the screen and the scrollback. Within a view the document only grows, so

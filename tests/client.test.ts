@@ -1,5 +1,6 @@
+import { TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { cycleRunning } from "../src/client.ts";
+import { cycleRunning, keybinds } from "../src/client.ts";
 import type { Summary } from "../src/host.ts";
 
 const summary = (id: number, running: boolean): Summary => ({
@@ -38,5 +39,13 @@ describe("cycleRunning", () => {
     const parked = [summary(2, false), summary(1, false)];
     expect(cycleRunning(parked, undefined, 1)).toBeUndefined();
     expect(cycleRunning(parked, 1, -1)).toBeUndefined();
+  });
+});
+
+describe("keybinds", () => {
+  test("every override names a real pi-tui action", () => {
+    // pi-tui skips an unknown action without a word, so a typo here would never fire.
+    for (const action of Object.keys(keybinds))
+      expect(action in TUI_KEYBINDINGS, action).toBe(true);
   });
 });
