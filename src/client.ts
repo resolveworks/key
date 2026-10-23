@@ -1,5 +1,6 @@
 // The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
-// streams it. All state lives in the host; the client keeps a mode and renders from it on change.
+// streams it. All state lives in the host; the client keeps which view is open — and every
+// view's own draft — and renders the whole screen from that state on change.
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -10,7 +11,6 @@ import {
   type AutocompleteSuggestions,
   type Component,
   Container,
-  Editor,
   isKeyRelease,
   type KeybindingsConfig,
   KeybindingsManager,
@@ -26,9 +26,9 @@ import {
 } from "@earendil-works/pi-tui";
 import { hc } from "hono/client";
 import type { api } from "./api.ts";
-import { dot, Footer, type Stats } from "./footer.ts";
+import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
-import { provider } from "./prompt.ts";
+import { Prompt, provider } from "./prompt.ts";
 import { style } from "./theme.ts";
 import { transcript } from "./trajectory.ts";
 
@@ -53,27 +53,84 @@ const selectTheme: SelectListTheme = {
   noMatch: (text) => style.dim(text),
 };
 
-/** What the screen shows: a fresh trajectory, the resume list, or one open conversation. A fresh
- * trajectory runs where `/new` named — by default where the conversation before it ran. */
-type Mode =
+/** One place the screen can be: the composer, where a fresh trajectory's prompt is typed, or
+ * one open conversation. A fresh trajectory runs where `/new` named — by default where the
+ * conversation before it ran. */
+type View =
   | { readonly kind: "new"; readonly cwd?: string }
-  | { readonly kind: "list"; readonly back: "new" | number; selected: number | undefined }
   | { readonly kind: "transcript"; readonly id: number };
+
+/** What the screen shows: one view, or the resume list covering the view it left — escape
+ * returns there, draft intact. */
+type Mode =
+  | { readonly kind: "view"; readonly view: View }
+  | { readonly kind: "list"; readonly back: View; selected: number | undefined };
+
+/** A view's name: "new" for the composer, its number for a conversation — its key in the drafts
+ * and its place in the ring. */
+type Name = "new" | number;
+
+const nameOf = (view: View): Name => (view.kind === "new" ? "new" : view.id);
 
 /** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
   setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, keybinds));
   const tui = new TuiMainScreen(new ProcessTerminal());
   const client = hc<ReturnType<typeof api>>(base);
+
+  // All client state. Every change flows through `render`, which derives the whole screen from it.
+  /** The composer: one per client, retargeted by `/new`, always the newest place in the ring. */
+  let composer: View = { kind: "new" };
+  let mode: Mode = { kind: "view", view: composer };
+  /** Every view's unsent text. The editor mirrors the open view's entry; a swap exchanges them,
+   * so a draft never follows its typist into another conversation. */
+  const drafts = new Map<Name, string>();
+  let summaries: readonly Summary[] = [];
+  let view: ConversationView | undefined;
+  let stats: Stats | undefined;
+  /** The prompt of a trajectory we started; we open its conversation as soon as it appears. */
+  let pending: string | undefined;
+  /** A failed action, shown once and replaced by whatever the state says next. */
+  let notice: string | undefined;
+  let starting = false;
+
+  /** The task graph's verdict on one conversation: the list's dot and everything else read it here. */
+  const runs = (id: number): boolean =>
+    summaries.some((summary) => summary.id === id && summary.running);
+
+  /** The view the screen is on — or, under the list, the one it covers: the one whose draft the
+   * editor holds. */
+  const place = (): View => (mode.kind === "view" ? mode.view : mode.back);
+
+  /** The conversation on screen, when the screen is on one: the stream follows it, escape
+   * interrupts it. */
+  const openConversation = (): number | undefined =>
+    mode.kind === "view" && mode.view.kind === "transcript" ? mode.view.id : undefined;
+
+  /** What `/new` would leave: the open conversation's directory, or — from the composer — the
+   * target it already carries. The default it takes and the ghost on the line both read it,
+   * so neither can name a place the other would not run. */
+  const leaving = (): { readonly cwd: string } | undefined => {
+    const here = place();
+    return here.kind === "transcript"
+      ? summaries.find((summary) => summary.id === here.id)
+      : { cwd: here.cwd ?? "" };
+  };
+
+  /** Where a bare `/new` would run — what it would leave, else the client's own — as the prompt
+   * ghosts it in the input, where the path argument would sit. */
+  const freshDefault = (): string => shortenHome(freshCwd(undefined, leaving(), process.cwd()));
+
   // The terminal owns the screen and the scrollback. Within a view the document only grows, so
   // rendered lines scroll up into history instead of being redrawn. A selector replaces the
   // document and clears the dock and the footer, so the list owns a clean screen.
   const document = new Container();
   const dock = new Container();
-  const prompt = new Editor(tui, {
-    borderColor: style.borderMuted,
-    selectList: selectTheme,
-  });
+  const prompt = new Prompt(
+    tui,
+    { borderColor: style.borderMuted, selectList: selectTheme },
+    freshDefault,
+  );
   // The prompt's paths complete on the host: the trajectories run on its filesystem, not this one.
   // A superseded completion aborts its request, and the editor wants no answer rather than a crash.
   const complete = async (
@@ -101,25 +158,10 @@ export async function open(base: string): Promise<void> {
   tui.addChild(dock);
   tui.addChild(footer);
 
-  // All client state. Every change flows through `render`, which derives the whole screen from it.
-  let mode: Mode = { kind: "new" };
-  let summaries: readonly Summary[] = [];
-  let view: ConversationView | undefined;
-  let stats: Stats | undefined;
-  /** The prompt of a trajectory we started; we open its conversation as soon as it appears. */
-  let pending: string | undefined;
-  /** A failed action, shown once and replaced by whatever the state says next. */
-  let notice: string | undefined;
-  let starting = false;
-
   // Effects: the transcript stream runs exactly while a transcript is open, and the dock holds
   // the prompt exactly when typing is possible.
   let watching: { readonly stop: () => void } | undefined;
   let watchedId: number | undefined;
-
-  /** The task graph's verdict on one conversation: the list's dot and everything else read it here. */
-  const runs = (id: number): boolean =>
-    summaries.some((summary) => summary.id === id && summary.running);
 
   /** Replace the document; streaming appends, a view switch starts a new one. */
   const show = (components: readonly Component[]): void => {
@@ -135,9 +177,9 @@ export async function open(base: string): Promise<void> {
 
   const hidePrompt = (): void => dock.clear();
 
-  /** The one effect: keep the transcript stream in step with the mode. */
+  /** The one effect: keep the transcript stream in step with the open view. */
   const syncWatch = (): void => {
-    const id = mode.kind === "transcript" ? mode.id : undefined;
+    const id = openConversation();
     if (id === watchedId) return;
     watching?.stop();
     watching = undefined;
@@ -162,7 +204,6 @@ export async function open(base: string): Promise<void> {
     // The footer says what the transcript it draws is doing.
     if (mode.kind === "list") {
       const page = mode;
-      prompt.setText("");
       hidePrompt();
       const list = makeList(summaries);
       const index = summaries.findIndex((summary) => summary.id === page.selected);
@@ -170,46 +211,61 @@ export async function open(base: string): Promise<void> {
       list.onSelectionChange = (item) => {
         if (mode.kind === "list") mode.selected = Number(item.value);
       };
-      list.onSelect = (item) => open(Number(item.value));
-      list.onCancel = () => (page.back === "new" ? enter({ kind: "new" }) : open(page.back));
+      list.onSelect = (item) => swap({ kind: "transcript", id: Number(item.value) });
+      list.onCancel = () => swap(page.back);
       show([new Spacer(1), list]);
       tui.setFocus(list);
       footer.clear();
-    } else if (mode.kind === "new") {
+    } else if (mode.view.kind === "new") {
       showPrompt();
       show([
         pending === undefined
           ? new Text(style.dim("new trajectory · type to start"), 0, 0)
           : new Text(style.dim("starting trajectory…"), 0, 0),
       ]);
-      footer.show(mode.cwd ?? process.cwd());
+      footer.show(mode.view.cwd ?? process.cwd());
     } else {
-      const page = mode;
+      const id = mode.view.id;
       showPrompt();
       if (view === undefined) {
         show([new Text(style.dim("connecting…"), 0, 0)]);
-        const summary = summaries.find((candidate) => candidate.id === page.id);
+        const summary = summaries.find((candidate) => candidate.id === id);
         footer.show(summary?.cwd ?? process.cwd());
       } else {
         show(transcript(view));
         // The list's dot and the footer's are one answer from one graph, read in one place.
-        if (stats !== undefined) footer.watch(view, stats, runs(page.id));
+        if (stats !== undefined) footer.watch(view, stats, runs(id));
       }
     }
     if (notice !== undefined) show([new Text(style.error(notice), 0, 0)]);
     tui.requestRender();
   };
 
-  /** Enter a mode: records the cursor, then renders. The one way the view ever changes. */
-  const enter = (next: Mode): void => {
-    if (next.kind === "transcript") saveCursor(next.id);
-    mode = next;
+  /** Swap in another view: the leaving one keeps what was typed in it, the entering one lends
+   * its own draft, and the cursor records where a restart picks up. The one way the open view
+   * ever changes — a conversation's lines are only ever appended, so history stays in scrollback. */
+  const swap = (next: View): void => {
+    drafts.set(nameOf(place()), prompt.getText());
+    prompt.setText(drafts.get(nameOf(next)) ?? "");
+    saveCursor(next.kind === "transcript" ? next.id : undefined);
+    mode = { kind: "view", view: next };
     notice = undefined;
     render();
   };
 
-  /** Open a conversation; its lines are only ever appended, so history stays in scrollback. */
-  const open = (id: number): void => enter({ kind: "transcript", id });
+  /** Cover the screen with the resume list; the view beneath keeps its draft for the return. */
+  const showList = (): void => {
+    mode = { kind: "list", back: place(), selected: undefined };
+    notice = undefined;
+    render();
+  };
+
+  /** Spend the open view's draft: whatever took the text — a command that ran, a clear, a send
+   * the host took — it leaves the editor and the view's store both. */
+  const spend = (): void => {
+    drafts.set(nameOf(place()), "");
+    prompt.setText("");
+  };
 
   const quit = (): void => {
     watching?.stop();
@@ -217,27 +273,31 @@ export async function open(base: string): Promise<void> {
     process.exit(0);
   };
 
-  const start = async (text: string): Promise<void> => {
+  /** Send one view's draft: a message to its conversation, or — from the composer — a fresh
+   * trajectory, opened the moment the host names its conversation. The draft leaves only when
+   * the host takes it; a failure leaves it typed, ready to retry. */
+  const send = async (from: View, text: string): Promise<void> => {
     const value = text.trim();
     if (value === "" || starting || pending !== undefined) return;
     starting = true;
     try {
-      if (mode.kind === "transcript") {
-        const id = mode.id;
+      if (from.kind === "transcript") {
         await call(() =>
           client.api.conversations[":id"].messages.$post({
-            param: { id: String(id) },
+            param: { id: String(from.id) },
             json: { prompt: value },
           }),
         );
       } else {
         // The trajectory runs where `/new` pointed it; only unnamed and uninherited does it
         // start where the client stands.
-        const cwd = mode.kind === "new" ? (mode.cwd ?? process.cwd()) : process.cwd();
+        const cwd = from.cwd ?? process.cwd();
         await call(() => client.api.run.$post({ json: { prompt: value, cwd } }));
         pending = value;
       }
-      prompt.setText("");
+      // The text left its view: that draft is spent — the editor too, when it still shows it.
+      if (nameOf(place()) === nameOf(from)) spend();
+      else drafts.set(nameOf(from), "");
       notice = undefined;
       render();
     } catch (error) {
@@ -248,10 +308,8 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  /** Interrupt the open context: abort the current work of its conversation. */
-  const interrupt = async (): Promise<void> => {
-    if (mode.kind !== "transcript") return;
-    const id = mode.id;
+  /** Interrupt an open context: abort the current work of its conversation. */
+  const interrupt = async (id: number): Promise<void> => {
     try {
       await call(() => client.api.conversations[":id"].abort.$post({ param: { id: String(id) } }));
     } catch (error) {
@@ -262,31 +320,27 @@ export async function open(base: string): Promise<void> {
 
   prompt.onSubmit = (text: string): void => {
     if (text.trim() === "/resume") {
-      enter({
-        kind: "list",
-        back: mode.kind === "transcript" ? mode.id : "new",
-        selected: undefined,
-      });
+      spend();
+      showList();
       return;
     }
     const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());
     if (fresh !== null) {
-      // A path names where the fresh trajectory runs; unnamed it keeps the abandoned
-      // conversation's directory, and the footer shows the default it took. Either way the
-      // directory answers here, at the prompt — not as a trajectory failing its first step.
-      const leaving = mode.kind === "transcript" ? mode.id : undefined;
-      const abandoned = summaries.find((summary) => summary.id === leaving);
+      // A path names where the fresh trajectory runs; unnamed it keeps the directory of the
+      // place it leaves — the composer's own target, from the composer — the default the prompt
+      // ghosted while it was typed. Either way the directory answers here, at the prompt —
+      // not as a trajectory failing its first step.
       try {
-        const cwd = targetCwd(freshCwd(fresh[1], abandoned, process.cwd()));
-        saveCursor(undefined);
-        enter({ kind: "new", cwd });
+        composer = { kind: "new", cwd: targetCwd(freshCwd(fresh[1], leaving(), process.cwd())) };
+        spend();
+        swap(composer);
       } catch (error) {
         notice = String(error);
         render();
       }
       return;
     }
-    void start(text);
+    void send(place(), text);
   };
 
   // Exit convention: ctrl+c clears the prompt and quits on a second press; ctrl+d quits on an
@@ -302,7 +356,7 @@ export async function open(base: string): Promise<void> {
       if (now - lastCtrlC < 500) quit();
       else {
         lastCtrlC = now;
-        prompt.setText("");
+        spend();
         tui.requestRender();
       }
       return { consume: true };
@@ -314,21 +368,41 @@ export async function open(base: string): Promise<void> {
     // Esc interrupts the open context's run, as pi's esc esc does. Only an empty prompt: with a
     // draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
     if (matchesKey(data, "escape") && prompt.getText() === "") {
-      if (mode.kind === "transcript" && runs(mode.id)) void interrupt();
+      const id = openConversation();
+      if (id !== undefined && runs(id)) void interrupt(id);
     }
-    // Ctrl+y steps forward through the running contexts, ctrl+o back, alt+tab-style: the
-    // list's order is the ring, and it wraps. Ctrl+letters ride their own byte in every
+    // Ctrl+y steps forward through the live places, ctrl+o back, alt+tab-style: the composer
+    // and the running contexts in the list's order are the ring, and it wraps — so a `/new` in
+    // progress, draft and all, is ever a step away. Ctrl+letters ride their own byte in every
     // terminal — Konsole included — where ctrl+tab is byte-identical to plain tab.
-    const cycle = [
+    const chords = [
       ["ctrl+y", 1],
       ["ctrl+o", -1],
     ] as const;
-    const direction = cycle.find(([key]) => matchesKey(data, key))?.[1];
+    const direction = chords.find(([key]) => matchesKey(data, key))?.[1];
     if (direction !== undefined) {
-      const current = mode.kind === "transcript" ? mode.id : undefined;
-      const id = cycleRunning(summaries, current, direction);
-      if (id !== undefined) open(id);
+      const next = cycle(summaries, nameOf(place()), direction);
+      swap(next === "new" ? composer : { kind: "transcript", id: next });
       return { consume: true };
+    }
+    // In the list the home row steps it: n and e one line, y and o one cascade block — the plain
+    // keys under their ctrl cousins, which walk the ring instead of the rows.
+    if (mode.kind === "list") {
+      const steps = [
+        ["n", "line", 1],
+        ["e", "line", -1],
+        ["y", "cascade", -1],
+        ["o", "cascade", 1],
+      ] as const;
+      const step = steps.find(([key]) => matchesKey(data, key));
+      if (step !== undefined) {
+        const id = stepList(summaries, mode.selected, step[1], step[2]);
+        if (id !== undefined) {
+          mode.selected = id;
+          render();
+        }
+        return { consume: true };
+      }
     }
     return undefined;
   });
@@ -347,14 +421,14 @@ export async function open(base: string): Promise<void> {
     if (!restored) {
       restored = true;
       if (cursor !== undefined && summaries.some((summary) => summary.id === cursor))
-        enter({ kind: "transcript", id: cursor });
+        swap({ kind: "transcript", id: cursor });
     }
     // Open the pending trajectory once the host has created its conversation.
     if (pending !== undefined) {
       const created = summaries.find((summary) => summary.label === pending);
       if (created !== undefined) {
         pending = undefined;
-        open(created.id);
+        swap({ kind: "transcript", id: created.id });
       }
     }
     render();
@@ -388,15 +462,16 @@ export function targetCwd(path: string): string {
   return resolved;
 }
 
-/** Where `/new` starts the next trajectory: the path it named, else the directory of the
- * conversation it abandoned, else the client's own. The footer shows the answer, so the default
- * is on screen and a path is an invitation to differ from it. */
+/** Where `/new` starts the next trajectory: the path it named, else the directory of the place
+ * it leaves — the conversation open, or the composer's own target — else the client's own. The
+ * prompt ghosts the answer while `/new` is typed, so the default is on the line and a path is
+ * an invitation to differ from it. */
 export function freshCwd(
   named: string | undefined,
-  abandoned: Summary | undefined,
+  leaving: { readonly cwd: string } | undefined,
   client: string,
 ): string {
-  return named ?? (abandoned?.cwd || client);
+  return named ?? (leaving?.cwd || client);
 }
 
 /** One line of the resume list: the cascade's depth as indentation, two spaces a level, ahead of
@@ -417,19 +492,40 @@ function makeList(summaries: readonly Summary[]): SelectList {
   );
 }
 
-/** The running contexts as a ring in the list's order, newest first. From a running one, its
- * neighbor in `direction`, wrapping; from any other view, the first running forward and the
- * last back. Nothing running leaves nowhere to go. */
-export function cycleRunning(
+/** The live places as a ring: the composer first — a trajectory not yet started is the newest
+ * thing — then the running contexts in the list's order, newest cascade first. From one of
+ * them, its neighbor in `direction`, wrapping — so a `/new` in progress is ever a step away.
+ * From a place not in the ring — a settled conversation — the first running forward and the
+ * last back. The composer alone in the ring still cycles: every step lands on it. */
+export function cycle(summaries: readonly Summary[], current: Name, direction: 1 | -1): Name {
+  const ring: readonly Name[] = [
+    "new",
+    ...summaries.filter((summary) => summary.running).map((summary) => summary.id),
+  ];
+  const at = ring.indexOf(current);
+  if (at === -1) return ring.at(direction === 1 ? 1 : -1) ?? "new";
+  return ring[(at + direction + ring.length) % ring.length];
+}
+
+/** One step of the list's home row: a line is one entry, a cascade is one block — the run that
+ * starts at a kickoff, depth 0 — landing on the neighboring block's kickoff. Both wrap, as the
+ * list's own arrows do, and an empty list leaves nowhere to go. */
+export function stepList(
   summaries: readonly Summary[],
   current: number | undefined,
+  move: "line" | "cascade",
   direction: 1 | -1,
 ): number | undefined {
-  const ring = summaries.filter((summary) => summary.running);
-  if (ring.length === 0) return undefined;
-  const index = ring.findIndex((summary) => summary.id === current);
-  if (index === -1) return (direction === 1 ? ring[0] : ring[ring.length - 1]).id;
-  return ring[(index + direction + ring.length) % ring.length].id;
+  if (summaries.length === 0) return undefined;
+  const from = Math.max(
+    summaries.findIndex(({ id }) => id === current),
+    0,
+  );
+  if (move === "line")
+    return summaries[(from + direction + summaries.length) % summaries.length].id;
+  const kickoffs = [...summaries.keys()].filter((index) => summaries[index].depth === 0);
+  const block = kickoffs.findLastIndex((start) => start <= from);
+  return summaries[kickoffs[(block + direction + kickoffs.length) % kickoffs.length]].id;
 }
 
 /** One frame of a transcript: its view, and the stats the view cannot carry. */
