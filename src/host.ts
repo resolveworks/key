@@ -60,6 +60,8 @@ export type HostOptions = {
   readonly storage: () => Storage | Promise<Storage>;
   readonly extensions: readonly Extension[];
   readonly port: number;
+  /** The interface the server listens on: `KEY_BIND`, loopback by default. */
+  readonly hostname: string;
   /** The level a new conversation runs at: the host's env, or its own. */
   readonly thinkingLevel: () => ModelThinkingLevel;
 };
@@ -73,6 +75,7 @@ const production = (): HostOptions => ({
   },
   extensions: [CodingTools, KeySystem, Agents],
   port: PORT,
+  hostname: process.env.KEY_BIND ?? "127.0.0.1",
   thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,
 });
 
@@ -111,7 +114,7 @@ export class Host {
   }
 
   get url(): string {
-    return `http://127.0.0.1:${this.#port}`;
+    return `http://${this.#options.hostname}:${this.#port}`;
   }
 
   /** The transcript list as it stands right now. */
@@ -325,7 +328,7 @@ export class Host {
   async listen(): Promise<void> {
     const bound = new Promise<{ port: number }>((resolve) => {
       this.#server = serve(
-        { fetch: this.app.fetch, port: this.#options.port, hostname: "127.0.0.1" },
+        { fetch: this.app.fetch, port: this.#options.port, hostname: this.#options.hostname },
         ({ port }) => resolve({ port }),
       );
     });

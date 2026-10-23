@@ -78,6 +78,7 @@ describe("host", () => {
       storage: () => new MemoryStorage(),
       extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
       port: 0,
+      hostname: "127.0.0.1",
       thinkingLevel: () => "high",
     });
     await host.open();

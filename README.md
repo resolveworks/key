@@ -29,7 +29,9 @@ Put `DEEPSEEK_API_KEY=...` in `~/.key/.env`; the host loads it on start.
 runs on — any provider in pi's catalog, keyed by that provider's own env var
 (`ZAI_CODING_CN_API_KEY` for `zai-coding-cn`, say). `KEY_THINKING_LEVEL` in
 the same file sets the level every conversation runs at (a model without
-thinking runs at `off`; the default is `high`).
+thinking runs at `off`; the default is `high`). `KEY_BIND` in the same file
+sets the interface the server listens on (`127.0.0.1` by default;
+`0.0.0.0` to accept connections from off the box).
 Everything the host owns lives in `~/.key` — the session store is SQLite at
 `~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
 
