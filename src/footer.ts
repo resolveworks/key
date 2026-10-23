@@ -15,6 +15,8 @@ export type Stats = {
   readonly contextWindow: number;
   /** That model's id: what the right of the stats line names. */
   readonly model: string;
+  /** Whether the conversation's chain still streams: a task of it runs, or one it waits on. */
+  readonly running: boolean;
 };
 
 /** Compact token counts: 812, 6.4k, 21k, 1.3M. */
@@ -101,60 +103,12 @@ function cacheHitRate(view: ConversationView): number | undefined {
   return prompt > 0 ? (usage.cacheRead / prompt) * 100 : undefined;
 }
 
-/** What a prompt is doing: the generation runs, or it waits on the human. */
-export type Working = "working" | "idle";
-
-const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 /**
- * The working indicator in the prompt's top border: a spinner while the generation runs and a
- * dot while it waits on the human.
+ * The dot the list puts before a conversation and the footer before its spend: filled while the
+ * chain streams, hollow once it settles.
  */
-export class WorkingLabel {
-  #state: Working | undefined;
-  #tick = 0;
-  #timer: ReturnType<typeof setInterval> | undefined;
-  #tui: { requestRender(): void } | undefined;
-
-  /** Say what the open transcript is doing; no transcript has no border label. */
-  show(state: Working | undefined): void {
-    this.#state = state;
-    this.#spin(state === "working");
-  }
-
-  /** Draw the label into the border, or the border alone when there is nothing to say. */
-  border(color: (text: string) => string, width: number): string {
-    if (this.#state === undefined) return color("─".repeat(Math.max(0, width)));
-    const label = this.#label();
-    // ─ + space + label + space + rule, filled to exactly the given width.
-    const rule = "─".repeat(Math.max(0, width - 3 - visibleWidth(label)));
-    return `${color("─")} ${label} ${color(rule)}`;
-  }
-
-  /** Animate against the TUI: only a running generation has frames to spend. */
-  animate(tui: { requestRender(): void }): void {
-    this.#tui = tui;
-  }
-
-  #label(): string {
-    return this.#state === "working" ? style.accent(this.#frameChar()) : style.dim("○");
-  }
-
-  #frameChar(): string {
-    return FRAMES[this.#tick % FRAMES.length] ?? "";
-  }
-
-  #spin(on: boolean): void {
-    if (!on) {
-      if (this.#timer !== undefined) clearInterval(this.#timer);
-      this.#timer = undefined;
-      return;
-    }
-    this.#timer ??= setInterval(() => {
-      this.#tick++;
-      this.#tui?.requestRender();
-    }, 80);
-  }
+export function dot(running: boolean): string {
+  return running ? style.success("●") : style.dim("○");
 }
 
 /**
@@ -167,6 +121,7 @@ export class Footer implements Component {
   #branch: string | undefined;
   #window = 0;
   #model = "";
+  #running: boolean | undefined;
 
   constructor(cwd: string) {
     this.#cwd = cwd;
@@ -182,15 +137,17 @@ export class Footer implements Component {
     this.#branch = undefined;
     this.#window = 0;
     this.#model = "";
+    this.#running = undefined;
   }
 
-  /** Draw one transcript: where it runs, then what it has spent. */
+  /** Draw one transcript: where it runs, then what it has spent while its chain lives. */
   watch(view: ConversationView, stats: Stats): void {
     this.#view = view;
     this.#cwd = (view.docs["pi.agent"] as { readonly cwd?: string } | undefined)?.cwd ?? "";
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
     this.#model = stats.model;
+    this.#running = stats.running;
   }
 
   render(width: number): string[] {
@@ -211,7 +168,7 @@ export class Footer implements Component {
     if (usage.cost.total) spent.push(`$${usage.cost.total.toFixed(3)}`);
     spent.push(this.#context(contextTokens(this.#view)));
 
-    const left = spent.join(" ");
+    const left = `${dot(this.#running === true)} ${spent.join(" ")}`;
     const leftWidth = visibleWidth(left);
     const name = truncateToWidth(this.#model, Math.max(0, width - leftWidth - 2), "");
     const gap = Math.max(0, width - leftWidth - visibleWidth(name));

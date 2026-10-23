@@ -66,8 +66,6 @@ export type Summary = {
   /** The directory that context runs in. */
   readonly cwd: string;
   readonly running: boolean;
-  /** A forked context, or a terminated child: its story continues elsewhere. */
-  readonly closed: boolean;
 };
 
 export class Host {
@@ -77,13 +75,6 @@ export class Host {
   #agentCwds = new Map<number, string>();
   #summaries: readonly Summary[] = [];
   #graph: TaskGraph = { tasks: {} };
-  /** Each conversation's owning task. */
-  #owners = new Map<number, number | undefined>();
-  /** Conversations a context minted children in. */
-  #forked = new Set<number>();
-  /** Task ids that are forked children, and those that have ended. */
-  #children = new Set<number>();
-  #ended = new Set<number>();
   #server!: ServerType;
   #port!: number;
   #app?: Hono;
@@ -120,7 +111,7 @@ export class Host {
     return conversation?.watch(context);
   }
 
-  /** What a view cannot say: the branch, the context window, the model. */
+  /** What a view cannot say: the branch, the context window, the model, and whether its chain lives on. */
   stats(id: number): Promise<Stats> {
     return this.#statsOf(id);
   }
@@ -224,29 +215,10 @@ export class Host {
     await conversation.abort(context);
   }
 
-  #record(record: {
-    readonly id: number;
-    readonly kind: string;
-    readonly conversationId: number;
-    readonly input: unknown;
-    readonly state: { readonly status: string };
-  }): void {
-    if (record.kind !== KeyTask.definition.name) return;
-    const input = record.input as KeyTaskInput;
-    this.#prompts.set(record.id, input.prompt);
-    if ("name" in input) {
-      this.#children.add(record.id);
-      this.#forked.add(record.conversationId);
-    }
-    if (record.state.status === "completing" || record.state.status === "terminal")
-      this.#ended.add(record.id);
-  }
-
-  /** A forked context lives on through its successors, a child through its branch. */
-  #closed(conversationId: number): boolean {
-    if (this.#forked.has(conversationId)) return true;
-    const owner = this.#owners.get(conversationId);
-    return owner !== undefined && this.#children.has(owner) && this.#ended.has(owner);
+  /** A prompt is not in the graph: the task records keep it, for the list to name a context by. */
+  #record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
+    if (record.kind === KeyTask.definition.name)
+      this.#prompts.set(record.id, (record.input as KeyTaskInput).prompt);
   }
 
   /** Recompute the transcript list and push it to every attached client. */
@@ -258,11 +230,7 @@ export class Host {
   async #summarise(): Promise<readonly Summary[]> {
     const conversations = await this.#scanConversations();
     // The graph holds live tasks only; a conversation runs while one belongs to it or owns it.
-    const running = new Set<number>();
-    for (const node of Object.values(this.#graph.tasks)) {
-      running.add(node.conversationId);
-      for (const owned of node.conversations) running.add(owned);
-    }
+    const running = this.#running();
     // Every context's conversation is owned by its task; an ownerless conversation is just a holder.
     for (const { id } of conversations) {
       const cwd = (await this.#harness.snapshot(AgentDoc, id as ConversationId, context))?.cwd;
@@ -278,7 +246,6 @@ export class Host {
                 label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
                 cwd: this.#agentCwds.get(id) ?? "",
                 running: running.has(id),
-                closed: this.#closed(id),
               },
             ],
       )
@@ -292,7 +259,6 @@ export class Host {
       for (;;) {
         const page = await tx.scanConversations({}, SCAN_PAGE_SIZE, cursor);
         for (const record of page.items) {
-          if (record.owner !== undefined) this.#owners.set(record.id, record.owner.taskId);
           found.push({
             id: record.id,
             ...(record.owner === undefined ? {} : { owner: { taskId: record.owner.taskId } }),
@@ -322,12 +288,24 @@ export class Host {
     const agent = await this.#harness.snapshot(AgentDoc, id as ConversationId, context);
     const model = agent?.model ?? MODEL;
     const branch = await branchOf(agent?.cwd);
+    const running = this.#running();
     return {
       ...(branch === undefined ? {} : { branch }),
       contextWindow:
         this.#options.models().getModel(model.provider, model.modelId)?.contextWindow ?? 0,
       model: model.modelId,
+      running: running.has(id),
     };
+  }
+
+  /** A conversation lives while a live task belongs to it or owns it: its chain still streams. */
+  #running(): ReadonlySet<number> {
+    const running = new Set<number>();
+    for (const node of Object.values(this.#graph.tasks)) {
+      running.add(node.conversationId);
+      for (const owned of node.conversations) running.add(owned);
+    }
+    return running;
   }
 
   async close(): Promise<void> {

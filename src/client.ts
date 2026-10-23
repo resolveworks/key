@@ -4,7 +4,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { ConversationView, LiveState } from "@earendil-works/pi-durable";
+import type { ConversationView } from "@earendil-works/pi-durable";
 import {
   type Component,
   Container,
@@ -16,12 +16,10 @@ import {
   Spacer,
   Text,
   TuiMainScreen,
-  truncateToWidth,
-  visibleWidth,
 } from "@earendil-works/pi-tui";
 import { hc } from "hono/client";
 import type { api } from "./api.ts";
-import { Footer, type Stats, WorkingLabel } from "./footer.ts";
+import { dot, Footer, type Stats } from "./footer.ts";
 import type { Summary } from "./host.ts";
 import { provider } from "./prompt.ts";
 import { style } from "./theme.ts";
@@ -30,17 +28,6 @@ import { transcript } from "./trajectory.ts";
 const RECONNECT_MS = 250;
 /** Where a client restart picks up: the transcript that was open, if any. */
 const cursorFile = join(process.cwd(), ".key", "client.json");
-
-/** The prompt, with what it is waiting on written into its top border. */
-class Prompt extends Editor {
-  readonly working = new WorkingLabel();
-
-  protected override renderTopBorder(width: number, hiddenLineCount: number): string {
-    const overflow = hiddenLineCount > 0 ? ` ↑${hiddenLineCount}` : "";
-    const border = this.working.border(this.borderColor, width - visibleWidth(overflow));
-    return truncateToWidth(`${border}${this.borderColor(overflow)}`, width);
-  }
-}
 
 const selectTheme: SelectListTheme = {
   selectedPrefix: (text) => style.accent(text),
@@ -65,12 +52,11 @@ export async function open(base: string): Promise<void> {
   // document and clears the dock, so the list owns a clean screen.
   const document = new Container();
   const dock = new Container();
-  const prompt = new Prompt(tui, {
+  const prompt = new Editor(tui, {
     borderColor: style.borderMuted,
     selectList: selectTheme,
   });
   prompt.setAutocompleteProvider(provider(process.cwd()));
-  prompt.working.animate(tui);
   // The last two lines: where this transcript runs, and what it has spent so far.
   const footer = new Footer(process.cwd());
   tui.addChild(document);
@@ -131,8 +117,7 @@ export async function open(base: string): Promise<void> {
   /** View = f(state): the whole screen derives from the client state, on every change. */
   const render = (): void => {
     syncWatch();
-    // The prompt's border says what it waits on; nothing outside a transcript has a prompt.
-    prompt.working.show("idle");
+    // The footer says what the transcript it draws is doing.
     if (mode.kind === "list") {
       const page = mode;
       prompt.setText("");
@@ -166,8 +151,6 @@ export async function open(base: string): Promise<void> {
       } else {
         show(transcript(view));
         if (stats !== undefined) footer.watch(view, stats);
-        const live = view.docs["pi.live"] as LiveState | undefined;
-        prompt.working.show(live?.run === undefined ? "idle" : "working");
       }
     }
     if (notice !== undefined) show([new Text(style.error(notice), 0, 0)]);
@@ -270,8 +253,7 @@ export async function open(base: string): Promise<void> {
     // Esc interrupts the open context's run, as pi's esc esc does. Only an empty prompt: with a
     // draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
     if (matchesKey(data, "escape") && prompt.getText() === "") {
-      const live = view?.docs["pi.live"] as LiveState | undefined;
-      if (mode.kind === "transcript" && live?.run !== undefined) void interrupt();
+      if (mode.kind === "transcript" && stats?.running === true) void interrupt();
     }
     return undefined;
   });
@@ -326,7 +308,7 @@ function makeList(summaries: readonly Summary[]): SelectList {
   return new SelectList(
     summaries.map((summary) => ({
       value: String(summary.id),
-      label: `${summary.running ? style.success("●") : summary.closed ? "×" : style.dim("○")} ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`,
+      label: `${dot(summary.running)} ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`,
     })),
     20,
     selectTheme,

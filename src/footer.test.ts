@@ -1,7 +1,7 @@
 import type { ConversationView, EntryRecord } from "@earendil-works/pi-durable";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { contextTokens, Footer, shortenHome, tokens, totals, WorkingLabel } from "./footer.ts";
+import { contextTokens, Footer, shortenHome, tokens, totals } from "./footer.ts";
 
 const view = (entries: readonly EntryRecord[], cwd = "/key/repo"): ConversationView =>
   ({
@@ -85,6 +85,7 @@ describe("footer", () => {
       branch: "main",
       contextWindow: 128_000,
       model: "deepseek-flash",
+      running: true,
     });
     const [place, spent] = footer.render(100);
     expect(place).toContain("/key/repo");
@@ -106,24 +107,18 @@ describe("footer", () => {
     footer.watch(view([answered(1200, 8600)]), {
       contextWindow: 128_000,
       model: "deepseek-flash",
+      running: true,
     });
     expect(footer.render(100)).toHaveLength(2);
   });
 
-  test("the working label spins only while the generation runs", () => {
-    const label = new WorkingLabel();
-    label.show("working");
-    const working = stripTerminalSequences(label.border((text) => text, 40));
-    expect(working).toContain("⠋");
+  test("the stats line opens with the list's dot: filled while the chain streams, hollow once it settles", () => {
+    const stats = { contextWindow: 128_000, model: "deepseek-flash" };
+    const footer = new Footer("/key/repo");
+    footer.watch(view([answered(1200, 8600)]), { ...stats, running: true });
+    expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^● ↑1\.2k/);
 
-    label.show("idle");
-    const idle = stripTerminalSequences(label.border((text) => text, 40));
-    expect(idle).toContain("○");
-    expect(idle).not.toContain("⠋");
-  });
-
-  test("no label leaves the border whole", () => {
-    const label = new WorkingLabel();
-    expect(label.border((text) => text, 10)).toBe("──────────");
+    footer.watch(view([answered(1200, 8600)]), { ...stats, running: false });
+    expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^○ ↑1\.2k/);
   });
 });
