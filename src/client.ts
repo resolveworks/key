@@ -10,6 +10,7 @@ import {
   type Component,
   Container,
   Editor,
+  isKeyRelease,
   type KeybindingsConfig,
   KeybindingsManager,
   matchesKey,
@@ -35,10 +36,11 @@ const RECONNECT_MS = 250;
 const cursorFile = join(process.cwd(), ".key", "client.json");
 
 /** This client's opinions over pi-tui's editing grammar. Absent inherits the default, an
- * entry rebinds, and [] claims a key outright: the input listener owns ctrl+c, so nothing
- * below it may answer to that key. */
+ * entry rebinds, and [] claims a key outright: the input listener owns ctrl+c and ctrl+y, so
+ * nothing below it may answer to those keys. */
 export const keybinds: KeybindingsConfig = {
   "tui.input.copy": [],
+  "tui.editor.yank": [],
   "tui.select.cancel": ["escape"],
 };
 
@@ -275,6 +277,10 @@ export async function open(base: string): Promise<void> {
   // empty prompt. With text in the prompt ctrl+d falls through to delete-forward.
   let lastCtrlC = 0;
   tui.addInputListener((data) => {
+    // A kitty terminal reports both events of one press, and pi-tui filters releases only for
+    // the focused component — listeners hear them too. Unheard-of here, one ctrl+y would
+    // cycle twice and one ctrl+c would quit on its own release.
+    if (isKeyRelease(data)) return undefined;
     if (matchesKey(data, "ctrl+c")) {
       const now = Date.now();
       if (now - lastCtrlC < 500) quit();
@@ -294,12 +300,12 @@ export async function open(base: string): Promise<void> {
     if (matchesKey(data, "escape") && prompt.getText() === "") {
       if (mode.kind === "transcript" && runs(mode.id)) void interrupt();
     }
-    // Ctrl+tab cycles the running contexts, alt+tab-style: the list's order is the ring, and
-    // it wraps. A legacy terminal sends byte-identical tab, so there the binding never fires
-    // — the terminal's honest answer, not one to work around.
+    // Ctrl+y steps forward through the running contexts, ctrl+o back, alt+tab-style: the
+    // list's order is the ring, and it wraps. Ctrl+letters ride their own byte in every
+    // terminal — Konsole included — where ctrl+tab is byte-identical to plain tab.
     const cycle = [
-      ["ctrl+tab", 1],
-      ["shift+ctrl+tab", -1],
+      ["ctrl+y", 1],
+      ["ctrl+o", -1],
     ] as const;
     const direction = cycle.find(([key]) => matchesKey(data, key))?.[1];
     if (direction !== undefined) {
