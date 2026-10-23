@@ -9,7 +9,8 @@ Key is a host and a terminal client. One process — the host — owns every
 cascade on a durable session and serves it over HTTP; the client is a dumb
 terminal chat that starts trajectories, streams them, and browses past ones.
 The agents are coding agents: each context runs in a project directory you
-point it at, on `deepseek/deepseek-flash`.
+point it at, on the model `KEY_MODEL` picks (`deepseek/deepseek-flash` by
+default).
 
 The implementation may change. The idea below does not.
 
@@ -24,8 +25,11 @@ pnpm client     # chat with a running host
 ```
 
 Put `DEEPSEEK_API_KEY=...` in `~/.key/.env`; the host loads it on start.
-`KEY_THINKING_LEVEL` in the same file sets the level every conversation runs at
-(`deepseek-flash` has `off`, `low`, `high`, `max`; the default is `high`).
+`KEY_MODEL=provider/model` in the same file picks what every conversation
+runs on — any provider in pi's catalog, keyed by that provider's own env var
+(`ZAI_CODING_CN_API_KEY` for `zai-coding-cn`, say). `KEY_THINKING_LEVEL` in
+the same file sets the level every conversation runs at (a model without
+thinking runs at `off`; the default is `high`).
 Everything the host owns lives in `~/.key` — the session store is SQLite at
 `~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
 

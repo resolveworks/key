@@ -70,6 +70,7 @@ describe("host", () => {
     models.setProvider(faux.provider);
     host = new Host({
       models: () => models,
+      model: () => ({ provider: "deepseek", modelId: "deepseek-flash" }),
       storage: () => new MemoryStorage(),
       extensions: [CodingTools, keySystem(git).extension, Agents],
       port: 0,

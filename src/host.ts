@@ -22,6 +22,7 @@ import {
   createRegistry,
   type Extension,
   Harness,
+  type ModelRef,
   type Storage,
   type TaskGraph,
 } from "@earendil-works/pi-durable";
@@ -46,13 +47,22 @@ const SCAN_PAGE_SIZE = 256;
 export const PORT = 7317;
 /** Everything the host owns lives here, outside every project: store, env. */
 const dataDirectory = join(homedir(), ".key");
-const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
-/** The level every conversation runs at unless its own agent says otherwise: `KEY_THINKING_LEVEL`. */
-const THINKING_LEVEL = (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel;
+/** What the host runs on: `KEY_MODEL` as `provider/model`, split at the first slash — the id may carry
+ * its own (openrouter). */
+function parseModel(text: string): ModelRef {
+  const slash = text.indexOf("/");
+  const provider = text.slice(0, slash);
+  const modelId = text.slice(slash + 1);
+  if (slash < 0 || provider === "" || modelId === "")
+    throw new Error(`KEY_MODEL must be "provider/model": "${text}"`);
+  return { provider, modelId };
+}
 
-/** What the host runs on. `new Host()` is one box: deepseek on SQLite at `PORT`. */
+/** What the host runs on. `new Host()` is one box: `KEY_MODEL` on SQLite at `PORT`. */
 export type HostOptions = {
   readonly models: () => Models;
+  /** The model a new conversation runs: the host's env, or its own. */
+  readonly model: () => ModelRef;
   readonly storage: () => Storage | Promise<Storage>;
   readonly extensions: readonly Extension[];
   readonly port: number;
@@ -62,13 +72,14 @@ export type HostOptions = {
 
 const production = (): HostOptions => ({
   models: () => builtinModels(),
+  model: () => parseModel(process.env.KEY_MODEL ?? "deepseek/deepseek-flash"),
   storage: async () => {
     mkdirSync(dataDirectory, { recursive: true });
     return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
   },
   extensions: [CodingTools, KeySystem, Agents],
   port: PORT,
-  thinkingLevel: () => THINKING_LEVEL,
+  thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,
 });
 
 /** One line in the transcript picker: a context's conversation, and whether it is running. */
@@ -125,14 +136,14 @@ export class Host {
   /** What a view cannot say: the branch, the context window, the model and its level. */
   async stats(view: ConversationView): Promise<Stats> {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
-    const ref = agent?.model ?? MODEL;
+    const ref = agent?.model ?? this.#options.model();
     const model = this.#options.models().getModel(ref.provider, ref.modelId);
     const branch = await branchOf(agent?.cwd);
     return {
       ...(branch === undefined ? {} : { branch }),
       contextWindow: model?.contextWindow ?? 0,
       model: ref.modelId,
-      thinkingLevel: agent?.thinkingLevel ?? THINKING_LEVEL,
+      thinkingLevel: agent?.thinkingLevel ?? this.#options.thinkingLevel(),
       thinkingLevels: levelsOf(model),
     };
   }
@@ -197,7 +208,7 @@ export class Host {
     return this.#harness.commit(async (tx) => {
       const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
       await configure(tx, conversation.id, {
-        model: MODEL,
+        model: this.#options.model(),
         cwd,
         thinkingLevel: this.#options.thinkingLevel(),
       });
