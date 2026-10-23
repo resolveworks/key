@@ -155,15 +155,23 @@ describe("transcript", () => {
     expect(rendered).toContain(" 1 const a = 1;");
   });
 
-  it("a live call with no result renders in a running box", () => {
+  it("a call with no result yet keeps its running box, with the command it runs", () => {
     const running = text(
-      view([], {
+      view([call("c1", "bash", { command: "pnpm test" })], {
         generation: { attempt: 1 },
         tools: [{ callId: "c1", name: "bash", status: "running" }],
       }),
     );
-    expect(running).toContain("bash");
+    expect(running).toContain("bash pnpm test");
     expect(running).not.toContain("empty transcript");
+  });
+
+  it("a call whose result landed shows its title once, with the output beneath", () => {
+    const rows = lines(
+      view([call("c1", "bash", { command: "pnpm test" }), result("c1", "bash", "ok")]),
+    ).map((row) => row.trim());
+    expect(rows.filter((row) => row === "bash pnpm test")).toHaveLength(1);
+    expect(rows).toContain("ok");
   });
 
   it("a failed, aborted, or truncated answer says so", () => {

@@ -15,38 +15,45 @@ import { diff, markdown, style } from "./theme.ts";
 /** Collapsed tool output shows this many lines. */
 const PREVIEW_LINES = 5;
 
-/** A view as the components that draw it: settled entries, then the live generation and its tools. */
+/** A view as the components that draw it: settled entries, then the live generation still being written. */
 export function transcript(view: ConversationView): readonly Component[] {
   const blocks: Component[] = [];
   const calls = callIndex(view);
   for (const entry of view.entries) blocks.push(...entryBlocks(entry, calls));
   const live = view.docs["pi.live"] as LiveState | undefined;
+  // A running call is an entry already: durable commits the tool-calling answer before its round
+  // starts, so its box comes from `entries` with the call's arguments. Only a generation still
+  // being written lives in the document.
   if (live?.generation?.message !== undefined) {
     blocks.push(...assistantBlocks(live.generation.message as AssistantMessage, calls, true));
   }
-  for (const slot of live?.tools ?? []) blocks.push(toolBox(slot));
-  if (live?.generation === undefined && (live?.tools ?? []).length === 0 && blocks.length === 0) {
-    blocks.push(new Text(style.dim("empty transcript"), 1, 0));
-  }
+  if (blocks.length === 0) blocks.push(new Text(style.dim("empty transcript"), 1, 0));
   // The transcript never ends flush against the prompt.
   return [...layout(blocks), new Spacer(1)];
 }
 
 /**
- * Every tool call in the conversation, by call ID. A result records the call it answers, but the
- * arguments live on the call, which is how a settled box gets its title.
+ * The transcript's two indexes: every call's arguments, and which calls have a result. A running
+ * call has the first and not the second, which is how its box knows to say it is still going.
  */
-type Calls = ReadonlyMap<string, { readonly arguments: unknown }>;
+type Calls = {
+  readonly arguments: ReadonlyMap<string, unknown>;
+  readonly answered: ReadonlySet<string>;
+};
 
 function callIndex(view: ConversationView): Calls {
-  const found = new Map<string, { readonly arguments: unknown }>();
+  const args = new Map<string, unknown>();
+  const answered = new Set<string>();
   for (const message of messagesOf(view)) {
-    if (message.role !== "assistant") continue;
-    for (const block of message.content) {
-      if (block.type === "toolCall") found.set(block.id, { arguments: block.arguments });
+    if (message.role === "assistant") {
+      for (const block of message.content) {
+        if (block.type === "toolCall") args.set(block.id, block.arguments);
+      }
+    } else if (message.role === "toolResult") {
+      answered.add(message.toolCallId);
     }
   }
-  return found;
+  return { arguments: args, answered };
 }
 
 function messagesOf(view: ConversationView): readonly Message[] {
@@ -125,9 +132,9 @@ function assistantBlocks(
   if (streaming && message.content.length === 0) {
     blocks.push(new Text(style.dim("…"), 1, 0));
   }
-  // A live call has no result yet: draw it in its running box so the transcript shows the work.
+  // A call whose result has not landed yet keeps its running box, args and all.
   for (const block of message.content) {
-    if (block.type !== "toolCall" || calls.has(block.id)) continue;
+    if (block.type !== "toolCall" || calls.answered.has(block.id)) continue;
     blocks.push(toolBox({ name: block.name, status: "running", args: block.arguments }));
   }
   const failure = stopReasonText(message);
@@ -150,14 +157,14 @@ function stopReasonText(message: AssistantMessage): string {
 
 /** A settled call: its box, with the diff it made or the tail of what it printed beneath the title. */
 function toolResultBox(message: ToolResultMessage, calls: Calls): Component {
-  const call = calls.get(message.toolCallId);
+  const call = calls.arguments.get(message.toolCallId);
   return toolBox(
     {
       name: message.toolName,
       status: "done",
       output: textOf(message.content),
       ...(message.details === undefined ? {} : { details: message.details }),
-      ...(call === undefined ? {} : { args: call.arguments }),
+      ...(call === undefined ? {} : { args: call }),
     },
     message.isError,
   );
