@@ -1,4 +1,5 @@
 // The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
+import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +23,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { type AutocompleteSuggestions, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { type ServerType, serve } from "@hono/node-server";
 import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
@@ -35,6 +37,9 @@ const { extension: KeySystem, task: KeyTask } = keySystem(git);
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
+
+/** fd walks gitignored trees fast; without it tab still edits the line, and @ completes nothing. */
+const fd = spawnSync("fd", ["--version"], { stdio: "ignore" }).status === 0 ? "fd" : null;
 
 /** The port `key serve` binds; the client and a plain `new Host()` agree on it. */
 export const PORT = 7317;
@@ -192,6 +197,20 @@ export class Host {
     watch.start((graph) => {
       this.#graph = graph;
       return this.#publish();
+    });
+  }
+
+  /** The prompt's path completions, answered from the host's own filesystem: the line as it stands
+   * before the cursor, and whether the tab key forced the asking. */
+  complete(
+    cwd: string,
+    text: string,
+    force: boolean,
+    signal: AbortSignal,
+  ): Promise<AutocompleteSuggestions | null> {
+    return new CombinedAutocompleteProvider([], cwd, fd).getSuggestions([text], 0, text.length, {
+      signal,
+      force,
     });
   }
 

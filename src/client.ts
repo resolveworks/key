@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import {
+  type AutocompleteSuggestions,
   type Component,
   Container,
   Editor,
@@ -69,7 +70,27 @@ export async function open(base: string): Promise<void> {
     borderColor: style.borderMuted,
     selectList: selectTheme,
   });
-  prompt.setAutocompleteProvider(provider(process.cwd()));
+  // The prompt's paths complete on the host: the trajectories run on its filesystem, not this one.
+  // A superseded completion aborts its request, and the editor wants no answer rather than a crash.
+  const complete = async (
+    text: string,
+    force: boolean,
+    signal: AbortSignal,
+  ): Promise<AutocompleteSuggestions | null> => {
+    try {
+      const body = await call(() =>
+        client.api.complete.$post(
+          { json: { cwd: process.cwd(), text, force } },
+          { init: { signal } },
+        ),
+      );
+      return JSON.parse(body) as AutocompleteSuggestions | null;
+    } catch (error) {
+      if (signal.aborted) return null;
+      throw error;
+    }
+  };
+  prompt.setAutocompleteProvider(provider(complete));
   // The last two lines: where this transcript runs, and what it has spent so far.
   const footer = new Footer();
   tui.addChild(document);
@@ -390,16 +411,17 @@ function follow<T>(url: URL, onFrame: (frame: T) => void): () => void {
   };
 }
 
-/** Run one client call, retrying only a restarting one; a failure throws with the host's word. */
+/** Run one client call, retrying only a restarting one; a failure throws with the host's word. The
+ * answer is the host's body, for whoever asked for it. */
 async function call(
   request: () => Promise<{ ok: boolean; status: number; text(): Promise<string> }>,
-): Promise<void> {
+): Promise<string> {
   for (;;) {
     try {
       const response = await request();
       if (!response.ok)
         throw new Error(`host returned ${response.status}: ${await response.text()}`);
-      return;
+      return await response.text();
     } catch (error) {
       // A restarting host refuses the connection; anything else is a real failure.
       if (!(error instanceof TypeError)) throw error;

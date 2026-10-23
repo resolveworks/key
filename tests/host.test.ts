@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createModels,
   type FauxResponseStep,
@@ -200,6 +203,31 @@ describe("host", () => {
     expect(stats).toMatchObject({ model: "deepseek-flash", thinkingLevel: "high" });
     expect(stats.contextWindow).toBeGreaterThan(0);
     await frames.close();
+  });
+
+  test("a prompt line completes against the host's filesystem", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "key-complete-"));
+    mkdirSync(join(cwd, "src"));
+    writeFileSync(join(cwd, "src", "main.ts"), "");
+    writeFileSync(join(cwd, "README.md"), "");
+    const complete = (text: string, force: boolean) =>
+      app.request("/api/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd, text, force }),
+      });
+
+    // A forced completion (tab) lists what the directory holds; a typed path narrows it; a line
+    // that names nothing answers no suggestions at all.
+    expect(await (await complete("sr", true)).json()).toMatchObject({
+      prefix: "sr",
+      items: [{ value: "src/", label: "src/" }],
+    });
+    expect(await (await complete("src/", false)).json()).toMatchObject({
+      prefix: "src/",
+      items: [{ value: "src/main.ts", label: "main.ts" }],
+    });
+    expect(await (await complete("nothing", false)).json()).toBeNull();
   });
 
   /** Start a context from a prompt, as a client does: the prompt and its directory. */

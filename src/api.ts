@@ -20,11 +20,20 @@ const RunInput = Type.Object({
 /** What `POST /api/conversations/:id/messages` takes: the prompt that messages a context. */
 const MessageInput = Type.Object({ prompt: Prompt });
 
+/** What `POST /api/complete` takes: the line as it stands before the cursor, the directory it
+ * names paths against, and whether the tab key forced the asking. */
+const CompleteInput = Type.Object({
+  cwd: Type.String({ minLength: 1 }),
+  text: Type.String(),
+  force: Type.Optional(Type.Boolean()),
+});
+
 const index = `key host
 
   GET  /api/conversations              transcripts, then changes (SSE)
   GET  /api/conversations/:id          one transcript, then changes (SSE)
   POST /api/run                        {prompt, cwd}: start a context in that directory
+  POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a context
   POST /api/conversations/:id/abort     interrupt a context: abort its current run
 `;
@@ -87,6 +96,14 @@ export function api(host: Host) {
           const { prompt, cwd } = c.req.valid("json");
           const task = await host.run(cwd, prompt);
           return c.json({ task }, 202);
+        },
+      )
+      .post(
+        "/api/complete",
+        validator("json", (body) => Parse(CompleteInput, body)),
+        async (c) => {
+          const { cwd, text, force } = c.req.valid("json");
+          return c.json(await host.complete(cwd, text, force ?? false, c.req.raw.signal));
         },
       )
       // A stack trace is the error message: everything the host throws answers as itself.
