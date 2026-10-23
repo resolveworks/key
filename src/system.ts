@@ -15,7 +15,7 @@ import {
 import type { Git } from "./git.ts";
 import { branchFor, CHILD_NAME, ensureWorktree, type Worktree } from "./worktree.ts";
 
-/** A context: a prompt run once in a fresh conversation of its own; either shape is its whole story. */
+/** A context: a prompt run once in a conversation — its own when fresh, the one a continuation names. */
 export type KeyTaskInput =
   | {
       readonly prompt: string;
@@ -26,6 +26,11 @@ export type KeyTaskInput =
       readonly prompt: string;
       /** A forked child: it runs in the worktree and branch its name mints, and cannot fork. */
       readonly name: string;
+    }
+  | {
+      readonly prompt: string;
+      /** A continuation: the conversation this prompt runs in, instead of a fresh one of its own. */
+      readonly conversationId: ConversationId;
     };
 
 /**
@@ -53,9 +58,10 @@ const answerOf = (entries: readonly EntryRecord[], entryId: EntryId): string => 
 };
 
 /**
- * One context: a prompt and the conversation it runs in. It runs once and ends. At terminal it mints
- * its children and a fresh successor as tasks in this conversation; each creates its own conversation
- * when it runs. The git port is bound when the host installs key.
+ * One context: a prompt and the conversation it runs in — a fresh one of its own, or the one a
+ * continuation names. It runs once and ends. At terminal it mints its children and a fresh successor
+ * as tasks in this conversation; each creates its own conversation when it runs. The git port is
+ * bound when the host installs key.
  */
 export const keyTask = (git: Git) => {
   const task = defineTask<KeyTaskInput, KeyTaskState, string>({
@@ -78,6 +84,14 @@ export const keyTask = (git: Git) => {
       run: async (record, runtime, context) => {
         // Save the intent before acting: a crash after the submit reacquires this same conversation.
         let conversationId = record.state.checkpoint.conversationId;
+        // A continuation runs in the conversation its input names.
+        if (conversationId === undefined && "conversationId" in record.input) {
+          conversationId = record.input.conversationId;
+          await runtime.commit(
+            () => ({ status: "running", checkpoint: { phase: "run", conversationId } }),
+            context,
+          );
+        }
         if (conversationId === undefined) {
           // A fresh conversation copies this conversation's agent — cwd included — so only a child,
           // which moves to its checkout, configures anything.
@@ -143,14 +157,13 @@ export const keyTask = (git: Git) => {
           (await runtime.context(conversationId, context)).entries,
           settled.answer,
         );
-        // Every fork this run made, across its tool rounds, as the tool recorded them.
-        const forked = (await runtime.snapshot(ForkRecord, conversationId, context))?.forks ?? [];
-
-        // This context ends and its children are born in its conversation. Background keeps it from
-        // waiting on them; the successor waits on them explicitly.
+        // This context ends and its children are born in its conversation, taking the forks this run
+        // recorded — a later run here mints only its own. Background keeps it from waiting on them;
+        // the successor waits on them explicitly.
         await runtime.commit(async (tx) => {
+          const forks = (await tx.doc(ForkRecord, handle.id)).forks.splice(0);
           const children: TaskId<string>[] = [];
-          for (const { prompt: childPrompt, name } of forked) {
+          for (const { prompt: childPrompt, name } of forks) {
             children.push(
               await tx.createTask(
                 task,

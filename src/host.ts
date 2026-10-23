@@ -66,7 +66,7 @@ export type Summary = {
   /** The directory that context runs in. */
   readonly cwd: string;
   readonly running: boolean;
-  /** A forked context, or a terminated child: no more messages may reach it. */
+  /** A forked context, or a terminated child: its story continues elsewhere. */
   readonly closed: boolean;
 };
 
@@ -79,7 +79,7 @@ export class Host {
   #graph: TaskGraph = { tasks: {} };
   /** Each conversation's owning task. */
   #owners = new Map<number, number | undefined>();
-  /** Conversations a context minted children in: minting is its terminal act, so it is closed. */
+  /** Conversations a context minted children in. */
   #forked = new Set<number>();
   /** Task ids that are forked children, and those that have ended. */
   #children = new Set<number>();
@@ -196,15 +196,21 @@ export class Host {
     }, context);
   }
 
-  /** Message an existing context: it steers the conversation directly; nothing is minted. */
+  /** Message an existing context: one continuation context in its conversation, steering it when busy
+   * and minting at its terminus like any other. */
   async continue(conversationId: number, prompt: string): Promise<void> {
-    const conversation = await this.#harness.conversation(
-      conversationId as ConversationId,
+    const id = conversationId as ConversationId;
+    if ((await this.#harness.conversation(id, context)) === undefined)
+      throw new Error(`no conversation #${conversationId}`);
+    await this.#harness.commit(
+      (tx) =>
+        tx.createTask(
+          KeyTask,
+          { prompt, conversationId: id },
+          { ownership: { kind: "conversation" }, conversationId: id },
+        ),
       context,
     );
-    if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
-    if (this.#closed(conversationId)) throw new Error(`conversation #${conversationId} is closed`);
-    await conversation.submit({ type: "input", content: prompt, whenBusy: "steer" }, context);
   }
 
   #record(record: {
@@ -225,7 +231,7 @@ export class Host {
       this.#ended.add(record.id);
   }
 
-  /** No more messages: a forked context lives on through its successors, a child through its branch. */
+  /** A forked context lives on through its successors, a child through its branch. */
   #closed(conversationId: number): boolean {
     if (this.#forked.has(conversationId)) return true;
     const owner = this.#owners.get(conversationId);

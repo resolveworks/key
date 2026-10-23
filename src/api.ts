@@ -16,7 +16,7 @@ const RunInput = Type.Object({
   cwd: Type.String({ minLength: 1 }),
 });
 
-/** What `POST /api/conversations/:id/messages` takes: the prompt that steers a context. */
+/** What `POST /api/conversations/:id/messages` takes: the prompt that messages a context. */
 const MessageInput = Type.Object({ prompt: Prompt });
 
 const index = `key host

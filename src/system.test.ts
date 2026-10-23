@@ -50,19 +50,21 @@ function turn(text: string, forks: readonly string[] = []) {
 const children = (records: readonly KeyRecord[]) => records.filter((r) => "name" in r.input);
 const nameOf = (record: KeyRecord): string | undefined =>
   "name" in record.input ? record.input.name : undefined;
-const onOf = (record: KeyRecord): readonly TaskId[] | undefined =>
+const onOf = (record: KeyRecord): readonly TaskId<string>[] | undefined =>
   "on" in record.input ? record.input.on : undefined;
 
 /** The fresh context a forking context mints: it waits on the children that context forked. */
 function successor(records: readonly KeyRecord[]): KeyRecord | undefined {
   const ids = children(records).map((child) => child.id);
-  return records.find(
-    (record) =>
+  return records.find((record) => {
+    const on = onOf(record);
+    return (
       !("name" in record.input) &&
-      record.input.on !== undefined &&
-      record.input.on.length > 0 &&
-      record.input.on.every((id) => ids.includes(id)),
-  );
+      on !== undefined &&
+      on.length > 0 &&
+      on.every((id) => ids.includes(id))
+    );
+  });
 }
 
 /** Start one context, as the host does for a fresh prompt: one commit, one conversation, one task. */
@@ -212,5 +214,52 @@ describe("what a context scans for forks", () => {
 
     // b was refused, so the only child is a.
     expect(children(await cascade(harness)).map(nameOf)).toEqual(["a"]);
+  });
+});
+
+describe("a continuation", () => {
+  it("messages a closed conversation in place and mints only the forks that run made", async () => {
+    const { faux, harness } = await fresh();
+    // Kickoff forks a and ends; the child and its heir drain; then the message runs and forks b.
+    faux.setResponses([
+      turn("I forked a.", ["a"]),
+      turn("a is on its way"),
+      turn("a answers"),
+      turn("summed"),
+      turn("more work", ["b"]),
+      turn("b is on its way"),
+      turn("b answers"),
+      turn("summed again"),
+    ]);
+
+    const kickoff = await started(harness, "kick off");
+    await harness.waitForTask((await waitForSuccessor(harness)).id, context);
+    const conversation = await conversationOf(harness, kickoff);
+    // Message it as the host does: one continuation context in the conversation it names.
+    const continuation = await harness.commit(
+      (tx) =>
+        tx.createTask(
+          KeyTask,
+          { prompt: "more work", conversationId: conversation },
+          { ownership: { kind: "conversation" }, conversationId: conversation },
+        ),
+      context,
+    );
+    harness.resume();
+    await harness.waitForTask(continuation, context);
+
+    // The message ran in the closed conversation itself, not a fresh one of its own.
+    const transcript = await entries(harness, conversation);
+    expect(transcript.filter((entry) => entry.kind === "pi.user")).toHaveLength(2);
+    // Its forks minted at its terminus — and only its own: kickoff's child is not minted twice.
+    const records = await cascade(harness);
+    expect(children(records).map(nameOf)).toEqual(["a", "b"]);
+    const b = children(records).find((record) => nameOf(record) === "b");
+    expect(
+      records.find((record) => !("name" in record.input) && onOf(record)?.[0] === b?.id)?.input,
+    ).toEqual({ prompt: "b is on its way", on: [b?.id] });
+    expect(
+      records.find((record) => record.id === continuation)?.state.outcome,
+    ).toEqual({ status: "completed", result: "b is on its way" });
   });
 });
