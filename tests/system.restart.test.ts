@@ -10,7 +10,7 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FakeEnv, REPO } from "../tests/git.ts";
+import { FakeEnv, REPO } from "./git.ts";
 import {
   conversationOf,
   entries,
@@ -19,7 +19,7 @@ import {
   MODEL,
   openKey,
   unanswered,
-} from "../tests/harness.ts";
+} from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
 

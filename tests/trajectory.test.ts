@@ -5,8 +5,8 @@ import type { AssistantMessage, JsonObject, Message, Usage } from "@earendil-wor
 import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
-import { InterruptEntry } from "./entries.ts";
-import { transcript } from "./trajectory.ts";
+import { InterruptEntry } from "../src/entries.ts";
+import { transcript } from "../src/trajectory.ts";
 
 const WIDTH = 80;
 

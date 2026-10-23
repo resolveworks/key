@@ -1,7 +1,7 @@
 import type { ConversationView, EntryRecord } from "@earendil-works/pi-durable";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { contextTokens, Footer, shortenHome, tokens, totals } from "./footer.ts";
+import { contextTokens, Footer, shortenHome, tokens, totals } from "../src/footer.ts";
 
 const view = (entries: readonly EntryRecord[], cwd = "/key/repo"): ConversationView =>
   ({

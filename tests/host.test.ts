@@ -8,13 +8,13 @@ import type { ConversationView } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { Agents } from "./agents.ts";
-import type { api } from "./api.ts";
-import { InterruptEntry } from "./entries.ts";
-import type { Stats } from "./footer.ts";
-import { git } from "./git.ts";
-import { Host, type Summary } from "./host.ts";
-import { keySystem } from "./system.ts";
+import { Agents } from "../src/agents.ts";
+import type { api } from "../src/api.ts";
+import { InterruptEntry } from "../src/entries.ts";
+import type { Stats } from "../src/footer.ts";
+import { git } from "../src/git.ts";
+import { Host, type Summary } from "../src/host.ts";
+import { keySystem } from "../src/system.ts";
 
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
 type Transcript = { readonly view: ConversationView; readonly stats: Stats };

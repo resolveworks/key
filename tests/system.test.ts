@@ -3,7 +3,8 @@ import type { FauxProviderHandle } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { configure, type Harness, MemoryStorage, type TaskId } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { REPO } from "../tests/git.ts";
+import { InterruptEntry } from "../src/entries.ts";
+import { REPO } from "./git.ts";
 import {
   cascade,
   conversationOf,
@@ -15,8 +16,7 @@ import {
   MODEL,
   openKey,
   unanswered,
-} from "../tests/harness.ts";
-import { InterruptEntry } from "./entries.ts";
+} from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
 

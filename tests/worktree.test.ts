@@ -10,9 +10,9 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fakeGit, gitCalls, REPO, resetGit } from "../tests/git.ts";
-import { conversationOf, KeyTask, keySetup, openKey } from "../tests/harness.ts";
-import { branchFor, ensureWorktree } from "./worktree.ts";
+import { branchFor, ensureWorktree } from "../src/worktree.ts";
+import { fakeGit, gitCalls, REPO, resetGit } from "./git.ts";
+import { conversationOf, KeyTask, keySetup, openKey } from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
 
