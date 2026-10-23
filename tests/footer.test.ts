@@ -1,7 +1,7 @@
 import type { ConversationView, EntryRecord } from "@earendil-works/pi-durable";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { contextTokens, Footer, shortenHome, tokens, totals } from "../src/footer.ts";
+import { contextTokens, Footer, shortenHome, start, tokens, totals } from "../src/footer.ts";
 
 const view = (entries: readonly EntryRecord[], cwd = "/key/repo"): ConversationView =>
   ({
@@ -44,6 +44,14 @@ const answered = (input: number, cacheRead: number, timestamp = 0): EntryRecord 
         timestamp,
       },
     ],
+  }) as unknown as EntryRecord;
+
+/** A human turn, as durable records it: a `pi.user` entry carrying one user message. */
+const asked = (prompt: string): EntryRecord =>
+  ({
+    id: 1,
+    kind: "pi.user",
+    model: [{ role: "user", content: prompt, timestamp: 0 }],
   }) as unknown as EntryRecord;
 
 describe("footer", () => {
@@ -95,10 +103,24 @@ describe("footer", () => {
     expect(contextTokens(view([user as unknown as EntryRecord]))).toBeGreaterThan(100);
   });
 
+  test("the start is the first line of the conversation's first human words", () => {
+    expect(start(view([asked("fix the footer\n\nthen the rest")]))).toBe("fix the footer");
+    expect(start(view([answered(1200, 8600)]))).toBe("");
+  });
+
+  test("a compaction that heads past the kickoff leaves the first words after it", () => {
+    const compaction = {
+      id: 1,
+      kind: "pi.compaction",
+      model: [{ role: "user", content: "old work, summarized", timestamp: 1 }],
+    } as unknown as EntryRecord;
+    expect(start(view([compaction, asked("what survived")]))).toBe("what survived");
+  });
+
   test("two dim lines: where it runs, and what it spent against the window", () => {
     const footer = new Footer();
     footer.watch(
-      view([answered(1200, 8600)], "/key/repo"),
+      view([asked("fix the footer"), answered(1200, 8600)], "/key/repo"),
       {
         branch: "main",
         contextWindow: 128_000,
@@ -114,6 +136,29 @@ describe("footer", () => {
     expect(spent).toContain("7.7%/128k");
     expect(spent).toContain("deepseek-flash • high");
     expect(visibleWidth(spent)).toBeLessThanOrEqual(100);
+  });
+
+  test("the place line carries the conversation's first words right of the place", () => {
+    const footer = new Footer();
+    footer.watch(
+      view([asked("fix the footer test flake\n\nthen the rest")]),
+      { contextWindow: 128_000, model: "deepseek-flash", thinkingLevel: "high" },
+      false,
+    );
+    const [place] = footer.render(100);
+    expect(stripTerminalSequences(place)).toBe("/key/repo · fix the footer test flake");
+  });
+
+  test("a long opening is cut to what the place leaves, never past the width", () => {
+    const footer = new Footer();
+    footer.watch(
+      view([asked(`word `.repeat(60))]),
+      { contextWindow: 128_000, model: "deepseek-flash", thinkingLevel: "high" },
+      false,
+    );
+    const [place] = footer.render(80);
+    expect(place).toContain("…");
+    expect(visibleWidth(place)).toBeLessThanOrEqual(80);
   });
 
   test("a fresh trajectory names where it would run and nothing it has spent", () => {

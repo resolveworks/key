@@ -102,7 +102,7 @@ export function dot(running: boolean): string {
 }
 
 /**
- * The footer over one transcript: where it runs and what it has spent. `show` names a
+ * The footer over one transcript: where it runs, how it started, and what it has spent. `show` names a
  * place the next trajectory would run, `watch` the open transcript, `clear` neither — the
  * selector owns the whole screen — and `render` draws whichever.
  */
