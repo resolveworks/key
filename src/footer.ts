@@ -1,8 +1,9 @@
-// The footer: the directory the transcript runs in, and beneath it what the run has
-// spent — tokens, cache hits, cost — against the model's context window, with the model on the right.
+// The footer: the directory the transcript runs in beside the conversation's first words, and
+// beneath it what the run has spent — tokens, cache hits, cost — against the model's context
+// window, with the model on the right.
 
 import { homedir } from "node:os";
-import type { ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
+import { contentText, type ModelThinkingLevel, type Usage } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { ConversationView, UsageState } from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -70,6 +71,16 @@ function add(total: Usage, usage: Usage): void {
 /** The context the next request carries: pi-ai's estimate over the messages the entries project. */
 export function contextTokens(view: ConversationView): number {
   return estimateContextTokens(view.entries.flatMap((entry) => entry.model ?? [])).tokens;
+}
+
+/** The conversation's first human words, as one line — where a glance grounds itself in what it
+ * is looking at. A compaction that heads past the kickoff leaves the first words after it. */
+export function start(view: ConversationView): string {
+  const first = view.entries
+    .filter((entry) => entry.kind === "pi.user")
+    .flatMap((entry) => entry.model ?? [])
+    .find((message) => message.role === "user");
+  return first === undefined ? "" : contentText(first.content).split("\n", 1)[0].trim();
 }
 
 /** The newest cache hit rate: the share of the last answered turn's prompt that it read from cache. */
@@ -145,7 +156,12 @@ export class Footer implements Component {
     const place = `${style.dim(shortenHome(this.#cwd))}${
       this.#branch === undefined ? "" : style.dim(` (${this.#branch})`)
     }`;
-    const lines = [truncateToWidth(place, width, style.dim("..."))];
+    // The opening rides right of the place, cut to whatever width the place leaves.
+    const opening = this.#view === undefined ? "" : start(this.#view);
+    const room = width - visibleWidth(place) - 3;
+    const cut = room > 0 ? truncateToWidth(opening, room, style.dim("…")) : "";
+    const line = `${place}${cut === "" ? "" : style.dim(` · ${cut}`)}`;
+    const lines = [truncateToWidth(line, width, style.dim("..."))];
     if (this.#view === undefined) return lines;
 
     const usage = totals(this.#view.docs["pi.usage"] as UsageState | undefined);

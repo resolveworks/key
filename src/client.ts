@@ -66,8 +66,8 @@ type Mode =
   | { readonly kind: "view"; readonly view: View }
   | { readonly kind: "list"; readonly back: View; selected: number | undefined };
 
-/** A view's name: "new" for the composer, its number for a conversation — its key in the drafts
- * and its place in the ring. */
+/** A view's name: "new" for the composer, its number for a conversation — its key in the drafts,
+ * and its place in the ring when it is a live one. */
 type Name = "new" | number;
 
 const nameOf = (view: View): Name => (view.kind === "new" ? "new" : view.id);
@@ -79,7 +79,8 @@ export async function open(base: string): Promise<void> {
   const client = hc<ReturnType<typeof api>>(base);
 
   // All client state. Every change flows through `render`, which derives the whole screen from it.
-  /** The composer: one per client, retargeted by `/new`, always the newest place in the ring. */
+  /** The composer: one per client, retargeted by `/new` — a place in the ring only while its
+   * draft has text; empty, it is just the screen's idle state. */
   let composer: View = { kind: "new" };
   let mode: Mode = { kind: "view", view: composer };
   /** Every view's unsent text. The editor mirrors the open view's entry; a swap exchanges them,
@@ -152,6 +153,11 @@ export async function open(base: string): Promise<void> {
     }
   };
   prompt.setAutocompleteProvider(provider(complete));
+
+  /** The composer's draft — the editor's text while the composer is open, its store while it is
+   * covered. Text is what makes the composer a place; the ring asks for it. */
+  const composerDraft = (): string =>
+    place().kind === "new" ? prompt.getText() : (drafts.get("new") ?? "");
   // The last two lines: where this transcript runs, and what it has spent so far.
   const footer = new Footer();
   tui.addChild(document);
@@ -371,18 +377,19 @@ export async function open(base: string): Promise<void> {
       const id = openConversation();
       if (id !== undefined && runs(id)) void interrupt(id);
     }
-    // Ctrl+y steps forward through the live places, ctrl+o back, alt+tab-style: the composer
-    // and the running contexts in the list's order are the ring, and it wraps — so a `/new` in
-    // progress, draft and all, is ever a step away. Ctrl+letters ride their own byte in every
-    // terminal — Konsole included — where ctrl+tab is byte-identical to plain tab.
+    // Ctrl+y steps forward through the live places, ctrl+o back, alt+tab-style: a drafted
+    // composer and the running contexts in the list's order are the ring, and it wraps — so a
+    // `/new` in progress, draft and all, is ever a step away. An empty composer is no place, and
+    // with nothing live the key lands nowhere — still consumed. Ctrl+letters ride their own byte
+    // in every terminal — Konsole included — where ctrl+tab is byte-identical to plain tab.
     const chords = [
       ["ctrl+y", 1],
       ["ctrl+o", -1],
     ] as const;
     const direction = chords.find(([key]) => matchesKey(data, key))?.[1];
     if (direction !== undefined) {
-      const next = cycle(summaries, nameOf(place()), direction);
-      swap(next === "new" ? composer : { kind: "transcript", id: next });
+      const next = cycle(summaries, nameOf(place()), direction, composerDraft());
+      if (next !== undefined) swap(next === "new" ? composer : { kind: "transcript", id: next });
       return { consume: true };
     }
     // In the list the home row steps it: n and e one line, y and o one cascade block — the plain
@@ -492,18 +499,24 @@ function makeList(summaries: readonly Summary[]): SelectList {
   );
 }
 
-/** The live places as a ring: the composer first — a trajectory not yet started is the newest
- * thing — then the running contexts in the list's order, newest cascade first. From one of
- * them, its neighbor in `direction`, wrapping — so a `/new` in progress is ever a step away.
- * From a place not in the ring — a settled conversation — the first running forward and the
- * last back. The composer alone in the ring still cycles: every step lands on it. */
-export function cycle(summaries: readonly Summary[], current: Name, direction: 1 | -1): Name {
-  const ring: readonly Name[] = [
-    "new",
-    ...summaries.filter((summary) => summary.running).map((summary) => summary.id),
-  ];
+/** The live places as a ring: a drafted composer first — a trajectory being written is the newest
+ * thing — then the running contexts in the list's order, newest cascade first. The composer is a
+ * place only while its draft has text; an empty `/new` never joins the ring. From one of the
+ * places, its neighbor in `direction`, wrapping — so a trajectory in progress is ever a step
+ * away. From a place not in the ring — a settled conversation, an empty composer — the first
+ * running forward and the last back; with none running, the drafted composer; with nothing
+ * live, nowhere. */
+export function cycle(
+  summaries: readonly Summary[],
+  current: Name,
+  direction: 1 | -1,
+  draft: string,
+): Name | undefined {
+  const drafted = draft.trim() !== "";
+  const running = summaries.filter((summary) => summary.running).map((summary) => summary.id);
+  const ring: readonly Name[] = drafted ? ["new", ...running] : running;
   const at = ring.indexOf(current);
-  if (at === -1) return ring.at(direction === 1 ? 1 : -1) ?? "new";
+  if (at === -1) return running.at(direction === 1 ? 0 : -1) ?? (drafted ? "new" : undefined);
   return ring[(at + direction + ring.length) % ring.length];
 }
 

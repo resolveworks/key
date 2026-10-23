@@ -16,50 +16,61 @@ const summary = (id: number, running: boolean, depth = 0): Summary => ({
 });
 
 // The host lists by cascade, newest cascade first; parked contexts stay in the list but never
-// in the ring, where the composer sits first — the `/new` in progress is the newest thing.
+// in the ring. The composer joins the ring only while a trajectory is being written in it — an
+// empty `/new` is no place at all.
 const summaries = [summary(5, true), summary(4, false), summary(3, true), summary(1, true)];
+const draft = "fix the flaky test";
 
 describe("cycle", () => {
-  test("the ring is the composer and the running contexts, the composer first", () => {
-    expect(cycle(summaries, "new", 1)).toBe(5); // forward from the composer: the newest running
-    expect(cycle(summaries, "new", -1)).toBe(1); // back from the composer: the oldest running
-    expect(cycle(summaries, 1, 1)).toBe("new"); // forward off the oldest wraps onto the composer
-    expect(cycle(summaries, 5, -1)).toBe("new"); // back off the newest wraps onto the composer
+  test("a drafted composer leads the ring, then the running contexts in the list's order", () => {
+    expect(cycle(summaries, "new", 1, draft)).toBe(5); // forward from the composer: the newest running
+    expect(cycle(summaries, "new", -1, draft)).toBe(1); // back from the composer: the oldest running
+    expect(cycle(summaries, 1, 1, draft)).toBe("new"); // forward off the oldest wraps onto the composer
+    expect(cycle(summaries, 5, -1, draft)).toBe("new"); // back off the newest wraps onto the composer
   });
 
   test("from a running context it steps to the running neighbor, wrapping both ways", () => {
-    expect(cycle(summaries, 5, 1)).toBe(3);
-    expect(cycle(summaries, 3, 1)).toBe(1);
-    expect(cycle(summaries, 3, -1)).toBe(5);
-    expect(cycle(summaries, 1, -1)).toBe(3);
+    expect(cycle(summaries, 5, 1, draft)).toBe(3);
+    expect(cycle(summaries, 3, 1, draft)).toBe(1);
+    expect(cycle(summaries, 3, -1, draft)).toBe(5);
+    expect(cycle(summaries, 1, -1, draft)).toBe(3);
   });
 
   test("the ring follows the tree, crossing cascade blocks whole", () => {
     // Two cascades, newest block first: each kickoff with a running fork beneath it.
     const tree = [summary(2, true), summary(5, true, 1), summary(1, true), summary(3, true, 1)];
-    expect(cycle(tree, 5, 1)).toBe(1); // off the top cascade into the older one
-    expect(cycle(tree, 3, 1)).toBe("new"); // off the oldest, onto the composer
+    expect(cycle(tree, 5, 1, draft)).toBe(1); // off the top cascade into the older one
+    expect(cycle(tree, 3, 1, draft)).toBe("new"); // off the oldest, onto the composer
   });
 
   test("from a settled conversation it lands on the first running forward, the last back", () => {
-    expect(cycle(summaries, 4, 1)).toBe(5);
-    expect(cycle(summaries, 4, -1)).toBe(1);
+    expect(cycle(summaries, 4, 1, "")).toBe(5);
+    expect(cycle(summaries, 4, -1, "")).toBe(1);
   });
 
-  test("a lone running context and the composer neighbor each other both ways", () => {
+  test("an empty composer is no place: the ring is the running contexts alone", () => {
+    expect(cycle(summaries, 1, 1, "")).toBe(5); // off the oldest wraps onto the newest
+    expect(cycle(summaries, 5, -1, "")).toBe(1);
+    expect(cycle(summaries, 3, 1, " ")).toBe(1); // whitespace is nothing typed
+  });
+
+  test("a lone running context is its own neighbor while the composer is empty", () => {
     const lone = [summary(4, false), summary(3, true)];
-    expect(cycle(lone, 3, 1)).toBe("new");
-    expect(cycle(lone, 3, -1)).toBe("new");
-    expect(cycle(lone, "new", 1)).toBe(3);
-    expect(cycle(lone, "new", -1)).toBe(3);
+    expect(cycle(lone, 3, 1, "")).toBe(3);
+    expect(cycle(lone, 3, -1, "")).toBe(3);
   });
 
-  test("with nothing running the composer is the whole ring: every step lands on it", () => {
+  test("a drafted composer alone is the whole ring: every step lands on it", () => {
     const parked = [summary(2, false), summary(1, false)];
-    expect(cycle(parked, "new", 1)).toBe("new");
-    expect(cycle(parked, "new", -1)).toBe("new");
-    expect(cycle(parked, 1, 1)).toBe("new");
-    expect(cycle(parked, 1, -1)).toBe("new");
+    expect(cycle(parked, "new", 1, draft)).toBe("new");
+    expect(cycle(parked, 1, 1, draft)).toBe("new");
+  });
+
+  test("nothing live — nothing running, nothing drafted — is nowhere to go", () => {
+    const parked = [summary(2, false), summary(1, false)];
+    expect(cycle(parked, 1, 1, "")).toBeUndefined();
+    expect(cycle(parked, "new", -1, "")).toBeUndefined();
+    expect(cycle([], "new", 1, "")).toBeUndefined();
   });
 });
 
