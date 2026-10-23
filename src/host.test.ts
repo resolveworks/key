@@ -1,4 +1,9 @@
-import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  type FauxResponseStep,
+  fauxAssistantMessage,
+  fauxProvider,
+} from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -138,24 +143,15 @@ describe("host", () => {
   });
 
   test("an interrupt parks the conversation: the dots say it no longer streams", async () => {
-    let reached!: () => void;
-    const arrived = new Promise<void>((resolve) => (reached = resolve));
-    faux.setResponses([
-      (_context, options) =>
-        new Promise((_resolve, reject) => {
-          reached();
-          const signal = options?.signal;
-          if (signal === undefined) throw new Error("faux: the request has no abort signal");
-          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-        }),
-    ]);
+    const hung = stuck();
+    faux.setResponses([hung.step]);
 
     const list = new Frames(
       (await app.request("/api/conversations")).body as ReadableStream<Uint8Array>,
     );
     await run("say hello");
     const [running] = await list.until((frame: readonly Summary[]) => frame.length > 0);
-    await arrived;
+    await hung.reached;
     expect(running.running).toBe(true);
 
     await app.request(`/api/conversations/${running.id}/abort`, { method: "POST" });
@@ -163,6 +159,30 @@ describe("host", () => {
       frame.some((item) => !item.running),
     );
     expect(parked.find((item) => item.id === running.id)?.running).toBe(false);
+    await list.close();
+  });
+
+  test("an interrupt records itself in the transcript, even when nothing streamed", async () => {
+    const hung = stuck();
+    faux.setResponses([hung.step]);
+
+    const list = new Frames(
+      (await app.request("/api/conversations")).body as ReadableStream<Uint8Array>,
+    );
+    await run("say hello");
+    const [conversation] = await list.until((frame: readonly Summary[]) => frame.length > 0);
+    await hung.reached;
+
+    const transcript = new Frames(
+      (await app.request(`/api/conversations/${conversation.id}`))
+        .body as ReadableStream<Uint8Array>,
+    );
+    await app.request(`/api/conversations/${conversation.id}/abort`, { method: "POST" });
+    const { view } = await transcript.until<Transcript>(({ view }: Transcript) =>
+      view.entries.some((entry) => entry.kind === "key.interrupt"),
+    );
+    expect(view.entries.at(-1)?.kind).toBe("key.interrupt");
+    await transcript.close();
     await list.close();
   });
 
@@ -226,5 +246,19 @@ describe("host", () => {
     const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
     await list.close();
     return listed[0].id;
+  }
+
+  /** A faux response that never answers: the run stays mid-generation until its request is aborted. */
+  function stuck(): { readonly step: FauxResponseStep; readonly reached: Promise<void> } {
+    let reached!: () => void;
+    const arrived = new Promise<void>((resolve) => (reached = resolve));
+    const step: FauxResponseStep = (_context, options) =>
+      new Promise((_resolve, reject) => {
+        reached();
+        const signal = options?.signal;
+        if (signal === undefined) throw new Error("faux: the request has no abort signal");
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    return { step, reached: arrived };
   }
 });

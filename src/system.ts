@@ -3,6 +3,7 @@ import {
   type ConversationId,
   configure,
   defineDoc,
+  defineEntry,
   defineExtension,
   defineTask,
   defineTool,
@@ -50,6 +51,12 @@ type KeyTaskState =
   | { readonly phase: "wait" }
   | { readonly phase: "run"; readonly conversationId?: ConversationId }
   | { readonly phase: "parked" };
+
+/**
+ * Where an interrupt landed: the transcript's own record that a context parked here, so the pause
+ * says who made it even when the run had nothing to show yet.
+ */
+const InterruptEntry = defineEntry("key.interrupt");
 
 /** The answer of a run: the final assistant text of the entry its submission settled on. */
 const answerOf = (entries: readonly EntryRecord[], entryId: EntryId): string => {
@@ -152,11 +159,12 @@ export const keyTask = (git: Git) => {
         const settled = await submission.wait(context);
         if (settled.status === "unanswered" && settled.reason === "aborted") {
           // An interrupted context parks: live, without a terminus, so whoever waits on it keeps
-          // waiting. The checkpoint keeps it parked across restarts; aborting the task ends it.
-          await runtime.commit(
-            () => ({ status: "running", checkpoint: { phase: "parked" } }),
-            context,
-          );
+          // waiting. The checkpoint keeps it parked across restarts; aborting the task ends it. The
+          // transcript records the interrupt, which a run that streamed nothing would not show.
+          await runtime.commit(async (tx) => {
+            await tx.appendEntry(InterruptEntry, handle.id, {});
+            return { status: "running", checkpoint: { phase: "parked" } };
+          }, context);
           return;
         }
         if (settled.status !== "done" || settled.type !== "input") {

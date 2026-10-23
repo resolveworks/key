@@ -281,6 +281,9 @@ describe("an interruption", () => {
     const records = await cascade(harness);
     expect(records.find((record) => record.id === kickoff)?.state.status).not.toBe("terminal");
     expect(children(records)).toEqual([]);
+    // The transcript says where the run stopped, though the run had nothing to show.
+    const transcript = await entries(harness, await conversationOf(harness, kickoff));
+    expect(transcript.at(-1)?.kind).toBe("key.interrupt");
   });
 
   it("interrupts one context only: the successor waiting on it keeps waiting", async () => {

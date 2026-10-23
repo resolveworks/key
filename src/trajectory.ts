@@ -90,6 +90,8 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Component[] {
       return [note("── context reset ──")];
     case "pi.compaction":
       return [note("── compacted ──")];
+    case "key.interrupt":
+      return [note("── interrupted ──", style.accent)];
     default:
       return [];
   }
@@ -137,7 +139,10 @@ function assistantBlocks(
     blocks.push(toolBox({ name: block.name, status: "running", args: block.arguments }));
   }
   const failure = stopReasonText(message);
-  if (failure !== "") blocks.push(new Text(style.error(failure), 1, 0));
+  // A cut-off answer says so; one with nothing to show leaves that to the interrupt's own note.
+  if (failure !== "" && !(message.stopReason === "aborted" && blocks.length === 0)) {
+    blocks.push(new Text(style.error(failure), 1, 0));
+  }
   return blocks;
 }
 
@@ -249,8 +254,8 @@ function renderDiff(patch: string): string {
     .join("\n");
 }
 
-function note(text: string): Component {
-  return new Text(style.dim(text), 1, 0);
+function note(text: string, paint: (text: string) => string = style.dim): Component {
+  return new Text(paint(text), 1, 0);
 }
 
 function textOf(

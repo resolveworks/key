@@ -205,6 +205,12 @@ describe("transcript", () => {
     expect(failure("toolUse")).not.toMatch(/aborted|truncated|Error/);
   });
 
+  it("an aborted answer with nothing to show leaves the marker to the interrupt note", () => {
+    const rendered = text(view([answer([], "aborted"), entry("key.interrupt")]));
+    expect(rendered).toContain("interrupted");
+    expect(rendered).not.toContain("Operation aborted");
+  });
+
   it("an empty transcript says so", () => {
     expect(text(view([]))).toContain("empty transcript");
   });
@@ -213,8 +219,9 @@ describe("transcript", () => {
     expect(lines(view([user("hello")])).at(-1)).toBe("");
   });
 
-  it("a reset and a compaction each render a note", () => {
+  it("a reset, a compaction and an interrupt each render a note", () => {
     expect(text(view([entry("pi.reset")]))).toContain("context reset");
     expect(text(view([entry("pi.compaction")]))).toContain("compacted");
+    expect(text(view([entry("key.interrupt")]))).toContain("interrupted");
   });
 });

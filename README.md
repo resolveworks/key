@@ -69,7 +69,8 @@ into the parent's successor.
 
 An **interrupt** aborts one context's run where it stands. The context parks
 without a terminus — no answer, no minted forks — so whoever waits on it keeps
-waiting; nothing else in the cascade changes. A message to its conversation
+waiting; nothing else in the cascade changes. The transcript records the
+interrupt where it landed. A message to its conversation
 continues the work as a fresh context, and forks the interrupted run had recorded
 mint at that context's terminus.
 
