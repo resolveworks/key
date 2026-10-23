@@ -108,13 +108,14 @@ export async function open(base: string): Promise<void> {
   const openConversation = (): number | undefined =>
     mode.kind === "view" && mode.view.kind === "transcript" ? mode.view.id : undefined;
 
-  /** What `/new` would leave: the open conversation's directory, or — from the composer — the
-   * target it already carries. The default it takes and the ghost on the line both read it,
-   * so neither can name a place the other would not run. */
+  /** What `/new` would leave: the open conversation's directory — a child's worktree answered
+   * by its cascade's kickoff — or, from the composer, the target it already carries. The default
+   * it takes and the ghost on the line both read it, so neither can name a place the other
+   * would not run. */
   const leaving = (): { readonly cwd: string } | undefined => {
     const here = place();
     return here.kind === "transcript"
-      ? summaries.find((summary) => summary.id === here.id)
+      ? { cwd: inheritCwd(summaries, here.id) }
       : { cwd: here.cwd ?? "" };
   };
 
@@ -485,6 +486,19 @@ export function freshCwd(
   client: string,
 ): string {
   return named ?? (leaving?.cwd || client);
+}
+
+/** What a conversation hands a fresh trajectory: its own directory at its cascade's head — and
+ * below the head, the head's own, for the only directory below a head is a forked child's
+ * worktree, and a `/new` from a child continues the project, not its checkout. */
+export function inheritCwd(summaries: readonly Summary[], id: number): string {
+  const at = summaries.findIndex((summary) => summary.id === id);
+  const open = summaries[at];
+  if (open === undefined || open.depth === 0) return open?.cwd ?? "";
+  // The list is the graph flattened: one contiguous block per cascade, its kickoff the depth-0
+  // line at its head — the first one at or before this conversation is its own.
+  const kickoff = summaries.slice(0, at + 1).findLastIndex((summary) => summary.depth === 0);
+  return summaries[kickoff]?.cwd ?? open.cwd;
 }
 
 /** One line of the list: the cascade's depth as indentation, two spaces a level, ahead of

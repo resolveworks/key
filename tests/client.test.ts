@@ -2,7 +2,7 @@ import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { cycle, freshCwd, keybinds, line, stepList, targetCwd } from "../src/client.ts";
+import { cycle, freshCwd, inheritCwd, keybinds, line, stepList, targetCwd } from "../src/client.ts";
 import { dot } from "../src/footer.ts";
 import type { Summary } from "../src/host.ts";
 import { style } from "../src/theme.ts";
@@ -13,6 +13,13 @@ const summary = (id: number, running: boolean, depth = 0): Summary => ({
   cwd: "/key/repo",
   running,
   depth,
+});
+
+/** A forked child's conversation, as the host lists it: depth 1 under its kickoff, its cwd the
+ * worktree its name minted — elsewhere than the checkout it was cut from. */
+const child = (id: number, name: string, running = false): Summary => ({
+  ...summary(id, running, 1),
+  cwd: `/key/worktrees/${name}`,
 });
 
 // The host lists by cascade, newest cascade first; parked contexts stay in the list but never
@@ -160,6 +167,32 @@ describe("freshCwd", () => {
   test("with nothing to abandon — or a cwd it never wrote — the client's own directory", () => {
     expect(freshCwd(undefined, undefined, client)).toBe(client);
     expect(freshCwd(undefined, { ...summary(3, true), cwd: "" }, client)).toBe(client);
+  });
+});
+
+describe("inheritCwd", () => {
+  test("a conversation in its own checkout hands that checkout", () => {
+    expect(inheritCwd([summary(1, true), child(2, "fix")], 1)).toBe("/key/repo");
+  });
+
+  test("a child hands its cascade's kickoff, not its worktree", () => {
+    expect(inheritCwd([summary(1, true), child(2, "fix")], 2)).toBe("/key/repo");
+  });
+
+  test("a child hands its own cascade's kickoff, not the newer block's", () => {
+    const listed = [
+      { ...summary(9, true), cwd: "/key/other" },
+      child(10, "late"),
+      summary(1, false),
+      child(2, "fix", true),
+      child(3, "also"),
+    ];
+    expect(inheritCwd(listed, 3)).toBe("/key/repo");
+    expect(inheritCwd(listed, 10)).toBe("/key/other");
+  });
+
+  test("a conversation the host never listed hands nothing", () => {
+    expect(inheritCwd([summary(1, true)], 7)).toBe("");
   });
 });
 
