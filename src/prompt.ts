@@ -1,6 +1,6 @@
 // The prompt: its completions — the client's slash commands, answered here, and every path, tab
-// completion and @file suggestions alike, answered by the host, whose filesystem is the one the
-// trajectories run on — and its input, which ghosts where a bare `/new` would run.
+// completion and @file suggestions alike, answered by the host, whose filesystem the trajectories
+// run on — and its input, which ghosts where a bare `/new` would run, one tab from typed.
 
 import {
   type AutocompleteProvider,
@@ -23,27 +23,42 @@ const commands: SlashCommand[] = [
   { name: "new", description: "start fresh" },
 ];
 
-/** The client's provider: `complete` is the host's answer for one line of prompt. */
+/** The ghost's one grammar, for both of its readers: the line is `/new` alone — a path of its
+ * own answers the question — with the cursor on its end, the space tab-completion leaves included. */
+const ghosted = (lines: string[], line: number, col: number): boolean =>
+  line === 0 && lines.length === 1 && /^\/new ?$/.test(lines[0] ?? "") && col === lines[0].length;
+
+/** The client's provider: `complete` answers one line of prompt on the host, `ghost` the default a tab accepts. */
 export function provider(
   complete: (
     text: string,
     force: boolean,
     signal: AbortSignal,
   ) => Promise<AutocompleteSuggestions | null>,
+  ghost: () => string,
 ): AutocompleteProvider {
   // The library's provider kept for its text grammar alone: an unforced line that starts with "/"
   // is its command branch, and the client's commands are the only ones. No path is ever answered
   // against this filesystem.
   const local = new CombinedAutocompleteProvider(commands, "");
+  // Where a tab accepts the ghost: its argument seat, the space typed. Nowhere else does a forced
+  // tab land dead — a bare `/new` the editor completes as a command, the rest the library gates.
+  const accepts = (lines: string[], line: number, col: number): boolean =>
+    ghosted(lines, line, col) && lines[line].endsWith(" ");
   return {
     async getSuggestions(lines, cursorLine, cursorCol, options) {
+      if (options.force === true && accepts(lines, cursorLine, cursorCol))
+        // The drawn default becomes the typed argument, without asking the host: one suggestion,
+        // so the editor applies it outright, the empty prefix landing it after the space.
+        return { items: [{ value: ghost(), label: ghost() }], prefix: "" };
       const text = (lines[cursorLine] ?? "").slice(0, cursorCol);
       return options.force !== true && text.trimStart().startsWith("/")
         ? local.getSuggestions(lines, cursorLine, cursorCol, options)
         : complete(text, options.force ?? false, options.signal);
     },
     applyCompletion: (...args) => local.applyCompletion(...args),
-    shouldTriggerFileCompletion: (...args) => local.shouldTriggerFileCompletion(...args),
+    shouldTriggerFileCompletion: (...args) =>
+      accepts(...args) || local.shouldTriggerFileCompletion(...args),
   };
 }
 
@@ -59,11 +74,8 @@ export class Prompt extends Editor {
 
   render(width: number): string[] {
     const lines = super.render(width);
-    const text = this.getText();
     const cursor = this.getCursor();
-    // Only the command itself, typed to its end: a path of its own answers the question, and a
-    // cursor moved away means the ghost would not sit where the argument goes.
-    if (!/^\/new ?$/.test(text) || cursor.line !== 0 || cursor.col !== text.length) return lines;
+    if (!ghosted(this.getLines(), cursor.line, cursor.col)) return lines;
     // The cursor's one highlighted cell closes the typed command; the ghost takes the blank room
     // behind it, so the line keeps its width and the box around it never moves.
     const cell = CURSOR_MARKER + renderFakeCursor(" ");

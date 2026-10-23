@@ -152,7 +152,7 @@ export async function open(base: string): Promise<void> {
       throw error;
     }
   };
-  prompt.setAutocompleteProvider(provider(complete));
+  prompt.setAutocompleteProvider(provider(complete, freshDefault));
 
   /** The composer's draft — the editor's text while the composer is open, its store while it is
    * covered. Text is what makes the composer a place; the ring asks for it. */
