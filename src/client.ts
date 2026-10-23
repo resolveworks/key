@@ -60,7 +60,7 @@ type View =
   | { readonly kind: "new"; readonly cwd?: string }
   | { readonly kind: "transcript"; readonly id: number };
 
-/** What the screen shows: one view, or the resume list covering the view it left — escape
+/** What the screen shows: one view, or the list covering the view it left — escape
  * returns there, draft intact. */
 type Mode =
   | { readonly kind: "view"; readonly view: View }
@@ -259,7 +259,7 @@ export async function open(base: string): Promise<void> {
     render();
   };
 
-  /** Cover the screen with the resume list; the view beneath keeps its draft for the return. */
+  /** Cover the screen with the list; the view beneath keeps its draft for the return. */
   const showList = (): void => {
     mode = { kind: "list", back: place(), selected: undefined };
     notice = undefined;
@@ -325,7 +325,7 @@ export async function open(base: string): Promise<void> {
   };
 
   prompt.onSubmit = (text: string): void => {
-    if (text.trim() === "/resume") {
+    if (text.trim() === "/list") {
       spend();
       showList();
       return;
@@ -481,7 +481,7 @@ export function freshCwd(
   return named ?? (leaving?.cwd || client);
 }
 
-/** One line of the resume list: the cascade's depth as indentation, two spaces a level, ahead of
+/** One line of the list: the cascade's depth as indentation, two spaces a level, ahead of
  * the running dot, then the directory and the prompt. */
 export function line(summary: Summary): string {
   return `${"  ".repeat(summary.depth)}${dot(summary.running)} ${

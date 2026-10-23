@@ -19,7 +19,7 @@ import {
 import { style } from "./theme.ts";
 
 const commands: SlashCommand[] = [
-  { name: "resume", description: "list past conversations" },
+  { name: "list", description: "list past conversations" },
   { name: "new", description: "start fresh" },
 ];
 

@@ -18,9 +18,9 @@ const ghost = () => "~/somewhere";
 describe("provider", () => {
   test("an unforced slash line completes the client's own commands, never asking the host", async () => {
     const complete = vi.fn();
-    const suggestions = await provider(complete, ghost).getSuggestions(["/re"], 0, 3, { signal });
+    const suggestions = await provider(complete, ghost).getSuggestions(["/li"], 0, 3, { signal });
     expect(complete).not.toHaveBeenCalled();
-    expect(suggestions?.items.map((item) => item.value)).toContain("resume");
+    expect(suggestions?.items.map((item) => item.value)).toContain("list");
   });
 
   test("every other line is the host's, as it stands before the cursor", async () => {
@@ -30,11 +30,11 @@ describe("provider", () => {
     expect(typed).toBe(answer);
 
     // Tab on a slash line is a forced completion: a path, not a command, so still the host's.
-    const forced = await provider(complete, ghost).getSuggestions(["/re"], 0, 3, {
+    const forced = await provider(complete, ghost).getSuggestions(["/li"], 0, 3, {
       signal,
       force: true,
     });
-    expect(complete).toHaveBeenNthCalledWith(2, "/re", true, signal);
+    expect(complete).toHaveBeenNthCalledWith(2, "/li", true, signal);
     expect(forced).toBe(answer);
   });
 
@@ -105,7 +105,7 @@ describe("Prompt", () => {
 
   test("any other line draws no ghost", () => {
     const prompt = input();
-    for (const text of ["/new ~/elsewhere", "/resume", "hello", ""]) {
+    for (const text of ["/new ~/elsewhere", "/list", "hello", ""]) {
       prompt.setText(text);
       expect(prompt.render(40).some((l) => l.includes("/key/repo"))).toBe(false);
     }
