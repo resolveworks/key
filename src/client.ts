@@ -399,13 +399,18 @@ export function freshCwd(
   return named ?? (abandoned?.cwd || client);
 }
 
+/** One line of the resume list: the cascade's depth as indentation, two spaces a level, ahead of
+ * the running dot, then the directory and the prompt. */
+export function line(summary: Summary): string {
+  return `${"  ".repeat(summary.depth)}${dot(summary.running)} ${
+    summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `
+  }${summary.label}`;
+}
+
 /** One selectable transcript: what was asked, where it ran, and whether it runs now. */
 function makeList(summaries: readonly Summary[]): SelectList {
   return new SelectList(
-    summaries.map((summary) => ({
-      value: String(summary.id),
-      label: `${dot(summary.running)} ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`,
-    })),
+    summaries.map((summary) => ({ value: String(summary.id), label: line(summary) })),
     20,
     selectTheme,
     { minPrimaryColumnWidth: 64, maxPrimaryColumnWidth: 64 },

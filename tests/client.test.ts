@@ -2,18 +2,21 @@ import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { cycleRunning, freshCwd, keybinds, targetCwd } from "../src/client.ts";
+import { cycleRunning, freshCwd, keybinds, line, targetCwd } from "../src/client.ts";
+import { dot } from "../src/footer.ts";
 import type { Summary } from "../src/host.ts";
+import { style } from "../src/theme.ts";
 
-const summary = (id: number, running: boolean): Summary => ({
+const summary = (id: number, running: boolean, depth = 0): Summary => ({
   id,
   label: `ask ${id}`,
   cwd: "/key/repo",
-  depth: 0,
   running,
+  depth,
 });
 
-// The host lists newest first; parked contexts stay in the list but never in the ring.
+// The host lists by cascade, newest cascade first; parked contexts stay in the list but never in
+// the ring.
 const summaries = [summary(5, true), summary(4, false), summary(3, true), summary(1, true)];
 
 describe("cycleRunning", () => {
@@ -42,6 +45,17 @@ describe("cycleRunning", () => {
     const parked = [summary(2, false), summary(1, false)];
     expect(cycleRunning(parked, undefined, 1)).toBeUndefined();
     expect(cycleRunning(parked, 1, -1)).toBeUndefined();
+  });
+});
+
+describe("line", () => {
+  test("depth 0 sits flush left at the dot", () => {
+    expect(line(summary(4, false))).toBe(`${dot(false)} ${style.dim("repo")} · ask 4`);
+  });
+
+  test("each level of depth steps the dot in two spaces, the tail unchanged", () => {
+    expect(line(summary(4, false, 1))).toBe(`  ${dot(false)} ${style.dim("repo")} · ask 4`);
+    expect(line(summary(5, true, 2))).toBe(`    ${dot(true)} ${style.dim("repo")} · ask 5`);
   });
 });
 
