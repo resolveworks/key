@@ -1,5 +1,5 @@
-// A transcript: the human's words in a box, assistant text as markdown, thinking in italics, and
-// italics, and every tool call its own box whose background says how the call is going.
+// A transcript: the human's words in a box, assistant text as markdown, thinking in italics,
+// and every tool call its own box whose background says how the call is going.
 
 import {
   type AssistantMessage,

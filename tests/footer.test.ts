@@ -104,7 +104,6 @@ describe("footer", () => {
         contextWindow: 128_000,
         model: "deepseek-flash",
         thinkingLevel: "high" as const,
-        thinkingLevels: ["off", "low", "high", "max"] as const,
       },
       true,
     );
@@ -138,7 +137,6 @@ describe("footer", () => {
         contextWindow: 128_000,
         model: "deepseek-flash",
         thinkingLevel: "high",
-        thinkingLevels: ["off", "low", "high", "max"],
       },
       true,
     );
@@ -150,7 +148,6 @@ describe("footer", () => {
       contextWindow: 128_000,
       model: "deepseek-flash",
       thinkingLevel: "high" as const,
-      thinkingLevels: ["off", "low", "high", "max"] as const,
     };
     const footer = new Footer();
     footer.watch(view([answered(1200, 8600)]), stats, true);

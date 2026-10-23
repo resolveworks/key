@@ -18,8 +18,6 @@ export type Stats = {
   readonly model: string;
   /** The level the next request runs at. */
   readonly thinkingLevel: ModelThinkingLevel;
-  /** The levels that model can run at, in order. */
-  readonly thinkingLevels: readonly ModelThinkingLevel[];
 };
 
 /** Compact token counts: 812, 6.4k, 21k, 1.3M. */

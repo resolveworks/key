@@ -3,14 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import {
-  type AnyModel,
-  type Api,
-  getSupportedThinkingLevels,
-  type Model,
-  type Models,
-  type ModelThinkingLevel,
-} from "@earendil-works/pi-ai";
+import type { Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AgentDoc,
@@ -144,7 +137,6 @@ export class Host {
       contextWindow: model?.contextWindow ?? 0,
       model: ref.modelId,
       thinkingLevel: agent?.thinkingLevel ?? this.#options.thinkingLevel(),
-      thinkingLevels: levelsOf(model),
     };
   }
 
@@ -337,11 +329,6 @@ export class Host {
     await this.#harness.close(context);
     await closed;
   }
-}
-
-/** The levels a model can run at, in order; a model that cannot think runs at `off` alone. */
-export function levelsOf(model: AnyModel | undefined): readonly ModelThinkingLevel[] {
-  return model === undefined ? ["off"] : getSupportedThinkingLevels(model as Model<Api>);
 }
 
 /** A working directory's branch, when it is a repository: the footer shows it beside the path. */

@@ -198,8 +198,6 @@ describe("host", () => {
     const answer = snapshot.entries.at(-1)?.model?.[0];
     expect(answer).toMatchObject({ role: "assistant", content: [{ text: "hello" }] });
     expect(stats).toMatchObject({ model: "deepseek-flash", thinkingLevel: "high" });
-    // The faux model cannot think, so `off` is the only level it offers.
-    expect(stats.thinkingLevels).toEqual(["off"]);
     expect(stats.contextWindow).toBeGreaterThan(0);
     await frames.close();
   });

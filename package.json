@@ -7,9 +7,6 @@
     "client": "node --experimental-eventsource src/main.ts client",
     "check": "biome check && tsc",
     "fix": "biome check --write",
-    "lint": "biome lint",
-    "format": "biome format --write",
-    "typecheck": "tsc",
     "test": "vitest run",
     "test:watch": "vitest"
   },
