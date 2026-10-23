@@ -10,6 +10,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "./agents.ts";
 import type { api } from "./api.ts";
+import { InterruptEntry } from "./entries.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { Host, type Summary } from "./host.ts";
@@ -70,7 +71,7 @@ describe("host", () => {
     host = new Host({
       models: () => models,
       storage: () => new MemoryStorage(),
-      extensions: [CodingTools, keySystem(git), Agents],
+      extensions: [CodingTools, keySystem(git).extension, Agents],
       port: 0,
       thinkingLevel: () => "high",
     });
@@ -179,9 +180,9 @@ describe("host", () => {
     );
     await app.request(`/api/conversations/${conversation.id}/abort`, { method: "POST" });
     const { view } = await transcript.until<Transcript>(({ view }: Transcript) =>
-      view.entries.some((entry) => entry.kind === "key.interrupt"),
+      view.entries.some((entry) => entry.kind === InterruptEntry.kind),
     );
-    expect(view.entries.at(-1)?.kind).toBe("key.interrupt");
+    expect(view.entries.at(-1)?.kind).toBe(InterruptEntry.kind);
     await transcript.close();
     await list.close();
   });

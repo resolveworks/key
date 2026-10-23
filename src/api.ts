@@ -1,5 +1,6 @@
 // The API: hono routes over the host. Bodies parse through TypeBox; both streams are SSE.
 
+import type { ConversationView } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
@@ -58,8 +59,8 @@ export function api(host: Host) {
         const watch = await host.watch(id);
         if (watch === undefined) return c.text("no such conversation", 404);
         return streamSSE(c, async (stream) => {
-          const send = async (view: unknown) =>
-            stream.writeSSE({ data: JSON.stringify({ view, stats: await host.stats(id) }) });
+          const send = async (view: ConversationView) =>
+            stream.writeSSE({ data: JSON.stringify({ view, stats: await host.stats(view) }) });
           await send(watch.value);
           watch.start((view) => send(view));
           stream.onAbort(() => void watch.stop());

@@ -1,18 +1,18 @@
-import { Type } from "@earendil-works/pi-ai";
+import { contentText, Type } from "@earendil-works/pi-ai";
 import {
   type ConversationId,
   configure,
   defineDoc,
-  defineEntry,
   defineExtension,
   defineTask,
   defineTool,
   type EntryId,
   type EntryRecord,
-  type Extension,
   section,
+  type TaskGraphNode,
   type TaskId,
 } from "@earendil-works/pi-durable";
+import { InterruptEntry } from "./entries.ts";
 import type { Git } from "./git.ts";
 import { branchFor, CHILD_NAME, ensureWorktree, type Worktree } from "./worktree.ts";
 
@@ -49,23 +49,25 @@ const ForkRecord = defineDoc({
   checkpointWhen: (value) => value.forks.length === 0,
 });
 
+/** The task kind key defines, and the phase an interrupted context waits in. */
+const KEY_TASK = "key.task";
+const PARKED = "parked";
+
 type KeyTaskState =
   | { readonly phase: "wait" }
   | { readonly phase: "run"; readonly conversationId?: ConversationId }
-  | { readonly phase: "parked" };
-
-/**
- * Where an interrupt landed: the transcript's own record that a context parked here, so the pause
- * says who made it even when the run had nothing to show yet.
- */
-const InterruptEntry = defineEntry("key.interrupt");
+  | { readonly phase: typeof PARKED };
 
 /** The answer of a run: the final assistant text of the entry its submission settled on. */
 const answerOf = (entries: readonly EntryRecord[], entryId: EntryId): string => {
   const message = entries.find((entry) => entry.id === entryId)?.model?.[0];
   if (message?.role !== "assistant") throw new Error(`answer ${entryId} has no assistant message`);
-  return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+  return contentText(message.content, "");
 };
+
+/** A parked context: live, without a terminus, so whoever waits on it keeps waiting. */
+export const isParkedContext = (node: TaskGraphNode): boolean =>
+  node.kind === KEY_TASK && node.state.status === "running" && node.state.phase === PARKED;
 
 /**
  * One context: a prompt and the conversation it runs in — a fresh one of its own, or the one a
@@ -75,7 +77,7 @@ const answerOf = (entries: readonly EntryRecord[], entryId: EntryId): string => 
  */
 export const keyTask = (git: Git) => {
   const task = defineTask<KeyTaskInput, KeyTaskState, string>({
-    name: "key.task",
+    name: KEY_TASK,
     version: 1,
     initial: () => ({ phase: "wait" }),
     phases: {
@@ -160,12 +162,12 @@ export const keyTask = (git: Git) => {
         );
         const settled = await submission.wait(context);
         if (settled.status === "unanswered" && settled.reason === "aborted") {
-          // An interrupted context parks: live, without a terminus, so whoever waits on it keeps
-          // waiting. The checkpoint keeps it parked across restarts; aborting the task ends it. The
-          // transcript records the interrupt, which a run that streamed nothing would not show.
+          // An interrupted context parks. The checkpoint keeps it parked across restarts; aborting
+          // the task ends it. The transcript records the interrupt, which a run that streamed
+          // nothing would not show.
           await runtime.commit(async (tx) => {
             await tx.appendEntry(InterruptEntry, handle.id, {});
-            return { status: "running", checkpoint: { phase: "parked" } };
+            return { status: "running", checkpoint: { phase: PARKED } };
           }, context);
           return;
         }
@@ -213,7 +215,7 @@ export const keyTask = (git: Git) => {
           return { status: "terminal", outcome: { status: "completed", result } };
         }, context);
       },
-      parked: async (_record, _runtime, context) => {
+      [PARKED]: async (_record, _runtime, context) => {
         await new Promise<void>((resolve) =>
           context.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
         );
@@ -252,19 +254,24 @@ export const Fork = defineTool({
   },
 });
 
-/** The host's system: key with its git bound. */
-export const keySystem = (git: Git): Extension =>
-  defineExtension({
-    name: "key",
-    // Installed after the coding tools, so the framing renders ahead of project context. Untagged.
-    sections: [
-      section(
-        "preamble",
-        () =>
-          "You are an expert coding assistant operating inside key, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
-        { tag: false },
-      ),
-    ],
-    tasks: [keyTask(git)],
-    tools: [Fork],
-  });
+/** The host's system: key and its one task definition, with git bound. */
+export const keySystem = (git: Git) => {
+  const task = keyTask(git);
+  return {
+    extension: defineExtension({
+      name: "key",
+      // Installed after the coding tools, so the framing renders ahead of project context. Untagged.
+      sections: [
+        section(
+          "preamble",
+          () =>
+            "You are an expert coding assistant operating inside key, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+          { tag: false },
+        ),
+      ],
+      tasks: [task],
+      tools: [Fork],
+    }),
+    task,
+  };
+};

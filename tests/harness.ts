@@ -21,10 +21,13 @@ import {
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
-import { type KeyTaskInput, keySystem, keyTask } from "../src/system.ts";
+import { type KeyTaskInput, keySystem } from "../src/system.ts";
 import { FakeEnv, fakeGit } from "./git.ts";
 
 const context = BACKGROUND_CONTEXT;
+
+/** The key of the fake git: one definition of its task, installed by every setup here. */
+const key = keySystem(fakeGit);
 
 /** The faux provider's default model, the one every conversation here runs. */
 export const MODEL = { provider: "faux", modelId: "faux-1" } as const;
@@ -43,13 +46,13 @@ export function keySetup(): KeySetup {
   models.setProvider(faux.provider);
   const registry = createRegistry();
   registry.install(CodingTools);
-  registry.install(keySystem(fakeGit));
+  registry.install(key.extension);
   registry.install(Agents);
   return { faux, models, registry, reports: [] };
 }
 
 /** The key.task of the fake git: the kind tests create, behavior resolved from the installed key. */
-export const KeyTask = keyTask(fakeGit);
+export const KeyTask = key.task;
 
 /** Open one host process's Harness over `storage`; closing it and opening another on the same setup is a restart. */
 export function openKey(
