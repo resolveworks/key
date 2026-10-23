@@ -1,3 +1,5 @@
+<!-- biome-ignore-all format: keep the blank line before the fork list -->
+
 # Key
 
 **Cascading contexts.** Information only flows forward. There is no call/return
@@ -46,6 +48,7 @@ child contexts, and then ends. It never waits for a child, never resumes, and
 never receives a child's result.
 
 When a context forks, it mints:
+
 - a child task for each child context, to run in a fresh conversation of its own;
 - a successor task, to run in a fresh conversation of its own once those children
   settle.

@@ -24,7 +24,7 @@ const usage = {
   tools: {},
 };
 
-const answered = (input: number, cacheRead: number): EntryRecord =>
+const answered = (input: number, cacheRead: number, timestamp = 0): EntryRecord =>
   ({
     id: 1,
     kind: "pi.assistant",
@@ -41,6 +41,7 @@ const answered = (input: number, cacheRead: number): EntryRecord =>
           totalTokens: input + cacheRead + 5,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
+        timestamp,
       },
     ],
   }) as unknown as EntryRecord;
@@ -69,9 +70,24 @@ describe("footer", () => {
     expect(spent.cost.total).toBeCloseTo(0.0017);
   });
 
-  test("the context is the newest answered turn's whole prompt", () => {
-    // input plus what it read from and wrote to the cache: what the next request starts from.
-    expect(contextTokens(view([answered(400, 9600)]))).toBe(10_000);
+  test("the context is pi-ai's estimate over the messages the entries project", () => {
+    expect(contextTokens(view([answered(400, 9600)]))).toBe(10_005);
+  });
+
+  test("a compaction summary invalidates the usage from before it", () => {
+    const compaction = {
+      id: 2,
+      kind: "pi.compaction",
+      model: [
+        {
+          role: "user",
+          content:
+            "The conversation history before this point was compacted into the following summary:\n\n<summary>\nold work\n</summary>",
+          timestamp: 1,
+        },
+      ],
+    } as unknown as EntryRecord;
+    expect(contextTokens(view([compaction, answered(400, 9600)]))).toBeLessThan(200);
   });
 
   test("with nothing answered yet the context is an estimate of what was sent", () => {

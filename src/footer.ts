@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import type { ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { ConversationView, UsageState } from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { style } from "./theme.ts";
@@ -58,6 +59,9 @@ function add(total: Usage, usage: Usage): void {
   total.cacheRead += usage.cacheRead;
   total.cacheWrite += usage.cacheWrite;
   total.totalTokens += usage.totalTokens;
+  if (usage.cacheWrite1h !== undefined)
+    total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
+  if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
   total.cost.input += usage.cost.input;
   total.cost.output += usage.cost.output;
   total.cost.cacheRead += usage.cost.cacheRead;
@@ -65,34 +69,9 @@ function add(total: Usage, usage: Usage): void {
   total.cost.total += usage.cost.total;
 }
 
-/**
- * The context the next request carries: every message the active entries project. An answered turn
- * reports its prompt as input plus what it read from and wrote to the cache, so the newest such
- * report is the size the next request starts from; before any, an estimate is all there is.
- */
+/** The context the next request carries: pi-ai's estimate over the messages the entries project. */
 export function contextTokens(view: ConversationView): number {
-  const messages = view.entries.flatMap((entry) =>
-    entry.kind === "pi.reset" || entry.kind === "pi.compaction" ? [] : (entry.model ?? []),
-  );
-  const answered = messages.findLast(
-    (message) =>
-      message.role === "assistant" &&
-      message.stopReason !== "aborted" &&
-      message.stopReason !== "error" &&
-      message.usage.input + message.usage.cacheRead + message.usage.cacheWrite > 0,
-  );
-  if (answered?.role === "assistant")
-    return answered.usage.input + answered.usage.cacheRead + answered.usage.cacheWrite;
-  return messages.reduce((sum, message) => sum + estimate(message), 0);
-}
-
-/** Rule of thumb: four characters a token, an object's own overhead beside it. */
-function estimate(value: unknown): number {
-  if (typeof value === "string") return Math.ceil(value.length / 4);
-  if (value === null || typeof value !== "object") return 0;
-  if (Array.isArray(value))
-    return value.reduce((sum: number, item: unknown) => sum + estimate(item), 0);
-  return Object.values(value).reduce((sum: number, item: unknown) => sum + estimate(item), 0) + 4;
+  return estimateContextTokens(view.entries.flatMap((entry) => entry.model ?? [])).tokens;
 }
 
 /** The newest cache hit rate: the share of the last answered turn's prompt that it read from cache. */
