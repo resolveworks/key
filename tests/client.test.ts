@@ -29,6 +29,13 @@ describe("cycleRunning", () => {
     expect(cycleRunning(summaries, 3, -1)).toBe(5);
   });
 
+  test("the ring follows the tree, crossing cascade blocks whole", () => {
+    // Two cascades, newest block first: each kickoff with a running fork beneath it.
+    const tree = [summary(2, true), summary(5, true, 1), summary(1, true), summary(3, true, 1)];
+    expect(cycleRunning(tree, 5, 1)).toBe(1); // off the top cascade into the older one
+    expect(cycleRunning(tree, 3, 1)).toBe(2); // the newest id wraps to the list's top
+  });
+
   test("from any other view it lands on the first running forward, the last backward", () => {
     expect(cycleRunning(summaries, undefined, 1)).toBe(5);
     expect(cycleRunning(summaries, undefined, -1)).toBe(1);
