@@ -19,8 +19,6 @@ export type Stats = {
   readonly thinkingLevel: ModelThinkingLevel;
   /** The levels that model can run at, in order. */
   readonly thinkingLevels: readonly ModelThinkingLevel[];
-  /** Whether the conversation's chain still streams: a task of it runs, or one it waits on. */
-  readonly running: boolean;
 };
 
 /** Compact token counts: 812, 6.4k, 21k, 1.3M. */
@@ -126,7 +124,8 @@ export class Footer implements Component {
   #window = 0;
   #model = "";
   #thinking = "";
-  #running: boolean | undefined;
+  /** The task graph's verdict on this conversation, drawn beside the list's dot from the same graph. */
+  #running = false;
 
   constructor(cwd: string) {
     this.#cwd = cwd;
@@ -143,18 +142,18 @@ export class Footer implements Component {
     this.#window = 0;
     this.#model = "";
     this.#thinking = "";
-    this.#running = undefined;
+    this.#running = false;
   }
 
-  /** Draw one transcript: where it runs, then what it has spent while its chain lives. */
-  watch(view: ConversationView, stats: Stats): void {
+  /** Draw one transcript: where it runs, what it has spent, and whether its chain still streams. */
+  watch(view: ConversationView, stats: Stats, running: boolean): void {
     this.#view = view;
     this.#cwd = (view.docs["pi.agent"] as { readonly cwd?: string } | undefined)?.cwd ?? "";
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
     this.#model = stats.model;
     this.#thinking = stats.thinkingLevel === "off" ? "thinking off" : stats.thinkingLevel;
-    this.#running = stats.running;
+    this.#running = running;
   }
 
   render(width: number): string[] {
@@ -175,7 +174,7 @@ export class Footer implements Component {
     if (usage.cost.total) spent.push(`$${usage.cost.total.toFixed(3)}`);
     spent.push(this.#context(contextTokens(this.#view)));
 
-    const left = `${dot(this.#running === true)} ${spent.join(" ")}`;
+    const left = `${dot(this.#running)} ${spent.join(" ")}`;
     const leftWidth = visibleWidth(left);
     const name = truncateToWidth(
       `${this.#model}${this.#thinking === "" ? "" : ` • ${this.#thinking}`}`,

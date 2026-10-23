@@ -79,6 +79,10 @@ export async function open(base: string): Promise<void> {
   let watching: { readonly stop: () => void } | undefined;
   let watchedId: number | undefined;
 
+  /** The task graph's verdict on one conversation: the list's dot and everything else read it here. */
+  const runs = (id: number): boolean =>
+    summaries.some((summary) => summary.id === id && summary.running);
+
   /** Replace the document; streaming appends, a view switch starts a new one. */
   const show = (components: readonly Component[]): void => {
     document.clear();
@@ -150,7 +154,8 @@ export async function open(base: string): Promise<void> {
         footer.show(summary?.cwd ?? process.cwd());
       } else {
         show(transcript(view));
-        if (stats !== undefined) footer.watch(view, stats);
+        // The list's dot and the footer's are one answer from one graph, read in one place.
+        if (stats !== undefined) footer.watch(view, stats, runs(page.id));
       }
     }
     if (notice !== undefined) show([new Text(style.error(notice), 0, 0)]);
@@ -253,7 +258,7 @@ export async function open(base: string): Promise<void> {
     // Esc interrupts the open context's run, as pi's esc esc does. Only an empty prompt: with a
     // draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
     if (matchesKey(data, "escape") && prompt.getText() === "") {
-      if (mode.kind === "transcript" && stats?.running === true) void interrupt();
+      if (mode.kind === "transcript" && runs(mode.id)) void interrupt();
     }
     return undefined;
   });

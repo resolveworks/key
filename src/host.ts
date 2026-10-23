@@ -123,7 +123,7 @@ export class Host {
     return conversation?.watch(context);
   }
 
-  /** What a view cannot say: the branch, the context window, the model, and whether its chain lives on. */
+  /** What a view cannot say: the branch, the context window, the model and its level. */
   stats(id: number): Promise<Stats> {
     return this.#statsOf(id);
   }
@@ -305,14 +305,12 @@ export class Host {
     const ref = agent?.model ?? MODEL;
     const model = this.#options.models().getModel(ref.provider, ref.modelId);
     const branch = await branchOf(agent?.cwd);
-    const running = this.#running();
     return {
       ...(branch === undefined ? {} : { branch }),
       contextWindow: model?.contextWindow ?? 0,
       model: ref.modelId,
       thinkingLevel: agent?.thinkingLevel ?? THINKING_LEVEL,
       thinkingLevels: levelsOf(model),
-      running: running.has(id),
     };
   }
 

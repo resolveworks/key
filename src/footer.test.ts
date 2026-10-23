@@ -81,14 +81,17 @@ describe("footer", () => {
 
   test("two dim lines: where it runs, and what it spent against the window", () => {
     const footer = new Footer("/key/repo");
-    footer.watch(view([answered(1200, 8600)], "/key/repo"), {
-      branch: "main",
-      contextWindow: 128_000,
-      model: "deepseek-flash",
-      thinkingLevel: "high" as const,
-      thinkingLevels: ["off", "low", "high", "max"] as const,
-      running: true,
-    });
+    footer.watch(
+      view([answered(1200, 8600)], "/key/repo"),
+      {
+        branch: "main",
+        contextWindow: 128_000,
+        model: "deepseek-flash",
+        thinkingLevel: "high" as const,
+        thinkingLevels: ["off", "low", "high", "max"] as const,
+      },
+      true,
+    );
     const [place, spent] = footer.render(100);
     expect(place).toContain("/key/repo");
     expect(place).toContain("(main)");
@@ -106,13 +109,16 @@ describe("footer", () => {
 
   test("a transcript draws exactly where it runs and what it spent", () => {
     const footer = new Footer("/key/repo");
-    footer.watch(view([answered(1200, 8600)]), {
-      contextWindow: 128_000,
-      model: "deepseek-flash",
-      thinkingLevel: "high",
-      thinkingLevels: ["off", "low", "high", "max"],
-      running: true,
-    });
+    footer.watch(
+      view([answered(1200, 8600)]),
+      {
+        contextWindow: 128_000,
+        model: "deepseek-flash",
+        thinkingLevel: "high",
+        thinkingLevels: ["off", "low", "high", "max"],
+      },
+      true,
+    );
     expect(footer.render(100)).toHaveLength(2);
   });
 
@@ -124,10 +130,10 @@ describe("footer", () => {
       thinkingLevels: ["off", "low", "high", "max"] as const,
     };
     const footer = new Footer("/key/repo");
-    footer.watch(view([answered(1200, 8600)]), { ...stats, running: true });
+    footer.watch(view([answered(1200, 8600)]), stats, true);
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^● ↑1\.2k/);
 
-    footer.watch(view([answered(1200, 8600)]), { ...stats, running: false });
+    footer.watch(view([answered(1200, 8600)]), stats, false);
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^○ ↑1\.2k/);
   });
 });
