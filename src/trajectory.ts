@@ -14,7 +14,6 @@ import type {
   ToolSlot,
 } from "@earendil-works/pi-durable";
 import { Box, type Component, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { InterruptEntry } from "./entries.ts";
 import { shortenHome } from "./footer.ts";
 import { diff, markdown, style } from "./theme.ts";
 
@@ -96,8 +95,6 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Component[] {
       return [note("── context reset ──")];
     case "pi.compaction":
       return [note("── compacted ──")];
-    case InterruptEntry.kind:
-      return [note("── interrupted ──", style.accent)];
     default:
       return [];
   }
@@ -145,10 +142,7 @@ function assistantBlocks(
     blocks.push(toolBox({ name: block.name, status: "running", args: block.arguments }));
   }
   const failure = stopReasonText(message);
-  // A cut-off answer says so; one with nothing to show leaves that to the interrupt's own note.
-  if (failure !== "" && !(message.stopReason === "aborted" && blocks.length === 0)) {
-    blocks.push(new Text(style.error(failure), 1, 0));
-  }
+  if (failure !== "") blocks.push(new Text(style.error(failure), 1, 0));
   return blocks;
 }
 

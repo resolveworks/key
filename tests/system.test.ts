@@ -3,7 +3,6 @@ import type { FauxProviderHandle } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { configure, type Harness, MemoryStorage, type TaskId } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InterruptEntry } from "../src/entries.ts";
 import { REPO } from "./git.ts";
 import {
   cascade,
@@ -291,9 +290,6 @@ describe("an interruption", () => {
     const records = await cascade(harness);
     expect(records.find((record) => record.id === kickoff)?.state.status).not.toBe("terminal");
     expect(children(records)).toEqual([]);
-    // The transcript says where the run stopped, though the run had nothing to show.
-    const transcript = await entries(harness, await conversationOf(harness, kickoff));
-    expect(transcript.at(-1)?.kind).toBe(InterruptEntry.kind);
   });
 
   it("interrupts one context only: the successor waiting on it keeps waiting", async () => {

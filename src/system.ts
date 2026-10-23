@@ -12,7 +12,6 @@ import {
   type TaskGraphNode,
   type TaskId,
 } from "@earendil-works/pi-durable";
-import { InterruptEntry } from "./entries.ts";
 import type { Git } from "./git.ts";
 import { branchFor, CHILD_NAME, ensureWorktree, type Worktree } from "./worktree.ts";
 
@@ -163,12 +162,11 @@ export const keyTask = (git: Git) => {
         const settled = await submission.wait(context);
         if (settled.status === "unanswered" && settled.reason === "aborted") {
           // An interrupted context parks. The checkpoint keeps it parked across restarts; aborting
-          // the task ends it. The transcript records the interrupt, which a run that streamed
-          // nothing would not show.
-          await runtime.commit(async (tx) => {
-            await tx.appendEntry(InterruptEntry, handle.id, {});
-            return { status: "running", checkpoint: { phase: PARKED } };
-          }, context);
+          // the task ends it.
+          await runtime.commit(
+            () => ({ status: "running", checkpoint: { phase: PARKED } }),
+            context,
+          );
           return;
         }
         if (settled.status !== "done" || settled.type !== "input") {

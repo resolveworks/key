@@ -10,7 +10,6 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "../src/agents.ts";
 import type { api } from "../src/api.ts";
-import { InterruptEntry } from "../src/entries.ts";
 import type { Stats } from "../src/footer.ts";
 import { git } from "../src/git.ts";
 import { Host, type Summary } from "../src/host.ts";
@@ -161,30 +160,6 @@ describe("host", () => {
       frame.some((item) => !item.running),
     );
     expect(parked.find((item) => item.id === running.id)?.running).toBe(false);
-    await list.close();
-  });
-
-  test("an interrupt records itself in the transcript, even when nothing streamed", async () => {
-    const hung = stuck();
-    faux.setResponses([hung.step]);
-
-    const list = new Frames(
-      (await app.request("/api/conversations")).body as ReadableStream<Uint8Array>,
-    );
-    await run("say hello");
-    const [conversation] = await list.until((frame: readonly Summary[]) => frame.length > 0);
-    await hung.reached;
-
-    const transcript = new Frames(
-      (await app.request(`/api/conversations/${conversation.id}`))
-        .body as ReadableStream<Uint8Array>,
-    );
-    await app.request(`/api/conversations/${conversation.id}/abort`, { method: "POST" });
-    const { view } = await transcript.until<Transcript>(({ view }: Transcript) =>
-      view.entries.some((entry) => entry.kind === InterruptEntry.kind),
-    );
-    expect(view.entries.at(-1)?.kind).toBe(InterruptEntry.kind);
-    await transcript.close();
     await list.close();
   });
 
