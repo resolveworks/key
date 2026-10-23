@@ -32,7 +32,7 @@ const index = `key host
 
   GET  /api/conversations              transcripts, then changes (SSE)
   GET  /api/conversations/:id          one transcript, then changes (SSE)
-  POST /api/run                        {prompt, cwd}: start a context in that directory
+  POST /api/run                        {prompt, cwd} → {conversation}: start a context in that directory
   POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a context
   POST /api/conversations/:id/abort     interrupt a context: abort its current run
@@ -94,8 +94,8 @@ export function api(host: Host) {
         validator("json", (body) => Parse(RunInput, body)),
         async (c) => {
           const { prompt, cwd } = c.req.valid("json");
-          const task = await host.run(cwd, prompt);
-          return c.json({ task }, 202);
+          const conversation = await host.run(cwd, prompt);
+          return c.json({ conversation }, 202);
         },
       )
       .post(

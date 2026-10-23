@@ -11,6 +11,7 @@ import {
   type AutocompleteSuggestions,
   type Component,
   Container,
+  Editor,
   isKeyRelease,
   type KeybindingsConfig,
   KeybindingsManager,
@@ -28,7 +29,7 @@ import { hc } from "hono/client";
 import type { api } from "./api.ts";
 import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
-import { Prompt, provider } from "./prompt.ts";
+import { provider } from "./prompt.ts";
 import { style } from "./theme.ts";
 import { transcript } from "./trajectory.ts";
 
@@ -89,8 +90,6 @@ export async function open(base: string): Promise<void> {
   let summaries: readonly Summary[] = [];
   let view: ConversationView | undefined;
   let stats: Stats | undefined;
-  /** The prompt of a trajectory we started; we open its conversation as soon as it appears. */
-  let pending: string | undefined;
   /** A failed action, shown once and replaced by whatever the state says next. */
   let notice: string | undefined;
   let starting = false;
@@ -110,7 +109,7 @@ export async function open(base: string): Promise<void> {
 
   /** What `/new` would leave: the open conversation's directory — a child's worktree answered
    * by its cascade's kickoff — or, from the composer, the target it already carries. The default
-   * it takes and the ghost on the line both read it, so neither can name a place the other
+   * it takes and the completion it offers both read it, so neither can name a place the other
    * would not run. */
   const leaving = (): { readonly cwd: string } | undefined => {
     const here = place();
@@ -119,8 +118,8 @@ export async function open(base: string): Promise<void> {
       : { cwd: here.cwd ?? "" };
   };
 
-  /** Where a bare `/new` would run — what it would leave, else the client's own — as the prompt
-   * ghosts it in the input, where the path argument would sit. */
+  /** Where a bare `/new` would run — what it would leave, else the client's own — carried by
+   * the command's own completion, so a tab types it. */
   const freshDefault = (): string => shortenHome(freshCwd(undefined, leaving(), process.cwd()));
 
   // The terminal owns the screen and the scrollback. Within a view the document only grows, so
@@ -128,11 +127,7 @@ export async function open(base: string): Promise<void> {
   // document and clears the dock and the footer, so the list owns a clean screen.
   const document = new Container();
   const dock = new Container();
-  const prompt = new Prompt(
-    tui,
-    { borderColor: style.borderMuted, selectList: selectTheme },
-    freshDefault,
-  );
+  const prompt = new Editor(tui, { borderColor: style.borderMuted, selectList: selectTheme });
   // The prompt's paths complete on the host: the trajectories run on its filesystem, not this one.
   // A superseded completion aborts its request, and the editor wants no answer rather than a crash.
   const complete = async (
@@ -154,7 +149,6 @@ export async function open(base: string): Promise<void> {
     }
   };
   prompt.setAutocompleteProvider(provider(complete, freshDefault));
-
   /** The composer's draft — the editor's text while the composer is open, its store while it is
    * covered. Text is what makes the composer a place; the ring asks for it. */
   const composerDraft = (): string =>
@@ -225,11 +219,7 @@ export async function open(base: string): Promise<void> {
       footer.clear();
     } else if (mode.view.kind === "new") {
       showPrompt();
-      show([
-        pending === undefined
-          ? new Text(style.dim("new trajectory · type to start"), 0, 0)
-          : new Text(style.dim("starting trajectory…"), 0, 0),
-      ]);
+      show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
       footer.show(mode.view.cwd ?? process.cwd());
     } else {
       const id = mode.view.id;
@@ -281,13 +271,14 @@ export async function open(base: string): Promise<void> {
   };
 
   /** Send one view's draft: a message to its conversation, or — from the composer — a fresh
-   * trajectory, opened the moment the host names its conversation. The draft leaves only when
-   * the host takes it; a failure leaves it typed, ready to retry. */
+   * trajectory, opening the conversation its answer names. The draft leaves only when the host
+   * takes it; a failure leaves it typed, ready to retry. */
   const send = async (from: View, text: string): Promise<void> => {
     const value = text.trim();
-    if (value === "" || starting || pending !== undefined) return;
+    if (value === "" || starting) return;
     starting = true;
     try {
+      let opened: number | undefined;
       if (from.kind === "transcript") {
         await call(() =>
           client.api.conversations[":id"].messages.$post({
@@ -299,14 +290,17 @@ export async function open(base: string): Promise<void> {
         // The trajectory runs where `/new` pointed it; only unnamed and uninherited does it
         // start where the client stands.
         const cwd = from.cwd ?? process.cwd();
-        await call(() => client.api.run.$post({ json: { prompt: value, cwd } }));
-        pending = value;
+        const body = await call(() => client.api.run.$post({ json: { prompt: value, cwd } }));
+        opened = (JSON.parse(body) as { conversation: number }).conversation;
       }
       // The text left its view: that draft is spent — the editor too, when it still shows it.
       if (nameOf(place()) === nameOf(from)) spend();
       else drafts.set(nameOf(from), "");
-      notice = undefined;
-      render();
+      if (opened !== undefined) swap({ kind: "transcript", id: opened });
+      else {
+        notice = undefined;
+        render();
+      }
     } catch (error) {
       notice = String(error);
       render();
@@ -334,8 +328,8 @@ export async function open(base: string): Promise<void> {
     const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());
     if (fresh !== null) {
       // A path names where the fresh trajectory runs; unnamed it keeps the directory of the
-      // place it leaves — the composer's own target, from the composer — the default the prompt
-      // ghosted while it was typed. Either way the directory answers here, at the prompt —
+      // place it leaves — the composer's own target, from the composer — the default the
+      // completion carries. Either way the directory answers here, at the prompt —
       // not as a trajectory failing its first step.
       try {
         composer = { kind: "new", cwd: targetCwd(freshCwd(fresh[1], leaving(), process.cwd())) };
@@ -437,14 +431,6 @@ export async function open(base: string): Promise<void> {
       if (cursor !== undefined && summaries.some((summary) => summary.id === cursor))
         swap({ kind: "transcript", id: cursor });
     }
-    // Open the pending trajectory once the host has created its conversation.
-    if (pending !== undefined) {
-      const created = summaries.find((summary) => summary.label === pending);
-      if (created !== undefined) {
-        pending = undefined;
-        swap({ kind: "transcript", id: created.id });
-      }
-    }
     render();
   });
 }
@@ -478,7 +464,7 @@ export function targetCwd(path: string): string {
 
 /** Where `/new` starts the next trajectory: the path it named, else the directory of the place
  * it leaves — the conversation open, or the composer's own target — else the client's own. The
- * prompt ghosts the answer while `/new` is typed, so the default is on the line and a path is
+ * command's completion carries the answer, so the default is on the line and a path is
  * an invitation to differ from it. */
 export function freshCwd(
   named: string | undefined,

@@ -180,6 +180,17 @@ describe("host", () => {
     await frames.close();
   });
 
+  test("a run answers the conversation its context mints, whatever the prompt's shape", async () => {
+    faux.setResponses([fauxAssistantMessage("hello")]);
+    const id = await startRun("say hello\nand more");
+    const list = await openList();
+    const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
+    await list.close();
+    // The holder the run's commit made is never listed; the context's conversation is, named by
+    // the prompt's first line.
+    expect(listed[0]).toMatchObject({ id, label: "say hello" });
+  });
+
   test("a forking kickoff lists its child beneath it", async () => {
     faux.setResponses([
       turn("I forked a.", ["a"]),
@@ -334,14 +345,11 @@ describe("host", () => {
     });
   }
 
-  /** Start a context from a prompt and find the conversation its task owns. */
+  /** Start a context from a prompt: the conversation the run's answer names. */
   async function startRun(prompt: string): Promise<number> {
     faux.setResponses([fauxAssistantMessage("hello")]);
-    const list = await openList();
-    await run(prompt);
-    const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
-    await list.close();
-    return listed[0].id;
+    const { conversation } = (await (await run(prompt)).json()) as { conversation: number };
+    return conversation;
   }
 
   /** One answer: the forks it calls, then the text its turn ends with. */

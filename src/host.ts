@@ -91,6 +91,8 @@ export type Summary = {
 export class Host {
   #harness!: Harness;
   #prompts = new Map<number, string>();
+  /** Every run waiting on its answer: each resolves when the graph shows its task's mint. */
+  #mints = new Map<number, (conversation: number) => void>();
   #summaries: readonly Summary[] = [];
   #graph: TaskGraph = { tasks: {} };
   #server!: ServerType;
@@ -194,6 +196,13 @@ export class Host {
     const watch = await this.#harness.watchTaskGraph(context);
     watch.start((graph) => {
       this.#graph = graph;
+      for (const [task, resolve] of this.#mints) {
+        const conversation = graph.tasks[task]?.conversations.at(0);
+        if (conversation !== undefined) {
+          this.#mints.delete(task);
+          resolve(conversation);
+        }
+      }
       return this.#publish();
     });
   }
@@ -212,11 +221,14 @@ export class Host {
     });
   }
 
-  /** Start a trajectory in a directory: one fresh context, in one commit, in a new conversation. */
-  run(cwd: string, prompt: string): Promise<number> {
-    return this.#harness.commit(async (tx) => {
-      const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
-      await configure(tx, conversation.id, {
+  /** Start a trajectory in a directory: one fresh context, in one commit, in a new conversation.
+   * The commit makes only the trajectory's holder — the conversation that owns the kickoff task
+   * and carries its config — while the context's own conversation is minted when the task runs;
+   * the answer waits for that mint, for it is the conversation a client opens. */
+  async run(cwd: string, prompt: string): Promise<number> {
+    const task = await this.#harness.commit(async (tx) => {
+      const holder = await tx.createConversation({ ownership: { kind: "ownerless" } });
+      await configure(tx, holder.id, {
         model: this.#options.model(),
         cwd,
         thinkingLevel: this.#options.thinkingLevel(),
@@ -226,11 +238,14 @@ export class Host {
         { prompt },
         {
           ownership: { kind: "conversation" },
-          conversationId: conversation.id,
+          conversationId: holder.id,
           background: true,
         },
       );
     }, context);
+    const minted = this.#graph.tasks[task]?.conversations.at(0);
+    if (minted !== undefined) return minted;
+    return await new Promise((resolve) => this.#mints.set(task, resolve));
   }
 
   /** Message an existing context: one continuation context in its conversation, steering it when busy

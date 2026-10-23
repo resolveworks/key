@@ -40,7 +40,7 @@ The host's whole surface, served by hono; both streams are SSE.
 ```
 GET  /api/conversations               transcripts, then changes (SSE)
 GET  /api/conversations/:id           one transcript, then changes (SSE)
-POST /api/run                         {prompt, cwd}: start a context in that directory
+POST /api/run                         {prompt, cwd} → {conversation}: start a context in that directory
 POST /api/complete                    {cwd, text, force}: the host's completion of one prompt line
 POST /api/conversations/:id/messages  {prompt}: message a context
 POST /api/conversations/:id/abort     interrupt a context: abort its conversation's current work
