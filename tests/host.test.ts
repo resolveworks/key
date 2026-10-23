@@ -148,7 +148,7 @@ describe("host", () => {
     expect(await unknown.text()).toBe("Error: no conversation #999999");
   });
 
-  test("an interrupt parks the conversation: the dots say it no longer streams", async () => {
+  test("an interrupted context no longer runs: the dots say it", async () => {
     const hung = stuck();
     faux.setResponses([hung.step]);
 
@@ -159,10 +159,10 @@ describe("host", () => {
     expect(running.running).toBe(true);
 
     await app.request(`/api/conversations/${running.id}/abort`, { method: "POST" });
-    const parked = await list.until((frame: readonly Summary[]) =>
+    const after = await list.until((frame: readonly Summary[]) =>
       frame.some((item) => !item.running),
     );
-    expect(parked.find((item) => item.id === running.id)?.running).toBe(false);
+    expect(after.find((item) => item.id === running.id)?.running).toBe(false);
     await list.close();
   });
 

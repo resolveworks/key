@@ -15,7 +15,7 @@ const summary = (id: number, running: boolean, depth = 0): Summary => ({
   depth,
 });
 
-// The host lists by cascade, newest cascade first; parked contexts stay in the list but never
+// The host lists by cascade, newest cascade first; finished contexts stay in the list but never
 // in the ring. The composer joins the ring only while a trajectory is being written in it — an
 // empty `/new` is no place at all.
 const summaries = [summary(5, true), summary(4, false), summary(3, true), summary(1, true)];
@@ -61,15 +61,15 @@ describe("cycle", () => {
   });
 
   test("a drafted composer alone is the whole ring: every step lands on it", () => {
-    const parked = [summary(2, false), summary(1, false)];
-    expect(cycle(parked, "new", 1, draft)).toBe("new");
-    expect(cycle(parked, 1, 1, draft)).toBe("new");
+    const finished = [summary(2, false), summary(1, false)];
+    expect(cycle(finished, "new", 1, draft)).toBe("new");
+    expect(cycle(finished, 1, 1, draft)).toBe("new");
   });
 
   test("nothing live — nothing running, nothing drafted — is nowhere to go", () => {
-    const parked = [summary(2, false), summary(1, false)];
-    expect(cycle(parked, 1, 1, "")).toBeUndefined();
-    expect(cycle(parked, "new", -1, "")).toBeUndefined();
+    const finished = [summary(2, false), summary(1, false)];
+    expect(cycle(finished, 1, 1, "")).toBeUndefined();
+    expect(cycle(finished, "new", -1, "")).toBeUndefined();
     expect(cycle([], "new", 1, "")).toBeUndefined();
   });
 });

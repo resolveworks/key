@@ -277,7 +277,7 @@ describe("a continuation", () => {
 });
 
 describe("an interruption", () => {
-  it("parks the context without a terminus and without minting", async () => {
+  it("ends the context terminal aborted, without minting its forks", async () => {
     const { faux, harness } = await fresh();
     const stuck = unanswered();
     faux.setResponses([turn("I forked a.", ["a"]), stuck.step]);
@@ -285,31 +285,43 @@ describe("an interruption", () => {
     const kickoff = await run(harness, "kick off");
     await stuck.reached;
     await interrupt(harness, kickoff);
+    await harness.waitForTask(kickoff, context);
 
-    // The context is still live: no terminus, and the fork it recorded waits unminted.
+    // The context ends aborted; the fork it recorded waits unminted.
     const records = await cascade(harness);
-    expect(records.find((record) => record.id === kickoff)?.state.status).not.toBe("terminal");
+    expect(records.find((record) => record.id === kickoff)?.state.outcome).toEqual({
+      status: "aborted",
+    });
     expect(children(records)).toEqual([]);
   });
 
-  it("interrupts one context only: the successor waiting on it keeps waiting", async () => {
+  it("interrupts one context only: the successor waiting on it settles and runs once it ends", async () => {
     const { faux, harness } = await fresh();
     const stuck = unanswered();
-    faux.setResponses([turn("I forked a.", ["a"]), turn("a is on its way"), stuck.step]);
+    faux.setResponses([
+      turn("I forked a.", ["a"]),
+      turn("a is on its way"),
+      stuck.step,
+      turn("summed"),
+    ]);
 
     await started(harness, "kick off");
     const next = await waitForSuccessor(harness);
     const child = children(await cascade(harness))[0];
     await stuck.reached;
     await interrupt(harness, child.id);
+    await harness.waitForTask(next.id, context);
 
-    // The child parks live and the successor holds its wait on it.
+    // The child ended aborted and the successor's upstream says so.
     const records = await cascade(harness);
-    expect(records.find((record) => record.id === child.id)?.state.status).not.toBe("terminal");
-    expect(records.find((record) => record.id === next.id)?.state.status).toBe("waiting");
+    expect(records.find((record) => record.id === child.id)?.state.outcome).toEqual({
+      status: "aborted",
+    });
+    const transcript = await entries(harness, await conversationOf(harness, next.id));
+    expect(JSON.stringify(transcript)).toContain(`task #${child.id} aborted`);
   });
 
-  it("a later context in the conversation mints the forks the parked run recorded", async () => {
+  it("a continuation mints the forks an interrupted run recorded", async () => {
     const { faux, harness } = await fresh();
     const stuck = unanswered();
     faux.setResponses([
@@ -317,12 +329,14 @@ describe("an interruption", () => {
       stuck.step,
       turn("wrapped up"),
       turn("a answers"),
-      turn("joined"),
+      turn("summed"),
     ]);
 
     const kickoff = await run(harness, "kick off");
     await stuck.reached;
     await interrupt(harness, kickoff);
+    await harness.waitForTask(kickoff, context);
+
     // Message it as the host does: one continuation context in the conversation it names.
     const conversation = await conversationOf(harness, kickoff);
     const continuation = await harness.commit(
@@ -339,9 +353,7 @@ describe("an interruption", () => {
     const next = await waitForSuccessor(harness);
     await harness.waitForTask(next.id, context);
 
-    // The parked run's fork minted at the continuation's terminus; the parked run stays parked.
-    const records = await cascade(harness);
-    expect(children(records).map(nameOf)).toEqual(["a"]);
-    expect(records.find((record) => record.id === kickoff)?.state.status).not.toBe("terminal");
+    // The interrupted run never emptied the record; the continuation's terminus mints what it holds.
+    expect(children(await cascade(harness)).map(nameOf)).toEqual(["a"]);
   });
 });
