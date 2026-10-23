@@ -1,4 +1,4 @@
-// The footer as pi draws one: the directory the transcript runs in, and beneath it what the run has
+// The footer: the directory the transcript runs in, and beneath it what the run has
 // spent — tokens, cache hits, cost — against the model's context window, with the model on the right.
 
 import { homedir } from "node:os";
@@ -17,7 +17,7 @@ export type Stats = {
   readonly model: string;
 };
 
-/** pi's compact token counts: 812, 6.4k, 21k, 1.3M. */
+/** Compact token counts: 812, 6.4k, 21k, 1.3M. */
 export function tokens(count: number): string {
   if (count < 1000) return count.toString();
   if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
@@ -82,7 +82,7 @@ export function contextTokens(view: ConversationView): number {
   return messages.reduce((sum, message) => sum + estimate(message), 0);
 }
 
-/** pi's rule of thumb: four characters a token, an object's own overhead beside it. */
+/** Rule of thumb: four characters a token, an object's own overhead beside it. */
 function estimate(value: unknown): number {
   if (typeof value === "string") return Math.ceil(value.length / 4);
   if (value === null || typeof value !== "object") return 0;
@@ -104,11 +104,10 @@ function cacheHitRate(view: ConversationView): number | undefined {
 /** What a prompt is doing: the generation runs, or it waits on the human. */
 export type Working = "working" | "idle";
 
-/** pi's spinner frames. */
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /**
- * The working indicator pi puts in the prompt's top border: a spinner while the generation runs and a
+ * The working indicator in the prompt's top border: a spinner while the generation runs and a
  * dot while it waits on the human.
  */
 export class WorkingLabel {
@@ -159,7 +158,7 @@ export class WorkingLabel {
 }
 
 /**
- * pi's `FooterComponent`, over one transcript: where it runs and what it has spent. `show` names a
+ * The footer over one transcript: where it runs and what it has spent. `show` names a
  * place the next trajectory would run, `watch` the open transcript, and `render` draws either.
  */
 export class Footer implements Component {
@@ -219,7 +218,7 @@ export class Footer implements Component {
     return [...lines, `${style.dim(left)}${style.dim(`${" ".repeat(gap)}${name}`)}`];
   }
 
-  /** `12.4%/1.0M`, red past 90% and amber past 70%, as pi colors it. */
+  /** `12.4%/1.0M`, red past 90% and amber past 70%. */
   #context(used: number): string {
     if (this.#window <= 0) return "?";
     const percent = (used / this.#window) * 100;

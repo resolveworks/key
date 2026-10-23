@@ -1,4 +1,4 @@
-// A transcript as pi draws one: the human's words in a box, assistant text as markdown, thinking in
+// A transcript: the human's words in a box, assistant text as markdown, thinking in italics, and
 // italics, and every tool call its own box whose background says how the call is going.
 
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
@@ -12,7 +12,7 @@ import { Box, type Component, Markdown, Spacer, Text } from "@earendil-works/pi-
 import { shortenHome } from "./footer.ts";
 import { diff, markdown, style } from "./theme.ts";
 
-/** Collapsed tool output shows this many lines; pi's preview depth for a shell. */
+/** Collapsed tool output shows this many lines. */
 const PREVIEW_LINES = 5;
 
 /** A view as the components that draw it: settled entries, then the live generation and its tools. */
@@ -55,7 +55,7 @@ function messagesOf(view: ConversationView): readonly Message[] {
   );
 }
 
-/** pi separates turns with a blank line; each component supplies its own gutter, so nothing is inset here. */
+/** Turns separate with a blank line; each component supplies its own gutter, so nothing is inset here. */
 function layout(blocks: readonly Component[]): readonly Component[] {
   const rows: Component[] = [];
   blocks.forEach((block, index) => {
@@ -88,7 +88,7 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Component[] {
   }
 }
 
-/** The human's turn: a full-width box, the way pi draws a user message. */
+/** The human's turn: a full-width box. */
 function userBlocks(message: Message): readonly Component[] {
   const text = message.role === "user" ? textOf(message.content).trim() : "";
   if (text === "") return [];
@@ -176,7 +176,7 @@ type Call = {
   readonly details?: unknown;
 };
 
-/** A tool call in pi's shape: a titled box colored by outcome, holding the result's first lines. */
+/** A tool call: a titled box colored by outcome, holding the result's first lines. */
 function toolBox(slot: Call, isError = false): Component {
   const background =
     slot.status !== "done"
@@ -194,7 +194,7 @@ function toolBox(slot: Call, isError = false): Component {
   return box;
 }
 
-/** `name argument`, the way pi titles a call: the identifying argument, dimmed, on one line. */
+/** `name argument`: the identifying argument, dimmed, on one line. */
 function toolTitle(name: string, args: unknown): string {
   const first =
     args !== null && typeof args === "object"
@@ -231,7 +231,7 @@ function slotBody(slot: Call): string | undefined {
   return hidden === 0 ? body : `${hint}\n${body}`;
 }
 
-/** pi's diff colors, keeping the line numbers durable's diff carries. */
+/** Diff colors, keeping the line numbers durable's diff carries. */
 function renderDiff(patch: string): string {
   return patch
     .split("\n")

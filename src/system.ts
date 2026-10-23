@@ -215,12 +215,12 @@ export const Fork = defineTool({
 export const keySystem = (git: Git): Extension =>
   defineExtension({
     name: "key",
-    // Installed after the coding tools, so the framing renders ahead of project context. Untagged like pi's.
+    // Installed after the coding tools, so the framing renders ahead of project context. Untagged.
     sections: [
       section(
         "preamble",
         () =>
-          "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+          "You are an expert coding assistant operating inside key, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
         { tag: false },
       ),
     ],

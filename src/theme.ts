@@ -1,5 +1,5 @@
-// pi's dark theme, expressed as style functions. Built on `styleTextWithAnsi`, which opens every
-// attribute it is given and closes all of them, so a token nests inside another.
+// Styles built on `styleTextWithAnsi`, which opens every attribute it is given and closes all of
+// them, so a token nests inside another.
 import {
   backgroundAnsi,
   type Color,
@@ -15,7 +15,7 @@ import {
 const mode = getTerminalColorMode();
 const hex = (value: string): Color => parseColor(value);
 
-/** pi's dark foreground palette. */
+/** The dark foreground palette. */
 const fg = {
   accent: hex("#b281d6"),
   success: hex("#68d391"),
@@ -33,7 +33,7 @@ const fg = {
   diffRemoved: hex("#f08c66"),
 } as const;
 
-/** pi's dark background palette. */
+/** The dark background palette. */
 const bg = {
   user: hex("#2b3553"),
   toolPending: okhslColor(229, 0.05, 0.24),
@@ -78,11 +78,10 @@ export const style = {
   },
 } as const;
 
-/** Named combinations, so call sites read as the pi they imitate. */
 export const bold = (color: Color | undefined, value: string): string =>
   style.bold(on(color)(value));
 
-/** pi's markdown theme: headings, links, code, quotes and bullets each carry their own color. */
+/** The markdown theme: headings, links, code, quotes and bullets each carry their own color. */
 export const markdown: MarkdownTheme = {
   heading: (value) => bold(fg.mdHeading, value),
   link: (value) => style.underline(on(fg.mdLink)(value)),
@@ -100,7 +99,7 @@ export const markdown: MarkdownTheme = {
   strikethrough: (value) => on(undefined, { strikethrough: true })(value),
 };
 
-/** Diff lines: added green, removed red, context muted, as pi draws an edit's result. */
+/** Diff lines: added green, removed red, context muted. */
 export const diff = {
   added: on(fg.diffAdded),
   removed: on(fg.diffRemoved),

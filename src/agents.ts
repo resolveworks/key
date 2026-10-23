@@ -1,5 +1,5 @@
-// Project instructions: pi's AGENTS file discovery, rendered as a durable prompt section. Every request
-// re-reads the files, so an edit patches the system prompt the same way pi's reload does.
+// Project instructions: every request re-reads the files, so an edit patches the system prompt
+// without a restart.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { defineExtension, section } from "@earendil-works/pi-durable";

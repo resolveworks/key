@@ -237,7 +237,7 @@ export async function open(base: string): Promise<void> {
     void start(text);
   };
 
-  // pi's exit convention: ctrl+c clears the prompt and quits on a second press; ctrl+d quits on an
+  // Exit convention: ctrl+c clears the prompt and quits on a second press; ctrl+d quits on an
   // empty prompt. With text in the prompt ctrl+d falls through to delete-forward.
   let lastCtrlC = 0;
   tui.addInputListener((data) => {

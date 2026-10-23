@@ -1,5 +1,5 @@
-// The prompt's completions: pi's combined provider gives slash commands and path completion on
-// tab, plus @file suggestions through fd. This only supplies the commands key actually has.
+// The prompt's completions: slash commands and path completion on tab, plus @file suggestions
+// through fd. This only supplies the commands key actually has.
 
 import { spawnSync } from "node:child_process";
 import { CombinedAutocompleteProvider, type SlashCommand } from "@earendil-works/pi-tui";
