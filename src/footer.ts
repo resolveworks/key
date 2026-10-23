@@ -94,11 +94,12 @@ export function dot(running: boolean): string {
 
 /**
  * The footer over one transcript: where it runs and what it has spent. `show` names a
- * place the next trajectory would run, `watch` the open transcript, and `render` draws either.
+ * place the next trajectory would run, `watch` the open transcript, `clear` neither — the
+ * selector owns the whole screen — and `render` draws whichever.
  */
 export class Footer implements Component {
   #view: ConversationView | undefined;
-  #cwd: string;
+  #cwd: string | undefined;
   #branch: string | undefined;
   #window = 0;
   #model = "";
@@ -106,22 +107,28 @@ export class Footer implements Component {
   /** The task graph's verdict on this conversation, drawn beside the list's dot from the same graph. */
   #running = false;
 
-  constructor(cwd: string) {
-    this.#cwd = cwd;
-  }
-
   /** Nothing is cached: the stats are derived from the view the client hands in every frame. */
   invalidate(): void {}
 
-  /** Where the next trajectory would run, and the host's word on it. */
-  show(cwd: string): void {
+  #reset(): void {
     this.#view = undefined;
-    this.#cwd = cwd;
     this.#branch = undefined;
     this.#window = 0;
     this.#model = "";
     this.#thinking = "";
     this.#running = false;
+  }
+
+  /** Where the next trajectory would run, and the host's word on it. */
+  show(cwd: string): void {
+    this.#reset();
+    this.#cwd = cwd;
+  }
+
+  /** No place names the list: nothing runs there and none can start, so nothing is drawn. */
+  clear(): void {
+    this.#reset();
+    this.#cwd = undefined;
   }
 
   /** Draw one transcript: where it runs, what it has spent, and whether its chain still streams. */
@@ -136,6 +143,7 @@ export class Footer implements Component {
   }
 
   render(width: number): string[] {
+    if (this.#cwd === undefined) return [];
     const place = `${style.dim(shortenHome(this.#cwd))}${
       this.#branch === undefined ? "" : style.dim(` (${this.#branch})`)
     }`;

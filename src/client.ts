@@ -49,7 +49,7 @@ export async function open(base: string): Promise<void> {
   const client = hc<ReturnType<typeof api>>(base);
   // The terminal owns the screen and the scrollback. Within a view the document only grows, so
   // rendered lines scroll up into history instead of being redrawn. A selector replaces the
-  // document and clears the dock, so the list owns a clean screen.
+  // document and clears the dock and the footer, so the list owns a clean screen.
   const document = new Container();
   const dock = new Container();
   const prompt = new Editor(tui, {
@@ -58,7 +58,7 @@ export async function open(base: string): Promise<void> {
   });
   prompt.setAutocompleteProvider(provider(process.cwd()));
   // The last two lines: where this transcript runs, and what it has spent so far.
-  const footer = new Footer(process.cwd());
+  const footer = new Footer();
   tui.addChild(document);
   tui.addChild(dock);
   tui.addChild(footer);
@@ -136,7 +136,7 @@ export async function open(base: string): Promise<void> {
       list.onCancel = () => (page.back === "new" ? enter({ kind: "new" }) : open(page.back));
       show([new Spacer(1), list]);
       tui.setFocus(list);
-      footer.show(process.cwd());
+      footer.clear();
     } else if (mode.kind === "new") {
       showPrompt();
       show([

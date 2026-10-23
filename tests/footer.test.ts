@@ -96,7 +96,7 @@ describe("footer", () => {
   });
 
   test("two dim lines: where it runs, and what it spent against the window", () => {
-    const footer = new Footer("/key/repo");
+    const footer = new Footer();
     footer.watch(
       view([answered(1200, 8600)], "/key/repo"),
       {
@@ -118,13 +118,20 @@ describe("footer", () => {
   });
 
   test("a fresh trajectory names where it would run and nothing it has spent", () => {
-    const footer = new Footer("/key/repo");
+    const footer = new Footer();
     footer.show("/key/repo");
     expect(footer.render(80)).toHaveLength(1);
   });
 
+  test("the selector owns the whole screen: cleared, the footer draws nothing", () => {
+    const footer = new Footer();
+    footer.show("/key/repo");
+    footer.clear();
+    expect(footer.render(80)).toEqual([]);
+  });
+
   test("a transcript draws exactly where it runs and what it spent", () => {
-    const footer = new Footer("/key/repo");
+    const footer = new Footer();
     footer.watch(
       view([answered(1200, 8600)]),
       {
@@ -145,7 +152,7 @@ describe("footer", () => {
       thinkingLevel: "high" as const,
       thinkingLevels: ["off", "low", "high", "max"] as const,
     };
-    const footer = new Footer("/key/repo");
+    const footer = new Footer();
     footer.watch(view([answered(1200, 8600)]), stats, true);
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^● ↑1\.2k/);
 
