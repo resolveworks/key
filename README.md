@@ -31,7 +31,8 @@ runs on — any provider in pi's catalog, keyed by that provider's own env var
 the same file sets the level every conversation runs at (a model without
 thinking runs at `off`; the default is `high`). `KEY_BIND` in the same file
 sets the interface the server listens on (`127.0.0.1` by default;
-`0.0.0.0` to accept connections from off the box).
+`0.0.0.0` to accept connections from off the box). `BRAVE_API_KEY` in the
+same file gives every context `web_search`, the tool that searches the web.
 Everything the host owns lives in `~/.key` — the session store is SQLite at
 `~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
 

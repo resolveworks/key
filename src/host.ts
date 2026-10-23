@@ -29,6 +29,7 @@ import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
+import { Search } from "./search.ts";
 import { type KeyTaskInput, keySystem } from "./system.ts";
 
 /** The host's key, its git bound to the real one. */
@@ -73,7 +74,7 @@ const production = (): HostOptions => ({
     mkdirSync(dataDirectory, { recursive: true });
     return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
   },
-  extensions: [CodingTools, KeySystem, Agents],
+  extensions: [CodingTools, KeySystem, Search, Agents],
   port: PORT,
   hostname: process.env.KEY_BIND ?? "127.0.0.1",
   thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,
