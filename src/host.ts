@@ -83,6 +83,8 @@ export type Summary = {
   readonly label: string;
   /** The directory that context runs in. */
   readonly cwd: string;
+  /** Steps in under the conversation whose context minted this one: 0 for a cascade's kickoff. */
+  readonly depth: number;
   readonly running: boolean;
 };
 
@@ -271,43 +273,33 @@ export class Host {
   }
 
   async #summarise(): Promise<readonly Summary[]> {
-    const conversations = await this.#scanConversations();
+    // Every context's conversation is owned by its task; an ownerless conversation is just a holder.
+    const listed = (await this.#scanConversations()).flatMap(({ id, owner }) =>
+      owner === undefined ? [] : [{ id, owner }],
+    );
     // The graph holds live tasks only; a conversation runs while one belongs to it or owns it.
     const running = this.#running();
-    // Every context's conversation is owned by its task; an ownerless conversation is just a holder.
     const cwds = new Map<number, string>();
-    for (const { id } of conversations) {
+    for (const { id } of listed) {
       const cwd = (await this.#harness.snapshot(AgentDoc, id as ConversationId, context))?.cwd;
       if (cwd !== undefined) cwds.set(id, cwd);
     }
-    return conversations
-      .flatMap(({ id, owner }) =>
-        owner === undefined
-          ? []
-          : [
-              {
-                id,
-                label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
-                cwd: cwds.get(id) ?? "",
-                running: running.has(id),
-              },
-            ],
-      )
-      .sort((a, b) => b.id - a.id);
+    return forest(listed).map(({ id, owner, depth }) => ({
+      id,
+      label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
+      cwd: cwds.get(id) ?? "",
+      depth,
+      running: running.has(id),
+    }));
   }
 
-  async #scanConversations(): Promise<readonly { id: number; owner?: { taskId: number } }[]> {
+  async #scanConversations(): Promise<readonly { id: number; owner?: Creator }[]> {
     return this.#harness.commit(async (tx) => {
-      const found: { id: number; owner?: { taskId: number } }[] = [];
+      const found: { id: number; owner?: Creator }[] = [];
       let cursor: Cursor | undefined;
       for (;;) {
         const page = await tx.scanConversations({}, SCAN_PAGE_SIZE, cursor);
-        for (const record of page.items) {
-          found.push({
-            id: record.id,
-            ...(record.owner === undefined ? {} : { owner: { taskId: record.owner.taskId } }),
-          });
-        }
+        for (const record of page.items) found.push({ id: record.id, owner: record.owner });
         if (page.next === undefined) break;
         cursor = page.next;
       }
@@ -344,6 +336,40 @@ export class Host {
     await this.#harness.close(context);
     await closed;
   }
+}
+
+/** A conversation's creator edge, as durable records it at the mint: the context's task, in the
+ * conversation that minted it. */
+type Creator = { readonly taskId: number; readonly conversationId: number };
+
+/** A conversation the list shows: a context's own. A conversation without a creator is the holder
+ * `run` made for a kickoff, and the list skips it. */
+type ContextConversation = { readonly id: number; readonly owner: Creator };
+
+/** A listed conversation placed for display: `depth` hops under its cascade's kickoff. */
+type Placed = ContextConversation & { depth: number };
+
+/** The listed conversations in display order: one contiguous block per cascade — the tree rooted
+ * at a kickoff, whose creator is the unlisted holder — the newest cascade's block first, and within
+ * a block a conversation ahead of its children, siblings ascending by id, so the successor a
+ * terminus mints after its forks lands last on its level. */
+function forest(conversations: readonly ContextConversation[]): readonly Placed[] {
+  const listed = new Set(conversations.map(({ id }) => id));
+  const block = (root: ContextConversation, depth: number): readonly Placed[] => [
+    { ...root, depth },
+    ...conversations
+      .filter(({ owner }) => owner.conversationId === root.id)
+      .sort((left, right) => left.id - right.id)
+      .flatMap((child) => block(child, depth + 1)),
+  ];
+  return conversations
+    .filter(({ owner }) => !listed.has(owner.conversationId))
+    .map((root) => block(root, 0))
+    .sort(
+      (left, right) =>
+        Math.max(...right.map(({ id }) => id)) - Math.max(...left.map(({ id }) => id)),
+    )
+    .flat();
 }
 
 /** A working directory's branch, when it is a repository: the footer shows it beside the path. */

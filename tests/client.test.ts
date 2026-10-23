@@ -9,6 +9,7 @@ const summary = (id: number, running: boolean): Summary => ({
   id,
   label: `ask ${id}`,
   cwd: "/key/repo",
+  depth: 0,
   running,
 });
 

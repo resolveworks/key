@@ -6,6 +6,8 @@ import {
   type FauxResponseStep,
   fauxAssistantMessage,
   fauxProvider,
+  fauxText,
+  fauxToolCall,
 } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable";
@@ -14,9 +16,9 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "../src/agents.ts";
 import type { api } from "../src/api.ts";
 import type { Stats } from "../src/footer.ts";
-import { git } from "../src/git.ts";
 import { Host, type Summary } from "../src/host.ts";
 import { keySystem } from "../src/system.ts";
+import { fakeGit, REPO } from "./git.ts";
 
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
 type Transcript = { readonly view: ConversationView; readonly stats: Stats };
@@ -74,7 +76,7 @@ describe("host", () => {
       models: () => models,
       model: () => ({ provider: "deepseek", modelId: "deepseek-flash" }),
       storage: () => new MemoryStorage(),
-      extensions: [CodingTools, keySystem(git).extension, Agents],
+      extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
       port: 0,
       thinkingLevel: () => "high",
     });
@@ -150,9 +152,7 @@ describe("host", () => {
     const hung = stuck();
     faux.setResponses([hung.step]);
 
-    const list = new Frames(
-      (await app.request("/api/conversations")).body as ReadableStream<Uint8Array>,
-    );
+    const list = await openList();
     await run("say hello");
     const [running] = await list.until((frame: readonly Summary[]) => frame.length > 0);
     await hung.reached;
@@ -178,6 +178,96 @@ describe("host", () => {
     const listed = await frames.until((frame: readonly Summary[]) => frame.length > 0);
     expect(listed.map(({ label }) => label)).toEqual(["say hello"]);
     await frames.close();
+  });
+
+  test("a forking kickoff lists its child beneath it", async () => {
+    faux.setResponses([
+      turn("I forked a.", ["a"]),
+      turn("a is on its way"),
+      turn("a answers"),
+      turn("summed"),
+    ]);
+    const list = await openList();
+    await run("kick off");
+    const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
+    await list.close();
+
+    expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
+      { label: "kick off", depth: 0 },
+      { label: "task for a", depth: 1 },
+      { label: "a is on its way", depth: 1 },
+    ]);
+    // The child mints after its kickoff and lists beneath it anyway.
+    expect(listed[1].id).toBeGreaterThan(listed[0].id);
+    expect(listed[1].cwd).toBe(`${REPO}/.key/worktrees/a`);
+  });
+
+  test("interleaved cascades hold one block each, the newest cascade's on top", async () => {
+    const child = held("a answers");
+    faux.setResponses([
+      turn("the first forks a.", ["a"]),
+      turn("the first heir"),
+      child.step,
+      turn("the second forks b.", ["b"]),
+      turn("the second heir"),
+      turn("b answers"),
+      turn("the second summed"),
+      turn("the first summed"),
+    ]);
+    const list = await openList();
+    await run("the first");
+    await child.asked;
+    await run("the second");
+
+    // The second cascade finishes while the first's child is held: its block sits on top.
+    const midway = await list.until((frame: readonly Summary[]) => frame.length === 5);
+    expect(midway.map(({ label }) => label)).toEqual([
+      "the second",
+      "task for b",
+      "the second heir",
+      "the first",
+      "task for a",
+    ]);
+
+    child.release();
+    const listed = await list.until((frame: readonly Summary[]) => frame.length === 6);
+    await list.close();
+
+    expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
+      { label: "the first", depth: 0 },
+      { label: "task for a", depth: 1 },
+      { label: "the first heir", depth: 1 },
+      { label: "the second", depth: 0 },
+      { label: "task for b", depth: 1 },
+      { label: "the second heir", depth: 1 },
+    ]);
+    // The first block leads on the strength of its newer heir, though its kickoff is the older.
+    expect(listed[0].id).toBeLessThan(listed[3].id);
+    expect(listed[2].id).toBeGreaterThan(listed[5].id);
+  });
+
+  test("a minted heir lists after the forks of its terminus, its own forks under it", async () => {
+    faux.setResponses([
+      turn("I fork a.", ["a"]),
+      turn("the first heir"),
+      turn("a answers"),
+      turn("the heir forks b.", ["b"]),
+      turn("the second heir"),
+      turn("b answers"),
+      turn("summed"),
+    ]);
+    const list = await openList();
+    await run("kick off");
+    const listed = await list.until((frame: readonly Summary[]) => frame.length === 5);
+    await list.close();
+
+    expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
+      { label: "kick off", depth: 0 },
+      { label: "task for a", depth: 1 },
+      { label: "the first heir", depth: 1 },
+      { label: "task for b", depth: 2 },
+      { label: "the second heir", depth: 2 },
+    ]);
   });
 
   test("a transcript streams its view and the stats the view cannot carry", async () => {
@@ -230,25 +320,58 @@ describe("host", () => {
     expect(await (await complete("nothing", false)).json()).toBeNull();
   });
 
+  /** The transcript list stream, as the client opens it. */
+  async function openList(): Promise<Frames> {
+    return new Frames((await app.request("/api/conversations")).body as ReadableStream<Uint8Array>);
+  }
+
   /** Start a context from a prompt, as a client does: the prompt and its directory. */
   async function run(prompt: string): Promise<Response> {
     return app.request("/api/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt, cwd: "/key/repo" }),
+      body: JSON.stringify({ prompt, cwd: REPO }),
     });
   }
 
   /** Start a context from a prompt and find the conversation its task owns. */
   async function startRun(prompt: string): Promise<number> {
     faux.setResponses([fauxAssistantMessage("hello")]);
-    const list = new Frames(
-      (await app.request("/api/conversations")).body as ReadableStream<Uint8Array>,
-    );
+    const list = await openList();
     await run(prompt);
     const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
     await list.close();
     return listed[0].id;
+  }
+
+  /** One answer: the forks it calls, then the text its turn ends with. */
+  function turn(text: string, forks: readonly string[] = []) {
+    return fauxAssistantMessage(
+      [
+        ...forks.map((name) => fauxToolCall("fork", { name, prompt: `task for ${name}` })),
+        fauxText(text),
+      ],
+      { stopReason: forks.length === 0 ? "stop" : "toolUse" },
+    );
+  }
+
+  /** A held answer: some context asks for it (`asked`, so the test knows the queue slot is taken),
+   * then waits for its release. */
+  function held(text: string): {
+    readonly step: FauxResponseStep;
+    readonly asked: Promise<void>;
+    readonly release: () => void;
+  } {
+    let asked!: () => void;
+    let release!: () => void;
+    const arrived = new Promise<void>((resolve) => (asked = resolve));
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const step: FauxResponseStep = async () => {
+      asked();
+      await gate;
+      return fauxAssistantMessage(text);
+    };
+    return { step, asked: arrived, release };
   }
 
   /** A faux response that never answers: the run stays mid-generation until its request is aborted. */
