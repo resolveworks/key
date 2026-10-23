@@ -1,4 +1,5 @@
-// A child runs in a worktree inside the repo, on its own branch, and is told so in its prompt.
+// A child runs in a worktree under the key home, outside the repo, on its own branch.
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
@@ -22,7 +23,7 @@ describe("ensureWorktree", () => {
   it("asks git for a worktree under .key, on branch agent/<name>", async () => {
     const tree = await ensureWorktree("fix-the-bug", fakeGit, REPO);
     expect(tree).toEqual({
-      path: join(REPO, ".key", "worktrees", "fix-the-bug"),
+      path: join(homedir(), ".key", "worktrees", "fix-the-bug"),
       branch: branchFor("fix-the-bug"),
     });
     expect(gitCalls()).toContainEqual([
@@ -102,8 +103,7 @@ describe("a child's run", () => {
     const harness = await open();
     const { conversation } = await runChild(harness, "fix-the-bug");
     const agent = await agentState(harness, conversation.id);
-    // Inside the repo, so project files are still found.
-    expect(agent?.cwd).toBe(join(REPO, ".key", "worktrees", "fix-the-bug"));
+    expect(agent?.cwd).toBe(join(homedir(), ".key", "worktrees", "fix-the-bug"));
   });
 
   it("a child's prompt names its branch and tells it to commit", async () => {

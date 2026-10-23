@@ -1,5 +1,6 @@
 // A child's isolated checkout: a git worktree named after the child, on branch agent/<name>.
 
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Git } from "./git.ts";
 
@@ -20,9 +21,8 @@ export async function ensureWorktree(name: string, git: Git, cwd: string): Promi
   if (!CHILD_NAME.test(name))
     throw new Error(`key: child name "${name}" must be lowercase kebab-case`);
   const branch = branchFor(name);
-  const repo = (await git(["rev-parse", "--show-toplevel"], cwd)).trim();
-  // Inside the repository, so project-file discovery still reaches AGENTS.md above it.
-  const path = join(repo, ".key", "worktrees", name);
+  // Under the key home, outside the repository: nested checkouts must not pollute it.
+  const path = join(homedir(), ".key", "worktrees", name);
   if (await registered(path, branch, git, cwd)) return { path, branch };
   await git(["worktree", "add", "--quiet", "-b", branch, path, "HEAD"], cwd);
   return { path, branch };

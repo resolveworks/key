@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createModels,
@@ -199,7 +199,7 @@ describe("host", () => {
     ]);
     // The child mints after its kickoff and lists beneath it anyway.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
-    expect(listed[1].cwd).toBe(`${REPO}/.key/worktrees/a`);
+    expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/a`);
   });
 
   test("interleaved cascades hold one block each, the newest cascade's on top", async () => {

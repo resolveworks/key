@@ -35,9 +35,8 @@ export function resetGit(): void {
   calls = [];
 }
 
-/** The fake git port: `rev-parse` names the REPO every path derives from; everything else answers empty. */
+/** The fake git port: records every call and answers empty. */
 export const fakeGit: Git = async (args, _cwd) => {
   calls = [...calls, args];
-  if (args[0] === "rev-parse") return `${REPO}\n`;
   return "";
 };
