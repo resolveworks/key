@@ -14,7 +14,9 @@ import {
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AgentDoc,
+  type AgentState,
   type ConversationId,
+  type ConversationView,
   type Cursor,
   configure,
   createRegistry,
@@ -32,11 +34,10 @@ import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
-import { type KeyTaskInput, keySystem, keyTask } from "./system.ts";
+import { isParkedContext, type KeyTaskInput, keySystem } from "./system.ts";
 
 /** The host's key, its git bound to the real one. */
-const KeySystem = keySystem(git);
-const KeyTask = keyTask(git);
+const { extension: KeySystem, task: KeyTask } = keySystem(git);
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
@@ -83,8 +84,6 @@ export type Summary = {
 export class Host {
   #harness!: Harness;
   #prompts = new Map<number, string>();
-  /** Each conversation's directory, by id: the cwd of its `pi.agent` document. */
-  #agentCwds = new Map<number, string>();
   #summaries: readonly Summary[] = [];
   #graph: TaskGraph = { tasks: {} };
   #server!: ServerType;
@@ -124,8 +123,18 @@ export class Host {
   }
 
   /** What a view cannot say: the branch, the context window, the model and its level. */
-  stats(id: number): Promise<Stats> {
-    return this.#statsOf(id);
+  async stats(view: ConversationView): Promise<Stats> {
+    const agent = view.docs["pi.agent"] as AgentState | undefined;
+    const ref = agent?.model ?? MODEL;
+    const model = this.#options.models().getModel(ref.provider, ref.modelId);
+    const branch = await branchOf(agent?.cwd);
+    return {
+      ...(branch === undefined ? {} : { branch }),
+      contextWindow: model?.contextWindow ?? 0,
+      model: ref.modelId,
+      thinkingLevel: agent?.thinkingLevel ?? THINKING_LEVEL,
+      thinkingLevels: levelsOf(model),
+    };
   }
 
   /** The host's HTTP surface, in-process: `app.request()` answers without a port. */
@@ -248,9 +257,10 @@ export class Host {
     // The graph holds live tasks only; a conversation runs while one belongs to it or owns it.
     const running = this.#running();
     // Every context's conversation is owned by its task; an ownerless conversation is just a holder.
+    const cwds = new Map<number, string>();
     for (const { id } of conversations) {
       const cwd = (await this.#harness.snapshot(AgentDoc, id as ConversationId, context))?.cwd;
-      if (cwd !== undefined) this.#agentCwds.set(id, cwd);
+      if (cwd !== undefined) cwds.set(id, cwd);
     }
     return conversations
       .flatMap(({ id, owner }) =>
@@ -260,7 +270,7 @@ export class Host {
               {
                 id,
                 label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
-                cwd: this.#agentCwds.get(id) ?? "",
+                cwd: cwds.get(id) ?? "",
                 running: running.has(id),
               },
             ],
@@ -299,27 +309,12 @@ export class Host {
     this.#harness.resume();
   }
 
-  /** What the view cannot say: the branch its directory is on, and the window its model gives. */
-  async #statsOf(id: number): Promise<Stats> {
-    const agent = await this.#harness.snapshot(AgentDoc, id as ConversationId, context);
-    const ref = agent?.model ?? MODEL;
-    const model = this.#options.models().getModel(ref.provider, ref.modelId);
-    const branch = await branchOf(agent?.cwd);
-    return {
-      ...(branch === undefined ? {} : { branch }),
-      contextWindow: model?.contextWindow ?? 0,
-      model: ref.modelId,
-      thinkingLevel: agent?.thinkingLevel ?? THINKING_LEVEL,
-      thinkingLevels: levelsOf(model),
-    };
-  }
-
-  /** A conversation streams while a live task of it runs or waits; a parked context — an interrupt
-   * — is live but idle, so it does not light the dot. */
+  /** A conversation runs while a live task of it runs or waits: a waiting successor keeps the
+   * chain live, and a parked context is live but idle, so it does not light the dot. */
   #running(): ReadonlySet<number> {
     const running = new Set<number>();
     for (const node of Object.values(this.#graph.tasks)) {
-      if (node.state.status === "running" && node.state.phase === "parked") continue;
+      if (isParkedContext(node)) continue;
       running.add(node.conversationId);
       for (const owned of node.conversations) running.add(owned);
     }

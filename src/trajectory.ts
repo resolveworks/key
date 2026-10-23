@@ -1,7 +1,12 @@
 // A transcript: the human's words in a box, assistant text as markdown, thinking in italics, and
 // italics, and every tool call its own box whose background says how the call is going.
 
-import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
+import {
+  type AssistantMessage,
+  contentText,
+  type Message,
+  type ToolResultMessage,
+} from "@earendil-works/pi-ai";
 import type {
   ConversationView,
   EntryRecord,
@@ -9,6 +14,7 @@ import type {
   ToolSlot,
 } from "@earendil-works/pi-durable";
 import { Box, type Component, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { InterruptEntry } from "./entries.ts";
 import { shortenHome } from "./footer.ts";
 import { diff, markdown, style } from "./theme.ts";
 
@@ -90,7 +96,7 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Component[] {
       return [note("── context reset ──")];
     case "pi.compaction":
       return [note("── compacted ──")];
-    case "key.interrupt":
+    case InterruptEntry.kind:
       return [note("── interrupted ──", style.accent)];
     default:
       return [];
@@ -99,7 +105,7 @@ function entryBlocks(entry: EntryRecord, calls: Calls): readonly Component[] {
 
 /** The human's turn: a full-width box. */
 function userBlocks(message: Message): readonly Component[] {
-  const text = message.role === "user" ? textOf(message.content).trim() : "";
+  const text = message.role === "user" ? contentText(message.content).trim() : "";
   if (text === "") return [];
   return [new Markdown(text, 1, 1, markdown, { color: style.text, bgColor: style.userBg })];
 }
@@ -166,7 +172,7 @@ function toolResultBox(message: ToolResultMessage, calls: Calls): Component {
     {
       name: message.toolName,
       status: "done",
-      output: textOf(message.content),
+      output: contentText(message.content),
       ...(message.details === undefined ? {} : { details: message.details }),
       ...(call === undefined ? {} : { args: call }),
     },
@@ -256,13 +262,4 @@ function renderDiff(patch: string): string {
 
 function note(text: string, paint: (text: string) => string = style.dim): Component {
   return new Text(paint(text), 1, 0);
-}
-
-function textOf(
-  content: string | readonly { readonly type: string; readonly text?: string }[],
-): string {
-  if (typeof content === "string") return content;
-  return content
-    .flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : []))
-    .join("\n");
 }

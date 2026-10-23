@@ -16,6 +16,7 @@ import {
   openKey,
   unanswered,
 } from "../tests/harness.ts";
+import { InterruptEntry } from "./entries.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -292,7 +293,7 @@ describe("an interruption", () => {
     expect(children(records)).toEqual([]);
     // The transcript says where the run stopped, though the run had nothing to show.
     const transcript = await entries(harness, await conversationOf(harness, kickoff));
-    expect(transcript.at(-1)?.kind).toBe("key.interrupt");
+    expect(transcript.at(-1)?.kind).toBe(InterruptEntry.kind);
   });
 
   it("interrupts one context only: the successor waiting on it keeps waiting", async () => {

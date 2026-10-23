@@ -5,6 +5,7 @@ import type { AssistantMessage, JsonObject, Message, Usage } from "@earendil-wor
 import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
+import { InterruptEntry } from "./entries.ts";
 import { transcript } from "./trajectory.ts";
 
 const WIDTH = 80;
@@ -206,7 +207,7 @@ describe("transcript", () => {
   });
 
   it("an aborted answer with nothing to show leaves the marker to the interrupt note", () => {
-    const rendered = text(view([answer([], "aborted"), entry("key.interrupt")]));
+    const rendered = text(view([answer([], "aborted"), entry(InterruptEntry.kind)]));
     expect(rendered).toContain("interrupted");
     expect(rendered).not.toContain("Operation aborted");
   });
@@ -222,6 +223,6 @@ describe("transcript", () => {
   it("a reset, a compaction and an interrupt each render a note", () => {
     expect(text(view([entry("pi.reset")]))).toContain("context reset");
     expect(text(view([entry("pi.compaction")]))).toContain("compacted");
-    expect(text(view([entry("key.interrupt")]))).toContain("interrupted");
+    expect(text(view([entry(InterruptEntry.kind)]))).toContain("interrupted");
   });
 });
