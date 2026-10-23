@@ -1,5 +1,4 @@
 // The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
-import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -37,9 +36,6 @@ const { extension: KeySystem, task: KeyTask } = keySystem(git);
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
-
-/** fd walks gitignored trees fast; without it tab still edits the line, and @ completes nothing. */
-const fd = spawnSync("fd", ["--version"], { stdio: "ignore" }).status === 0 ? "fd" : null;
 
 /** The port `key serve` binds; the client and a plain `new Host()` agree on it. */
 export const PORT = 7317;
@@ -208,7 +204,7 @@ export class Host {
     force: boolean,
     signal: AbortSignal,
   ): Promise<AutocompleteSuggestions | null> {
-    return new CombinedAutocompleteProvider([], cwd, fd).getSuggestions([text], 0, text.length, {
+    return new CombinedAutocompleteProvider([], cwd).getSuggestions([text], 0, text.length, {
       signal,
       force,
     });
