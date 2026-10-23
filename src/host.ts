@@ -3,7 +3,14 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Models } from "@earendil-works/pi-ai";
+import {
+  type AnyModel,
+  type Api,
+  getSupportedThinkingLevels,
+  type Model,
+  type Models,
+  type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AgentDoc,
@@ -39,6 +46,8 @@ export const PORT = 7317;
 /** Everything the host owns lives here, outside every project: store, env. */
 const dataDirectory = join(homedir(), ".key");
 const MODEL = { provider: "deepseek", modelId: "deepseek-flash" };
+/** The level every conversation runs at unless its own agent says otherwise: `KEY_THINKING_LEVEL`. */
+const THINKING_LEVEL = (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel;
 
 /** What the host runs on. `new Host()` is one box: deepseek on SQLite at `PORT`. */
 export type HostOptions = {
@@ -46,6 +55,8 @@ export type HostOptions = {
   readonly storage: () => Storage | Promise<Storage>;
   readonly extensions: readonly Extension[];
   readonly port: number;
+  /** The level a new conversation runs at: the host's env, or its own. */
+  readonly thinkingLevel: () => ModelThinkingLevel;
 };
 
 const production = (): HostOptions => ({
@@ -56,6 +67,7 @@ const production = (): HostOptions => ({
   },
   extensions: [CodingTools, KeySystem, Agents],
   port: PORT,
+  thinkingLevel: () => THINKING_LEVEL,
 });
 
 /** One line in the transcript picker: a context's conversation, and whether it is running. */
@@ -175,7 +187,11 @@ export class Host {
   run(cwd: string, prompt: string): Promise<number> {
     return this.#harness.commit(async (tx) => {
       const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
-      await configure(tx, conversation.id, { model: MODEL, cwd });
+      await configure(tx, conversation.id, {
+        model: MODEL,
+        cwd,
+        thinkingLevel: this.#options.thinkingLevel(),
+      });
       return tx.createTask(
         KeyTask,
         { prompt },
@@ -286,14 +302,16 @@ export class Host {
   /** What the view cannot say: the branch its directory is on, and the window its model gives. */
   async #statsOf(id: number): Promise<Stats> {
     const agent = await this.#harness.snapshot(AgentDoc, id as ConversationId, context);
-    const model = agent?.model ?? MODEL;
+    const ref = agent?.model ?? MODEL;
+    const model = this.#options.models().getModel(ref.provider, ref.modelId);
     const branch = await branchOf(agent?.cwd);
     const running = this.#running();
     return {
       ...(branch === undefined ? {} : { branch }),
-      contextWindow:
-        this.#options.models().getModel(model.provider, model.modelId)?.contextWindow ?? 0,
-      model: model.modelId,
+      contextWindow: model?.contextWindow ?? 0,
+      model: ref.modelId,
+      thinkingLevel: agent?.thinkingLevel ?? THINKING_LEVEL,
+      thinkingLevels: levelsOf(model),
       running: running.has(id),
     };
   }
@@ -313,6 +331,11 @@ export class Host {
     await this.#harness.close(context);
     await closed;
   }
+}
+
+/** The levels a model can run at, in order; a model that cannot think runs at `off` alone. */
+export function levelsOf(model: AnyModel | undefined): readonly ModelThinkingLevel[] {
+  return model === undefined ? ["off"] : getSupportedThinkingLevels(model as Model<Api>);
 }
 
 /** A working directory's branch, when it is a repository: the footer shows it beside the path. */

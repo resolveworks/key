@@ -129,9 +129,8 @@ function assistantBlocks(
     }
   }
   flush();
-  if (streaming && message.content.length === 0) {
-    blocks.push(new Text(style.dim("…"), 1, 0));
-  }
+  // A generation that has content but nothing to show yet is still working.
+  if (streaming && blocks.length === 0) blocks.push(new Text(style.dim("…"), 1, 0));
   // A call whose result has not landed yet keeps its running box, args and all.
   for (const block of message.content) {
     if (block.type !== "toolCall" || calls.answered.has(block.id)) continue;

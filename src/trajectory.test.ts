@@ -166,6 +166,27 @@ describe("transcript", () => {
     expect(running).not.toContain("empty transcript");
   });
 
+  it("thinking still being written shows while the generation runs", () => {
+    const live = view([user("fix it")], {
+      generation: {
+        attempt: 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "Reading the failing test first." }],
+          api: "openai-completions",
+          provider: "deepseek",
+          model: "deepseek-flash",
+          usage,
+          stopReason: "stop",
+          timestamp: 0,
+        },
+      },
+    });
+    const rendered = text(live);
+    expect(rendered).toContain("Reading the failing test first.");
+    expect(rendered).not.toContain("empty transcript");
+  });
+
   it("a call whose result landed shows its title once, with the output beneath", () => {
     const rows = lines(
       view([call("c1", "bash", { command: "pnpm test" }), result("c1", "bash", "ok")]),

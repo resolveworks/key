@@ -22,6 +22,8 @@ pnpm client     # chat with a running host
 ```
 
 Put `DEEPSEEK_API_KEY=...` in `~/.key/.env`; the host loads it on start.
+`KEY_THINKING_LEVEL` in the same file sets the level every conversation runs at
+(`deepseek-flash` has `off`, `low`, `high`, `max`; the default is `high`).
 Everything the host owns lives in `~/.key` — the session store is SQLite at
 `~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
 

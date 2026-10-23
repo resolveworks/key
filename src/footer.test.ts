@@ -85,6 +85,8 @@ describe("footer", () => {
       branch: "main",
       contextWindow: 128_000,
       model: "deepseek-flash",
+      thinkingLevel: "high" as const,
+      thinkingLevels: ["off", "low", "high", "max"] as const,
       running: true,
     });
     const [place, spent] = footer.render(100);
@@ -92,7 +94,7 @@ describe("footer", () => {
     expect(place).toContain("(main)");
     expect(spent).toContain("↑1.2k");
     expect(spent).toContain("7.7%/128k");
-    expect(spent).toContain("deepseek-flash");
+    expect(spent).toContain("deepseek-flash • high");
     expect(visibleWidth(spent)).toBeLessThanOrEqual(100);
   });
 
@@ -107,13 +109,20 @@ describe("footer", () => {
     footer.watch(view([answered(1200, 8600)]), {
       contextWindow: 128_000,
       model: "deepseek-flash",
+      thinkingLevel: "high",
+      thinkingLevels: ["off", "low", "high", "max"],
       running: true,
     });
     expect(footer.render(100)).toHaveLength(2);
   });
 
   test("the stats line opens with the list's dot: filled while the chain streams, hollow once it settles", () => {
-    const stats = { contextWindow: 128_000, model: "deepseek-flash" };
+    const stats = {
+      contextWindow: 128_000,
+      model: "deepseek-flash",
+      thinkingLevel: "high" as const,
+      thinkingLevels: ["off", "low", "high", "max"] as const,
+    };
     const footer = new Footer("/key/repo");
     footer.watch(view([answered(1200, 8600)]), { ...stats, running: true });
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^● ↑1\.2k/);

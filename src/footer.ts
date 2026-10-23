@@ -2,7 +2,7 @@
 // spent — tokens, cache hits, cost — against the model's context window, with the model on the right.
 
 import { homedir } from "node:os";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { ConversationView, UsageState } from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { style } from "./theme.ts";
@@ -15,6 +15,10 @@ export type Stats = {
   readonly contextWindow: number;
   /** That model's id: what the right of the stats line names. */
   readonly model: string;
+  /** The level the next request runs at. */
+  readonly thinkingLevel: ModelThinkingLevel;
+  /** The levels that model can run at, in order. */
+  readonly thinkingLevels: readonly ModelThinkingLevel[];
   /** Whether the conversation's chain still streams: a task of it runs, or one it waits on. */
   readonly running: boolean;
 };
@@ -121,6 +125,7 @@ export class Footer implements Component {
   #branch: string | undefined;
   #window = 0;
   #model = "";
+  #thinking = "";
   #running: boolean | undefined;
 
   constructor(cwd: string) {
@@ -137,6 +142,7 @@ export class Footer implements Component {
     this.#branch = undefined;
     this.#window = 0;
     this.#model = "";
+    this.#thinking = "";
     this.#running = undefined;
   }
 
@@ -147,6 +153,7 @@ export class Footer implements Component {
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
     this.#model = stats.model;
+    this.#thinking = stats.thinkingLevel === "off" ? "thinking off" : stats.thinkingLevel;
     this.#running = stats.running;
   }
 
@@ -170,7 +177,11 @@ export class Footer implements Component {
 
     const left = `${dot(this.#running === true)} ${spent.join(" ")}`;
     const leftWidth = visibleWidth(left);
-    const name = truncateToWidth(this.#model, Math.max(0, width - leftWidth - 2), "");
+    const name = truncateToWidth(
+      `${this.#model}${this.#thinking === "" ? "" : ` • ${this.#thinking}`}`,
+      Math.max(0, width - leftWidth - 2),
+      "",
+    );
     const gap = Math.max(0, width - leftWidth - visibleWidth(name));
     return [...lines, `${style.dim(left)}${style.dim(`${" ".repeat(gap)}${name}`)}`];
   }
