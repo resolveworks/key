@@ -137,6 +137,35 @@ describe("host", () => {
     expect(await unknown.text()).toBe("Error: no conversation #999999");
   });
 
+  test("an interrupt parks the conversation: the dots say it no longer streams", async () => {
+    let reached!: () => void;
+    const arrived = new Promise<void>((resolve) => (reached = resolve));
+    faux.setResponses([
+      (_context, options) =>
+        new Promise((_resolve, reject) => {
+          reached();
+          const signal = options?.signal;
+          if (signal === undefined) throw new Error("faux: the request has no abort signal");
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    ]);
+
+    const list = new Frames(
+      (await app.request("/api/conversations")).body as ReadableStream<Uint8Array>,
+    );
+    await run("say hello");
+    const [running] = await list.until((frame: readonly Summary[]) => frame.length > 0);
+    await arrived;
+    expect(running.running).toBe(true);
+
+    await app.request(`/api/conversations/${running.id}/abort`, { method: "POST" });
+    const parked = await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => !item.running),
+    );
+    expect(parked.find((item) => item.id === running.id)?.running).toBe(false);
+    await list.close();
+  });
+
   test("the conversation list streams a snapshot and later changes", async () => {
     const response = await app.request("/api/conversations");
     expect(response.headers.get("content-type")).toBe("text/event-stream");

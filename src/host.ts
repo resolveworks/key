@@ -314,10 +314,12 @@ export class Host {
     };
   }
 
-  /** A conversation lives while a live task belongs to it or owns it: its chain still streams. */
+  /** A conversation streams while a live task of it runs or waits; a parked context — an interrupt
+   * — is live but idle, so it does not light the dot. */
   #running(): ReadonlySet<number> {
     const running = new Set<number>();
     for (const node of Object.values(this.#graph.tasks)) {
+      if (node.state.status === "running" && node.state.phase === "parked") continue;
       running.add(node.conversationId);
       for (const owned of node.conversations) running.add(owned);
     }

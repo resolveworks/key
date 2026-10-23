@@ -48,7 +48,8 @@ const ForkRecord = defineDoc({
 
 type KeyTaskState =
   | { readonly phase: "wait" }
-  | { readonly phase: "run"; readonly conversationId?: ConversationId };
+  | { readonly phase: "run"; readonly conversationId?: ConversationId }
+  | { readonly phase: "parked" };
 
 /** The answer of a run: the final assistant text of the entry its submission settled on. */
 const answerOf = (entries: readonly EntryRecord[], entryId: EntryId): string => {
@@ -150,11 +151,11 @@ export const keyTask = (git: Git) => {
         );
         const settled = await submission.wait(context);
         if (settled.status === "unanswered" && settled.reason === "aborted") {
-          // An interrupted context parks here: live, without a terminus, so whoever waits on it keeps
-          // waiting. A restart finds the same settled submission by its request ID and parks again;
-          // aborting the task is the one way out.
-          await new Promise<void>((resolve) =>
-            context.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
+          // An interrupted context parks: live, without a terminus, so whoever waits on it keeps
+          // waiting. The checkpoint keeps it parked across restarts; aborting the task ends it.
+          await runtime.commit(
+            () => ({ status: "running", checkpoint: { phase: "parked" } }),
+            context,
           );
           return;
         }
@@ -198,6 +199,11 @@ export const keyTask = (git: Git) => {
           }
           return { status: "terminal", outcome: { status: "completed", result } };
         }, context);
+      },
+      parked: async (_record, _runtime, context) => {
+        await new Promise<void>((resolve) =>
+          context.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
+        );
       },
     },
     abort: async (_record, runtime, context) => {
