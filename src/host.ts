@@ -11,7 +11,6 @@ import {
   type ConversationId,
   type ConversationView,
   type Cursor,
-  configure,
   createRegistry,
   type Extension,
   Harness,
@@ -30,10 +29,10 @@ import { api } from "./api.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { Search } from "./search.ts";
-import { type KeyTaskInput, keySystem } from "./system.ts";
+import { KeyTask, type KeyTaskInput, keySystem } from "./system.ts";
 
 /** The host's key, its git bound to the real one. */
-const { extension: KeySystem, task: KeyTask } = keySystem(git);
+const { extension: KeySystem } = keySystem(git);
 
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
@@ -80,14 +79,14 @@ const production = (): HostOptions => ({
   thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,
 });
 
-/** One line in the transcript picker: a context's conversation, and whether it is running. */
+/** One line in the transcript picker: a conversation and whether it has live work. */
 export type Summary = {
   readonly id: number;
-  /** That context's prompt. */
+  /** The prompt that started this conversation. */
   readonly label: string;
-  /** The directory that context runs in. */
+  /** The directory this conversation runs in. */
   readonly cwd: string;
-  /** Steps in under the conversation whose context minted this one: 0 for a cascade's kickoff. */
+  /** Steps below the conversation whose task created this one: 0 for a cascade's kickoff. */
   readonly depth: number;
   readonly running: boolean;
 };
@@ -95,8 +94,6 @@ export type Summary = {
 export class Host {
   #harness!: Harness;
   #prompts = new Map<number, string>();
-  /** Every run waiting on its answer: each resolves when the graph shows its task's mint. */
-  #mints = new Map<number, (conversation: number) => void>();
   #summaries: readonly Summary[] = [];
   #graph: TaskGraph = { tasks: {} };
   #server!: ServerType;
@@ -174,12 +171,12 @@ export class Host {
             throw new Error(`conversation ${target.conversationId} has no cwd`);
           return new NodeExecutionEnv({ cwd: target.cwd });
         },
-        onReport: (error) => console.error("key:", error),
+        onReport: (report) => console.error("key:", report),
       },
       context,
     );
 
-    // Prompts are not in the graph, so recover every key.task's input and then follow commits.
+    // Prompts are not in the graph, so recover every key.run's input and then follow commits.
     await this.#harness.commit(async (tx) => {
       let cursor: Cursor | undefined;
       for (;;) {
@@ -190,24 +187,21 @@ export class Host {
       }
     }, context);
 
-    this.#harness.subscribeCommits((publication) => {
-      for (const change of publication.changes) {
-        if (change.type === "task") this.#record(change.value);
-      }
+    this.#harness.observeCommits({
+      advance: (publication) => {
+        for (const change of publication.changes) {
+          if (change.type === "task") this.#record(change.value);
+        }
+      },
+      end: () => {},
     });
 
     await this.#publish();
     const watch = await this.#harness.watchTaskGraph(context);
-    watch.start((graph) => {
-      this.#graph = graph;
-      for (const [task, resolve] of this.#mints) {
-        const conversation = graph.tasks[task]?.conversations.at(0);
-        if (conversation !== undefined) {
-          this.#mints.delete(task);
-          resolve(conversation);
-        }
-      }
-      return this.#publish();
+    watch.start(async (call) => {
+      if (call.kind !== "value") return;
+      this.#graph = call.value;
+      await this.#publish();
     });
   }
 
@@ -225,53 +219,32 @@ export class Host {
     });
   }
 
-  /** Start a trajectory in a directory: one fresh context, in one commit, in a new conversation.
-   * The commit makes only the trajectory's holder — the conversation that owns the kickoff task
-   * and carries its config — while the context's own conversation is minted when the task runs;
-   * the answer waits for that mint, for it is the conversation a client opens. */
+  /** Start a cascade in a directory: an ownerless conversation and its first prompt. */
   async run(cwd: string, prompt: string): Promise<number> {
-    const task = await this.#harness.commit(async (tx) => {
-      const holder = await tx.createConversation({ ownership: { kind: "ownerless" } });
-      await configure(tx, holder.id, {
-        model: this.#options.model(),
-        cwd,
-        thinkingLevel: this.#options.thinkingLevel(),
-      });
-      return tx.createTask(
-        KeyTask,
-        { prompt },
-        {
-          ownership: { kind: "conversation" },
-          conversationId: holder.id,
-          background: true,
+    const conversation = await this.#harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: {
+          model: this.#options.model(),
+          cwd,
+          thinkingLevel: this.#options.thinkingLevel(),
         },
-      );
-    }, context);
-    const minted = this.#graph.tasks[task]?.conversations.at(0);
-    if (minted !== undefined) return minted;
-    return await new Promise((resolve) => this.#mints.set(task, resolve));
-  }
-
-  /** Message an existing context: one continuation context in its conversation, steering it when busy
-   * and minting at its terminus like any other. */
-  async continue(conversationId: number, prompt: string): Promise<void> {
-    const id = conversationId as ConversationId;
-    if ((await this.#harness.conversation(id, context)) === undefined)
-      throw new Error(`no conversation #${conversationId}`);
-    await this.#harness.commit(
-      (tx) =>
-        tx.createTask(
-          KeyTask,
-          { prompt, conversationId: id },
-          { ownership: { kind: "conversation" }, conversationId: id, background: true },
-        ),
+      },
       context,
     );
+    await conversation.submit({ type: "input", content: prompt, whenBusy: "steer" }, context);
+    return conversation.id;
   }
 
-  /** Interrupt a context: abort the current work of its conversation, and nothing else. Every
-   * context task is background, so the abort cannot reach the task — the run observes it and
-   * ends aborted. */
+  /** Message a conversation directly, steering its current run when it is busy. */
+  async continue(conversationId: number, prompt: string): Promise<void> {
+    const id = conversationId as ConversationId;
+    const conversation = await this.#harness.conversation(id, context);
+    if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
+    await conversation.submit({ type: "input", content: prompt, whenBusy: "steer" }, context);
+  }
+
+  /** Interrupt current work; background cascade tasks have their own conversations. */
   async interrupt(conversationId: number): Promise<void> {
     const id = conversationId as ConversationId;
     const conversation = await this.#harness.conversation(id, context);
@@ -279,7 +252,7 @@ export class Host {
     await conversation.abort(context);
   }
 
-  /** A prompt is not in the graph: the task records keep it, for the list to name a context by. */
+  /** A prompt is not in the graph: the task records keep it, for the list to name a task by. */
   #record(record: { readonly id: number; readonly kind: string; readonly input: unknown }): void {
     if (record.kind === KeyTask.definition.name)
       this.#prompts.set(record.id, (record.input as KeyTaskInput).prompt);
@@ -292,29 +265,42 @@ export class Host {
   }
 
   async #summarise(): Promise<readonly Summary[]> {
-    // Every context's conversation is owned by its task; an ownerless conversation is just a holder.
-    const listed = (await this.#scanConversations()).flatMap(({ id, owner }) =>
-      owner === undefined ? [] : [{ id, owner }],
-    );
+    const listed = await this.#scanConversations();
     // The graph holds live tasks only; a conversation runs while one belongs to it or owns it.
     const running = this.#running();
     const cwds = new Map<number, string>();
-    for (const { id } of listed) {
+    const prompts = new Map<number, string>();
+    for (const { id, owner } of listed) {
       const cwd = (await this.#harness.snapshot(AgentDoc, id as ConversationId, context))?.cwd;
       if (cwd !== undefined) cwds.set(id, cwd);
+      const prompt =
+        owner === undefined ? await this.#kickoffPrompt(id) : this.#prompts.get(owner.taskId);
+      if (prompt !== undefined) prompts.set(id, prompt);
     }
-    return forest(listed).map(({ id, owner, depth }) => ({
+    return forest(listed).map(({ id, depth }) => ({
       id,
-      label: this.#prompts.get(owner.taskId)?.split("\n", 1)[0]?.trim() ?? "",
+      label: prompts.get(id)?.split("\n", 1)[0]?.trim() ?? "",
       cwd: cwds.get(id) ?? "",
       depth,
       running: running.has(id),
     }));
   }
 
-  async #scanConversations(): Promise<readonly { id: number; owner?: Creator }[]> {
+  /** An ownerless conversation is named by the human prompt that started it. */
+  async #kickoffPrompt(id: number): Promise<string | undefined> {
+    const conversation = await this.#harness.conversation(id as ConversationId, context);
+    if (conversation === undefined) throw new Error(`no conversation #${id}`);
+    const first = (await conversation.entries({ order: "ascending" }, 1, undefined, context))
+      .items[0];
+    const message = first?.model?.[0];
+    return message?.role === "user" && typeof message.content === "string"
+      ? message.content
+      : undefined;
+  }
+
+  async #scanConversations(): Promise<readonly ContextConversation[]> {
     return this.#harness.commit(async (tx) => {
-      const found: { id: number; owner?: Creator }[] = [];
+      const found: ContextConversation[] = [];
       let cursor: Cursor | undefined;
       for (;;) {
         const page = await tx.scanConversations({}, SCAN_PAGE_SIZE, cursor);
@@ -356,32 +342,29 @@ export class Host {
   }
 }
 
-/** A conversation's creator edge, as durable records it at the mint: the context's task, in the
- * conversation that minted it. */
+/** A task-owned conversation's creator edge, placing it beneath the conversation that forked it. */
 type Creator = { readonly taskId: number; readonly conversationId: number };
 
-/** A conversation the list shows: a context's own. A conversation without a creator is the holder
- * `run` made for a kickoff, and the list skips it. */
-type ContextConversation = { readonly id: number; readonly owner: Creator };
+/** A conversation the list shows, with the task edge that names and places it. */
+type ContextConversation = { readonly id: number; readonly owner?: Creator };
 
 /** A listed conversation placed for display: `depth` hops under its cascade's kickoff. */
 type Placed = ContextConversation & { depth: number };
 
 /** The listed conversations in display order: one contiguous block per cascade — the tree rooted
- * at a kickoff, whose creator is the unlisted holder — the newest cascade's block first, and within
- * a block a conversation ahead of its children, siblings ascending by id, so the successor a
- * terminus mints after its forks lands last on its level. */
+ * at the ownerless kickoff conversation — the newest cascade's block first, and within a block a
+ * conversation ahead of its children, siblings ascending by id, so a run's successor follows
+ * its forks on their level. */
 function forest(conversations: readonly ContextConversation[]): readonly Placed[] {
-  const listed = new Set(conversations.map(({ id }) => id));
   const block = (root: ContextConversation, depth: number): readonly Placed[] => [
     { ...root, depth },
     ...conversations
-      .filter(({ owner }) => owner.conversationId === root.id)
+      .filter(({ owner }) => owner?.conversationId === root.id)
       .sort((left, right) => left.id - right.id)
       .flatMap((child) => block(child, depth + 1)),
   ];
   return conversations
-    .filter(({ owner }) => !listed.has(owner.conversationId))
+    .filter(({ owner }) => owner === undefined)
     .map((root) => block(root, 0))
     .sort(
       (left, right) =>

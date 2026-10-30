@@ -2,21 +2,22 @@
 
 # Key
 
-**Cascading contexts.** Information only flows forward. There is no call/return
+**Cascading tasks.** Information only flows forward. There is no call/return
 anywhere.
 
 Key is a host and a terminal client. One process — the host — owns every
 cascade on a durable session and serves it over HTTP; the client is a dumb
 terminal chat that starts trajectories, streams them, and browses past ones.
-The agents are coding agents: each context runs in a project directory you
-point it at, on the model `KEY_MODEL` picks (`deepseek/deepseek-flash` by
-default).
+The agents are coding agents: each conversation runs in a project directory
+you point it at, on the model `KEY_MODEL` picks (`deepseek/deepseek-flash`
+by default).
 
 The implementation may change. The idea below does not.
 
 ## Usage
 
-Needs Node 26 and pnpm.
+Needs Node 26 and pnpm. Durable and pi-ai are linked from `../pi/packages`;
+build that checkout before running Key.
 
 ```
 pnpm install
@@ -32,7 +33,7 @@ the same file sets the level every conversation runs at (a model without
 thinking runs at `off`; the default is `high`). `KEY_BIND` in the same file
 sets the interface the server listens on (`127.0.0.1` by default;
 `0.0.0.0` to accept connections from off the box). `BRAVE_API_KEY` in the
-same file gives every context `web_search`, the tool that searches the web.
+same file gives every conversation `web_search`, the tool that searches the web.
 Everything the host owns lives in `~/.key` — the session store is SQLite at
 `~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
 
@@ -43,57 +44,55 @@ The host's whole surface, served by hono; both streams are SSE.
 ```
 GET  /api/conversations               transcripts, then changes (SSE)
 GET  /api/conversations/:id           one transcript, then changes (SSE)
-POST /api/run                         {prompt, cwd} → {conversation}: start a context in that directory
+POST /api/run                         {prompt, cwd} → {conversation}: start a conversation in that directory
 POST /api/complete                    {cwd, text, force}: the host's completion of one prompt line
-POST /api/conversations/:id/messages  {prompt}: message a context
-POST /api/conversations/:id/abort     interrupt a context: abort its conversation's current work
+POST /api/conversations/:id/messages  {prompt}: message a conversation
+POST /api/conversations/:id/abort     interrupt a conversation: abort its current work
 ```
 
 ## Core idea
 
-Every agent invocation is a **fresh context**. A context runs once, may fork
-child contexts, and then ends. It never waits for a child, never resumes, and
-never receives a child's result.
+A **conversation** is a durable transcript and its agent configuration. `/new`
+creates an ownerless conversation and submits a prompt directly. An ordinary
+message submits directly to its conversation too, steering the current run when
+one is busy.
 
-When a context forks, it mints:
+A **task** is durable work that can own a conversation, produce a result, and be
+waited on. Key uses tasks for the asynchronous branches of a cascade, not for
+ordinary prompts.
 
-- a child task for each child context, to run in a fresh conversation of its own;
-- a successor task, to run in a fresh conversation of its own once those children
-  settle.
+A successful `fork` call immediately starts a child task in a fresh conversation
+and git worktree. The child is background work of the forking conversation: the
+forking run does not wait for it and never receives its result.
 
-The successor starts with the forking context's last message and the children's
-results. It is not the forking context continuing. It is a new context.
+When a run that forked answers, it starts a successor task in another fresh
+conversation. The successor waits for all that run's children to settle. Its
+prompt contains the forking run's final answer and the children's settled
+results.
 
-If the successor forks again, the same thing happens: it forks children and mints
-a new successor that will run when they settle. That is the loop. The loop ends
-when a context forks nothing.
+If the successor forks again, its conversation owns the new children and the
+next successor. That is the loop. The loop ends when a run forks nothing.
 
-A **cascade** is one loop: a kickoff context followed by a chain of fresh
-successor contexts. It can fork and join many times. The first context is the
-human kickoff; every later context is a loop iteration.
+A **cascade** is a kickoff conversation followed by a chain of fresh successor
+conversations, with forked child conversations branching off each step. Only a
+child's settled result crosses into its parent's successor.
 
-Every cascade context runs in a conversation of its own; the cascade never resumes
-one. A human message is the one way back in: it steers the open conversation
-directly. Each forked child is its own branch; only its settled result crosses
-into the parent's successor.
-
-An **interrupt** aborts one context's run where it stands. The context ends
-terminal aborted — no answer, and the forks it recorded die with it — so
-whoever waits on it settles and runs. The transcript records the interrupt
-where it landed. A message to its conversation continues the work as a fresh
-context, which mints only its own forks.
+An **interrupt** aborts one conversation's current run. Background work in other
+conversations keeps going. Interrupting a fork or successor's conversation ends
+its task aborted, allowing anything waiting on that task to settle and run. An
+interrupted run does not create a successor.
 
 ```text
 cascade
 
-  A          kickoff context; forks children
+  A          kickoff conversation; its run forks children
   A'         fresh successor: joins A's children; may fork more
   A''        fresh successor: joins the children forked by A'
-  ...        until a context forks nothing
+  ...        until a run forks nothing
 ```
 
-Information only ever enters a fresh context. Nothing returns to the context
-that forked it.
+Information only ever enters a fresh successor. Nothing returns to the
+conversation that forked it.
 
 ## Development
 

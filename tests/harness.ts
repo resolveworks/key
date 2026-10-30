@@ -6,6 +6,7 @@ import {
   type FauxProviderHandle,
   type FauxResponseStep,
   fauxProvider,
+  type Message,
   type Models,
 } from "@earendil-works/pi-ai";
 import {
@@ -53,7 +54,7 @@ export function keySetup(): KeySetup {
   return { faux, models, registry, reports: [] };
 }
 
-/** The key.task of the fake git: the kind tests create, behavior resolved from the installed key. */
+/** The key.run of the fake git: the kind fork and successor records use. */
 export const KeyTask = key.task;
 
 /** Open one host process's Harness over `storage`; closing it and opening another on the same setup is a restart. */
@@ -76,7 +77,7 @@ export function openKey(
 
 export type KeyRecord = TaskRecord<KeyTaskInput, unknown, string>;
 
-/** Every key.task committed so far, in ID order: the whole cascade, terminal contexts included. */
+/** Every key.run committed so far, in ID order: the cascade's forks and successors. */
 export async function cascade(harness: Harness): Promise<readonly KeyRecord[]> {
   const records: KeyRecord[] = [];
   await harness.commit(async (tx) => {
@@ -86,7 +87,7 @@ export async function cascade(harness: Harness): Promise<readonly KeyRecord[]> {
   return records;
 }
 
-/** The conversation a context minted for its own run, once it has. */
+/** The conversation a fork or successor task owns. */
 export async function conversationOf(harness: Harness, task: TaskId): Promise<ConversationId> {
   let found: ConversationId | undefined;
   await vi.waitFor(
@@ -110,11 +111,35 @@ export async function entries(
   return (await conversation.context(context)).entries;
 }
 
-/** Interrupt a context as the host does: abort the current work of its conversation. */
+/** Interrupt a task as the host does: abort the current work of its conversation. */
 export async function interrupt(harness: Harness, task: TaskId): Promise<void> {
   const conversation = await harness.conversation(await conversationOf(harness, task), context);
   if (conversation === undefined) throw new Error(`no conversation of task ${task}`);
   await conversation.abort(context);
+}
+
+/** All user text in a model request, used to route concurrent conversations in a scripted model. */
+export function requestText(messages: readonly Message[]): string {
+  return messages
+    .flatMap((message) => {
+      if (message.role !== "user") return [];
+      if (typeof message.content === "string") return [message.content];
+      return message.content.flatMap((part) => (part.type === "text" ? [part.text] : []));
+    })
+    .join("\n");
+}
+
+/** Answer the parent with one script and any conversation whose prompt contains a key with another. */
+export function route(
+  parent: FauxResponseStep,
+  children: Readonly<Record<string, FauxResponseStep>>,
+): FauxResponseStep {
+  return (request, options, state, model) => {
+    const text = requestText(request.messages);
+    const key = Object.keys(children).find((candidate) => text.includes(candidate));
+    const step = key === undefined ? parent : children[key];
+    return typeof step === "function" ? step(request, options, state, model) : step;
+  };
 }
 
 /** A faux response that never answers: the run stays mid-generation until its request is aborted. */

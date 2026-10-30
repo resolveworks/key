@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0",
+    "@earendil-works/pi-ai": "link:../pi/packages/ai",
+    "@earendil-works/pi-durable": "link:../pi/packages/durable",
     "@earendil-works/pi-tui": "1.4.0",
     "@hono/node-server": "^2.1.5",
     "hono": "^4.13.13",

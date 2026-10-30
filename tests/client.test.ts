@@ -22,21 +22,21 @@ const child = (id: number, name: string, running = false): Summary => ({
   cwd: `/key/worktrees/${name}`,
 });
 
-// The host lists by cascade, newest cascade first; finished contexts stay in the list but never
-// in the ring. The composer joins the ring only while a trajectory is being written in it — an
+// The host lists by cascade, newest cascade first; finished conversations stay in the list but
+// never in the ring. The composer joins the ring only while a trajectory is being written in it — an
 // empty `/new` is no place at all.
 const summaries = [summary(5, true), summary(4, false), summary(3, true), summary(1, true)];
 const draft = "fix the flaky test";
 
 describe("cycle", () => {
-  test("a drafted composer leads the ring, then the running contexts in the list's order", () => {
+  test("a drafted composer leads the ring, then the running conversations in the list's order", () => {
     expect(cycle(summaries, "new", 1, draft)).toBe(5); // forward from the composer: the newest running
     expect(cycle(summaries, "new", -1, draft)).toBe(1); // back from the composer: the oldest running
     expect(cycle(summaries, 1, 1, draft)).toBe("new"); // forward off the oldest wraps onto the composer
     expect(cycle(summaries, 5, -1, draft)).toBe("new"); // back off the newest wraps onto the composer
   });
 
-  test("from a running context it steps to the running neighbor, wrapping both ways", () => {
+  test("from a running conversation it steps to the running neighbor, wrapping both ways", () => {
     expect(cycle(summaries, 5, 1, draft)).toBe(3);
     expect(cycle(summaries, 3, 1, draft)).toBe(1);
     expect(cycle(summaries, 3, -1, draft)).toBe(5);
@@ -55,13 +55,13 @@ describe("cycle", () => {
     expect(cycle(summaries, 4, -1, "")).toBe(1);
   });
 
-  test("an empty composer is no place: the ring is the running contexts alone", () => {
+  test("an empty composer is no place: the ring is the running conversations alone", () => {
     expect(cycle(summaries, 1, 1, "")).toBe(5); // off the oldest wraps onto the newest
     expect(cycle(summaries, 5, -1, "")).toBe(1);
     expect(cycle(summaries, 3, 1, " ")).toBe(1); // whitespace is nothing typed
   });
 
-  test("a lone running context is its own neighbor while the composer is empty", () => {
+  test("a lone running conversation is its own neighbor while the composer is empty", () => {
     const lone = [summary(4, false), summary(3, true)];
     expect(cycle(lone, 3, 1, "")).toBe(3);
     expect(cycle(lone, 3, -1, "")).toBe(3);

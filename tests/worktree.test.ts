@@ -2,7 +2,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { FauxResponseStep } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   type AgentState,
   type ConversationRecord,
@@ -13,7 +14,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { branchFor, ensureWorktree } from "../src/worktree.ts";
 import { fakeGit, gitCalls, REPO, resetGit } from "./git.ts";
-import { conversationOf, KeyTask, keySetup, openKey } from "./harness.ts";
+import { conversationOf, KeyTask, keySetup, MODEL, openKey, requestText } from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -52,34 +53,41 @@ describe("a child's run", () => {
     for (const harness of harnesses.splice(0)) await harness.close(context);
   });
 
-  /** One harness with fake git underneath; the model just answers "done". */
-  async function open(): Promise<Harness> {
+  /** Fork one child through the model, then return its task and conversation. */
+  async function runChild(name: string): Promise<{
+    readonly harness: Harness;
+    readonly task: TaskId;
+    readonly conversation: ConversationRecord;
+  }> {
     const setup = keySetup();
-    setup.faux.setResponses([fauxAssistantMessage("done"), fauxAssistantMessage("done")]);
+    const answer: FauxResponseStep = (request) => {
+      const text = requestText(request.messages);
+      if (text.includes("Upstream results") || text.includes("ask the child"))
+        return fauxAssistantMessage("done");
+      if (request.messages.at(-1)?.role === "toolResult")
+        return fauxAssistantMessage("parent done");
+      return fauxAssistantMessage(fauxToolCall("fork", { name, prompt: "ask the child" }), {
+        stopReason: "toolUse",
+      });
+    };
+    setup.faux.setResponses([answer, answer, answer, answer]);
     const harness = await openKey(new MemoryStorage(), setup);
     harnesses.push(harness);
-    return harness;
-  }
-
-  /** Run one child task in the root conversation, wait for it, and return it with its conversation. */
-  async function runChild(
-    harness: Harness,
-    name: string,
-  ): Promise<{ readonly task: TaskId; readonly conversation: ConversationRecord }> {
-    const root = await harness.root(context, { agent: { cwd: REPO } });
-    const task = await root.commit(
-      (tx) =>
-        tx.createTask(
-          KeyTask,
-          { prompt: "ask the child", name },
-          { ownership: { kind: "conversation" } },
-        ),
-      context,
-    );
+    const root = await harness.root(context, { agent: { model: MODEL, cwd: REPO } });
+    const submission = await root.submit({ type: "input", content: "start the child" }, context);
+    expect((await submission.wait(context)).status).toBe("done");
+    const task = await harness.commit(async (tx) => {
+      const records = await tx.scanTasks({ kind: KeyTask.definition.name }, 100);
+      const child = records.items.find(
+        (record) => (record.input as { readonly name?: string }).name === name,
+      );
+      if (child === undefined) throw new Error(`no child ${name}`);
+      return child.id;
+    }, context);
     await harness.waitForTask(task, context);
     const conversation = await harness.conversation(await conversationOf(harness, task), context);
     if (conversation === undefined) throw new Error(`no conversation for task #${task}`);
-    return { task, conversation };
+    return { harness, task, conversation };
   }
 
   async function userMessages(harness: Harness, id: ConversationRecord["id"]): Promise<string[]> {
@@ -95,20 +103,18 @@ describe("a child's run", () => {
     id: ConversationRecord["id"],
   ): Promise<AgentState | undefined> {
     const conversation = await harness.conversation(id, context);
-    const view = await conversation?.viewState(context);
-    return view?.value.docs["pi.agent"] as AgentState | undefined;
+    const watch = await conversation?.watch(context);
+    return watch?.value.docs["pi.agent"] as AgentState | undefined;
   }
 
-  it("a child runs inside the worktree its name mints", async () => {
-    const harness = await open();
-    const { conversation } = await runChild(harness, "fix-the-bug");
+  it("a child runs inside the worktree its name creates", async () => {
+    const { harness, conversation } = await runChild("fix-the-bug");
     const agent = await agentState(harness, conversation.id);
     expect(agent?.cwd).toBe(join(homedir(), ".key", "worktrees", "fix-the-bug"));
   });
 
   it("a child's prompt names its branch and tells it to commit", async () => {
-    const harness = await open();
-    const { conversation } = await runChild(harness, "commit-it");
+    const { harness, conversation } = await runChild("commit-it");
     const [prompt] = await userMessages(harness, conversation.id);
     expect(prompt).toMatch(/^You work in an isolated git worktree on branch agent\/commit-it\./);
     expect(prompt).toMatch(/Commit/);

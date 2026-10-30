@@ -309,7 +309,7 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  /** Interrupt an open context: abort the current work of its conversation. */
+  /** Interrupt an open conversation's current work. */
   const interrupt = async (id: number): Promise<void> => {
     try {
       await call(() => client.api.conversations[":id"].abort.$post({ param: { id: String(id) } }));
@@ -366,14 +366,14 @@ export async function open(base: string): Promise<void> {
       quit();
       return { consume: true };
     }
-    // Esc interrupts the open context's run, as pi's esc esc does. Only an empty prompt: with a
+    // Esc interrupts the open conversation's run, as pi's esc esc does. Only an empty prompt: with a
     // draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
     if (matchesKey(data, "escape") && prompt.getText() === "") {
       const id = openConversation();
       if (id !== undefined && runs(id)) void interrupt(id);
     }
     // Ctrl+y steps forward through the live places, ctrl+o back, alt+tab-style: a drafted
-    // composer and the running contexts in the list's order are the ring, and it wraps — so a
+    // composer and the running conversations in the list's order are the ring, and it wraps — so a
     // `/new` in progress, draft and all, is ever a step away. An empty composer is no place, and
     // with nothing live the key lands nowhere — still consumed. Ctrl+letters ride their own byte
     // in every terminal — Konsole included — where ctrl+tab is byte-identical to plain tab.
@@ -506,7 +506,7 @@ function makeList(summaries: readonly Summary[]): SelectList {
 }
 
 /** The live places as a ring: a drafted composer first — a trajectory being written is the newest
- * thing — then the running contexts in the list's order, newest cascade first. The composer is a
+ * thing — then the running conversations in the list's order, newest cascade first. The composer is a
  * place only while its draft has text; an empty `/new` never joins the ring. From one of the
  * places, its neighbor in `direction`, wrapping — so a trajectory in progress is ever a step
  * away. From a place not in the ring — a settled conversation, an empty composer — the first

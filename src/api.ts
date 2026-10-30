@@ -17,7 +17,7 @@ const RunInput = Type.Object({
   cwd: Type.String({ minLength: 1 }),
 });
 
-/** What `POST /api/conversations/:id/messages` takes: the prompt that messages a context. */
+/** What `POST /api/conversations/:id/messages` takes: the prompt that messages a conversation. */
 const MessageInput = Type.Object({ prompt: Prompt });
 
 /** What `POST /api/complete` takes: the line as it stands before the cursor, the directory it
@@ -32,10 +32,10 @@ const index = `key host
 
   GET  /api/conversations              transcripts, then changes (SSE)
   GET  /api/conversations/:id          one transcript, then changes (SSE)
-  POST /api/run                        {prompt, cwd} → {conversation}: start a context in that directory
+  POST /api/run                        {prompt, cwd} → {conversation}: start a conversation in that directory
   POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
-  POST /api/conversations/:id/messages  {prompt}: message a context
-  POST /api/conversations/:id/abort     interrupt a context: abort its current run
+  POST /api/conversations/:id/messages  {prompt}: message a conversation
+  POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
 `;
 
 /** What one thrown error answers: the error as text — but a parse failure keeps its details on
@@ -71,7 +71,9 @@ export function api(host: Host) {
           const send = async (view: ConversationView) =>
             stream.writeSSE({ data: JSON.stringify({ view, stats: await host.stats(view) }) });
           await send(watch.value);
-          watch.start((view) => send(view));
+          watch.start(async (call) => {
+            if (call.kind === "value") await send(call.value);
+          });
           stream.onAbort(() => void watch.stop());
           while (!stream.aborted) await stream.sleep(1000);
         });

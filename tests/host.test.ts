@@ -19,6 +19,7 @@ import type { Stats } from "../src/footer.ts";
 import { Host, type Summary } from "../src/host.ts";
 import { keySystem } from "../src/system.ts";
 import { fakeGit, REPO } from "./git.ts";
+import { requestText, route } from "./harness.ts";
 
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
 type Transcript = { readonly view: ConversationView; readonly stats: Stats };
@@ -149,7 +150,7 @@ describe("host", () => {
     expect(await unknown.text()).toBe("Error: no conversation #999999");
   });
 
-  test("an interrupted context no longer runs: the dots say it", async () => {
+  test("an interrupted conversation no longer runs: the dots say it", async () => {
     const hung = stuck();
     faux.setResponses([hung.step]);
 
@@ -181,24 +182,19 @@ describe("host", () => {
     await frames.close();
   });
 
-  test("a run answers the conversation its context mints, whatever the prompt's shape", async () => {
+  test("a run answers the conversation it starts, whatever the prompt's shape", async () => {
     faux.setResponses([fauxAssistantMessage("hello")]);
     const id = await startRun("say hello\nand more");
     const list = await openList();
     const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
     await list.close();
-    // The holder the run's commit made is never listed; the context's conversation is, named by
-    // the prompt's first line.
+    // The run's one conversation is listed, named by the prompt's first line.
     expect(listed[0]).toMatchObject({ id, label: "say hello" });
   });
 
   test("a forking kickoff lists its child beneath it", async () => {
-    faux.setResponses([
-      turn("I forked a.", ["a"]),
-      turn("a is on its way"),
-      turn("a answers"),
-      turn("summed"),
-    ]);
+    const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
+    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     await run("kick off");
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
@@ -209,22 +205,38 @@ describe("host", () => {
       { label: "task for a", depth: 1 },
       { label: "a is on its way", depth: 1 },
     ]);
-    // The child mints after its kickoff and lists beneath it anyway.
+    // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
     expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/a`);
   });
 
   test("interleaved cascades hold one block each, the newest cascade's on top", async () => {
     const child = held("a answers");
+    const second: FauxResponseStep = (request) => {
+      if (requestText(request.messages).includes("Upstream results"))
+        return turn("the second summed");
+      return request.messages.at(-1)?.role === "toolResult"
+        ? turn("the second heir")
+        : turn("the second forks b.", ["b"]);
+    };
+    const first: FauxResponseStep = (request) =>
+      requestText(request.messages).includes("Upstream results")
+        ? turn("the first summed")
+        : turn("the first heir");
+    const answer = route(first, {
+      "task for a": child.step,
+      "task for b": turn("b answers"),
+      "the second": second,
+    });
     faux.setResponses([
       turn("the first forks a.", ["a"]),
-      turn("the first heir"),
-      child.step,
-      turn("the second forks b.", ["b"]),
-      turn("the second heir"),
-      turn("b answers"),
-      turn("the second summed"),
-      turn("the first summed"),
+      answer,
+      answer,
+      answer,
+      answer,
+      answer,
+      answer,
+      answer,
     ]);
     const list = await openList();
     await run("the first");
@@ -258,14 +270,16 @@ describe("host", () => {
     expect(listed[2].id).toBeGreaterThan(listed[5].id);
   });
 
-  test("a minted heir lists after the forks of its terminus, its own forks under it", async () => {
+  test("a successor lists after its run's forks, with its own forks beneath it", async () => {
+    const firstAnswer = route(turn("the first heir"), { "task for a": turn("a answers") });
+    const secondAnswer = route(turn("the second heir"), { "task for b": turn("b answers") });
     faux.setResponses([
       turn("I fork a.", ["a"]),
-      turn("the first heir"),
-      turn("a answers"),
+      firstAnswer,
+      firstAnswer,
       turn("the heir forks b.", ["b"]),
-      turn("the second heir"),
-      turn("b answers"),
+      secondAnswer,
+      secondAnswer,
       turn("summed"),
     ]);
     const list = await openList();
@@ -337,7 +351,7 @@ describe("host", () => {
     return new Frames((await app.request("/api/conversations")).body as ReadableStream<Uint8Array>);
   }
 
-  /** Start a context from a prompt, as a client does: the prompt and its directory. */
+  /** Start a conversation from a prompt, as a client does: the prompt and its directory. */
   async function run(prompt: string): Promise<Response> {
     return app.request("/api/run", {
       method: "POST",
@@ -346,7 +360,7 @@ describe("host", () => {
     });
   }
 
-  /** Start a context from a prompt: the conversation the run's answer names. */
+  /** Start a conversation from a prompt: the ID the run endpoint answers. */
   async function startRun(prompt: string): Promise<number> {
     faux.setResponses([fauxAssistantMessage("hello")]);
     const { conversation } = (await (await run(prompt)).json()) as { conversation: number };
@@ -364,7 +378,7 @@ describe("host", () => {
     );
   }
 
-  /** A held answer: some context asks for it (`asked`, so the test knows the queue slot is taken),
+  /** A held answer: some task asks for it (`asked`, so the test knows the queue slot is taken),
    * then waits for its release. */
   function held(text: string): {
     readonly step: FauxResponseStep;
