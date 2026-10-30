@@ -1,3 +1,6 @@
+Key is a durable host and terminal client for cascades of coding agents —
+information only flows forward.
+
 ## Spirit
 
 Fast-moving, experimental, always current. This is an Arch Linux hacker's
