@@ -90,14 +90,6 @@ describe("a child's run", () => {
     return { harness, task, conversation };
   }
 
-  async function userMessages(harness: Harness, id: ConversationRecord["id"]): Promise<string[]> {
-    const conversation = await harness.conversation(id, context);
-    const view = await conversation?.context(context);
-    return (view?.messages ?? []).flatMap((message) =>
-      message.role === "user" && typeof message.content === "string" ? [message.content] : [],
-    );
-  }
-
   async function agentState(
     harness: Harness,
     id: ConversationRecord["id"],
@@ -111,12 +103,5 @@ describe("a child's run", () => {
     const { harness, conversation } = await runChild("fix-the-bug");
     const agent = await agentState(harness, conversation.id);
     expect(agent?.cwd).toBe(join(homedir(), ".key", "worktrees", "fix-the-bug"));
-  });
-
-  it("a child's prompt names its branch and tells it to commit", async () => {
-    const { harness, conversation } = await runChild("commit-it");
-    const [prompt] = await userMessages(harness, conversation.id);
-    expect(prompt).toMatch(/^You work in an isolated git worktree on branch agent\/commit-it\./);
-    expect(prompt).toMatch(/Commit/);
   });
 });

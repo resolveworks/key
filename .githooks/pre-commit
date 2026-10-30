@@ -1,6 +1,6 @@
 #!/bin/sh
-# Format and fix what's staged, then stage the fixes.
-pnpm exec biome check --write --staged --no-errors-on-unmatched && git add -u || exit 1
+# Fix what's staged — lint-staged re-stages only what the fix touched.
+pnpm exec lint-staged || exit 1
 
 # Full gate: types and behavior tests. A stack trace is the error message.
 pnpm check || exit 1

@@ -18,7 +18,7 @@ import {
   type Tx,
 } from "@earendil-works/pi-durable";
 import type { Git } from "./git.ts";
-import { branchFor, CHILD_NAME, ensureWorktree } from "./worktree.ts";
+import { CHILD_NAME, ensureWorktree } from "./worktree.ts";
 
 /** A fork or successor: one prompt in the conversation this task owns. */
 export type KeyTaskInput =
@@ -89,15 +89,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
           ? prompt
           : `${prompt}\n\nUpstream results:\n\n${upstream.join("\n\n")}`;
       const submission = await handle.submit(
-        {
-          type: "input",
-          content:
-            "name" in record.input
-              ? `You work in an isolated git worktree on branch ${branchFor(record.input.name)}. Commit all work before you finish.\n\n${text}`
-              : text,
-          requestId: `key.run:${record.id}`,
-          whenBusy: "steer",
-        },
+        { type: "input", content: text, requestId: `key.run:${record.id}`, whenBusy: "steer" },
         context,
       );
       const settled = await submission.wait(context);
@@ -181,11 +173,11 @@ const forkTool = (git: Git) => {
   const Fork = defineTool({
     name: "fork",
     description:
-      "Start one child task immediately in its own git worktree and conversation. The name becomes the child's branch agent/<name>; commit all work before finishing. You do not wait for it. Call fork once per child; calling it several times forks several children. When your run answers, a fresh successor starts once all its children settle, with your final answer and their results. A child does not fork.",
+      "Start one child task immediately in its own git worktree and conversation. You do not wait for it. Call fork once per child; calling it several times forks several children. When your run answers, a fresh successor starts once all its children settle, with your final answer and their results. A child does not fork.",
     parameters: Type.Object({
       name: Type.String({
         pattern: CHILD_NAME.source,
-        description: "Lowercase kebab-case child name; also its branch agent/<name>.",
+        description: "Lowercase kebab-case child name.",
       }),
       prompt: Type.String({ description: "The prompt for the child task." }),
     }),
