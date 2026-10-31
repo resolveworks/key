@@ -20,6 +20,7 @@ const hex = (value: string): Color => parseColor(value);
 const fg = {
   accent: hex("#b281d6"),
   success: hex("#68d391"),
+  warning: hex("#e0af68"),
   error: hex("#f08c66"),
   borderMuted: okhslColor(229, 0.08, 0.53),
   muted: okhslColor(229, 0.06, 0.67),
@@ -65,6 +66,7 @@ export const style = {
   accent: on(fg.accent),
   borderMuted: on(fg.borderMuted),
   success: on(fg.success),
+  warning: on(fg.warning),
   error: on(fg.error),
   bold: on(undefined, { bold: true }),
   italic: on(undefined, { italic: true }),

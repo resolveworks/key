@@ -99,9 +99,9 @@ export async function open(base: string): Promise<void> {
   /** The login stream, live only while the login view is open. */
   let loginWatch: (() => void) | undefined;
 
-  /** The task graph's verdict on one conversation: the list's dot, the ring, and the interrupt gate. */
-  const runs = (id: number): boolean =>
-    summaries.some((summary) => summary.id === id && summary.running);
+  /** Whether one conversation's own run is in flight: the interrupt gate. */
+  const streaming = (id: number): boolean =>
+    summaries.some((summary) => summary.id === id && summary.streaming);
 
   /** The view the screen is on — or, under the list, the one it covers: the one whose draft the
    * editor holds. */
@@ -563,13 +563,14 @@ export async function open(base: string): Promise<void> {
     // draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
     if (matchesKey(data, "escape") && prompt.getText() === "") {
       const id = openConversation();
-      if (id !== undefined && runs(id)) void interrupt(id);
+      if (id !== undefined && streaming(id)) void interrupt(id);
     }
-    // Ctrl+y steps forward through the live places, ctrl+o back, alt+tab-style: a drafted
-    // composer and the running conversations in the list's order are the ring, and it wraps — so a
-    // `/new` in progress, draft and all, is ever a step away. An empty composer is no place, and
-    // with nothing live the key lands nowhere — still consumed. Ctrl+letters ride their own byte
-    // in every terminal — Konsole included — where ctrl+tab is byte-identical to plain tab.
+    // Ctrl+y steps forward through the places that need a human, ctrl+o back, alt+tab-style: a
+    // drafted composer and the attention conversations in the list's order are the ring, and it
+    // wraps — so a `/new` in progress, draft and all, is ever a step away. An empty composer is no
+    // place, and with nothing needing attention the key lands nowhere — still consumed. Ctrl+letters
+    // ride their own byte in every terminal — Konsole included — where ctrl+tab is byte-identical to
+    // plain tab.
     const chords = [
       ["ctrl+y", 1],
       ["ctrl+o", -1],
@@ -680,12 +681,12 @@ export function inheritCwd(summaries: readonly Summary[], id: number): string {
   return summaries[kickoff]?.cwd ?? open.cwd;
 }
 
-/** One line of the list: the cascade's depth as indentation, two spaces a level, ahead of
- * the running dot, then the directory and the prompt. */
+/** One line of the list: the cascade's depth as indentation, two spaces a level, then the
+ * streaming dot, the attention mark, the directory and the prompt. */
 export function line(summary: Summary): string {
-  return `${"  ".repeat(summary.depth)}${dot(summary.running)} ${
-    summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `
-  }${summary.label}`;
+  return `${"  ".repeat(summary.depth)}${dot(summary.streaming)} ${
+    summary.attention ? style.warning("!") : " "
+  } ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`;
 }
 
 /** One selectable transcript: what was asked, where it ran, and whether it runs now. */
@@ -698,13 +699,13 @@ function makeList(summaries: readonly Summary[]): SelectList {
   );
 }
 
-/** The live places as a ring: a drafted composer first — a trajectory being written is the newest
- * thing — then the running conversations in the list's order, newest cascade first. The composer is a
- * place only while its draft has text; an empty `/new` never joins the ring. From one of the
- * places, its neighbor in `direction`, wrapping — so a trajectory in progress is ever a step
- * away. From a place not in the ring — a settled conversation, an empty composer — the first
- * running forward and the last back; with none running, the drafted composer; with nothing
- * live, nowhere. */
+/** The places that need a human as a ring: a drafted composer first — a trajectory being written
+ * is the newest thing — then the attention conversations in the list's order, newest cascade
+ * first. The composer is a place only while its draft has text; an empty `/new` never joins the
+ * ring. From one of the places, its neighbor in `direction`, wrapping — so a trajectory in
+ * progress is ever a step away. From a place not in the ring — a settled conversation, an empty
+ * composer — the first attention forward and the last back; with none, the drafted composer;
+ * with nothing that needs attention, nowhere. */
 export function cycle(
   summaries: readonly Summary[],
   current: Name,
@@ -712,10 +713,10 @@ export function cycle(
   draft: string,
 ): Name | undefined {
   const drafted = draft.trim() !== "";
-  const running = summaries.filter((summary) => summary.running).map((summary) => summary.id);
-  const ring: readonly Name[] = drafted ? ["new", ...running] : running;
+  const attention = summaries.filter((summary) => summary.attention).map((summary) => summary.id);
+  const ring: readonly Name[] = drafted ? ["new", ...attention] : attention;
   const at = ring.indexOf(current);
-  if (at === -1) return running.at(direction === 1 ? 0 : -1) ?? (drafted ? "new" : undefined);
+  if (at === -1) return attention.at(direction === 1 ? 0 : -1) ?? (drafted ? "new" : undefined);
   return ring[(at + direction + ring.length) % ring.length];
 }
 

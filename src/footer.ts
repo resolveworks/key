@@ -83,11 +83,11 @@ function cacheHitRate(view: ConversationView): number | undefined {
 }
 
 /**
- * The dot the list puts before a conversation and the footer before its spend: filled while it is
- * live, hollow once it settles.
+ * The green dot the list and the footer put before a conversation: filled while its own run
+ * streams, hollow once it settles.
  */
-export function dot(running: boolean): string {
-  return running ? style.success("●") : style.dim("○");
+export function dot(streaming: boolean): string {
+  return streaming ? style.success("●") : style.dim("○");
 }
 
 /**

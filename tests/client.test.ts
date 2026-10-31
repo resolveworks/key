@@ -7,36 +7,37 @@ import { dot } from "../src/footer.ts";
 import type { Summary } from "../src/host.ts";
 import { style } from "../src/theme.ts";
 
-const summary = (id: number, running: boolean, depth = 0): Summary => ({
+const summary = (id: number, attention: boolean, depth = 0, streaming = false): Summary => ({
   id,
   label: `ask ${id}`,
   cwd: "/key/repo",
-  running,
   depth,
+  streaming,
+  attention,
 });
 
 /** A forked child's conversation, as the host lists it: depth 1 under its kickoff, its cwd the
  * worktree its name minted — elsewhere than the checkout it was cut from. */
-const child = (id: number, name: string, running = false): Summary => ({
-  ...summary(id, running, 1),
+const child = (id: number, name: string, attention = false): Summary => ({
+  ...summary(id, attention, 1),
   cwd: `/key/worktrees/${name}`,
 });
 
-// The host lists by cascade, newest cascade first; finished conversations stay in the list but
-// never in the ring. The composer joins the ring only while a trajectory is being written in it — an
-// empty `/new` is no place at all.
+// The host lists by cascade, newest cascade first; only conversations that need a human join the
+// ring. The composer joins it too only while a trajectory is being written in it — an empty
+// `/new` is no place at all.
 const summaries = [summary(5, true), summary(4, false), summary(3, true), summary(1, true)];
 const draft = "fix the flaky test";
 
 describe("cycle", () => {
-  test("a drafted composer leads the ring, then the running conversations in the list's order", () => {
-    expect(cycle(summaries, "new", 1, draft)).toBe(5); // forward from the composer: the newest running
-    expect(cycle(summaries, "new", -1, draft)).toBe(1); // back from the composer: the oldest running
+  test("a drafted composer leads the ring, then the conversations needing attention", () => {
+    expect(cycle(summaries, "new", 1, draft)).toBe(5); // forward from the composer: the newest attention
+    expect(cycle(summaries, "new", -1, draft)).toBe(1); // back from the composer: the oldest attention
     expect(cycle(summaries, 1, 1, draft)).toBe("new"); // forward off the oldest wraps onto the composer
     expect(cycle(summaries, 5, -1, draft)).toBe("new"); // back off the newest wraps onto the composer
   });
 
-  test("from a running conversation it steps to the running neighbor, wrapping both ways", () => {
+  test("from an attention conversation it steps to the attention neighbor, wrapping both ways", () => {
     expect(cycle(summaries, 5, 1, draft)).toBe(3);
     expect(cycle(summaries, 3, 1, draft)).toBe(1);
     expect(cycle(summaries, 3, -1, draft)).toBe(5);
@@ -44,24 +45,24 @@ describe("cycle", () => {
   });
 
   test("the ring follows the tree, crossing cascade blocks whole", () => {
-    // Two cascades, newest block first: each kickoff with a running fork beneath it.
+    // Two cascades, newest block first: each kickoff with an attention fork beneath it.
     const tree = [summary(2, true), summary(5, true, 1), summary(1, true), summary(3, true, 1)];
     expect(cycle(tree, 5, 1, draft)).toBe(1); // off the top cascade into the older one
     expect(cycle(tree, 3, 1, draft)).toBe("new"); // off the oldest, onto the composer
   });
 
-  test("from a settled conversation it lands on the first running forward, the last back", () => {
+  test("from a settled conversation it lands on the first attention forward, the last back", () => {
     expect(cycle(summaries, 4, 1, "")).toBe(5);
     expect(cycle(summaries, 4, -1, "")).toBe(1);
   });
 
-  test("an empty composer is no place: the ring is the running conversations alone", () => {
+  test("an empty composer is no place: the ring is the attention conversations alone", () => {
     expect(cycle(summaries, 1, 1, "")).toBe(5); // off the oldest wraps onto the newest
     expect(cycle(summaries, 5, -1, "")).toBe(1);
     expect(cycle(summaries, 3, 1, " ")).toBe(1); // whitespace is nothing typed
   });
 
-  test("a lone running conversation is its own neighbor while the composer is empty", () => {
+  test("a lone attention conversation is its own neighbor while the composer is empty", () => {
     const lone = [summary(4, false), summary(3, true)];
     expect(cycle(lone, 3, 1, "")).toBe(3);
     expect(cycle(lone, 3, -1, "")).toBe(3);
@@ -73,7 +74,7 @@ describe("cycle", () => {
     expect(cycle(finished, 1, 1, draft)).toBe("new");
   });
 
-  test("nothing live — nothing running, nothing drafted — is nowhere to go", () => {
+  test("nothing needs attention — nothing marked, nothing drafted — is nowhere to go", () => {
     const finished = [summary(2, false), summary(1, false)];
     expect(cycle(finished, 1, 1, "")).toBeUndefined();
     expect(cycle(finished, "new", -1, "")).toBeUndefined();
@@ -124,13 +125,15 @@ describe("stepList", () => {
 });
 
 describe("line", () => {
-  test("depth 0 sits flush left at the dot", () => {
-    expect(line(summary(4, false))).toBe(`${dot(false)} ${style.dim("repo")} · ask 4`);
-  });
+  const warning = style.warning("!");
 
-  test("each level of depth steps the dot in two spaces, the tail unchanged", () => {
-    expect(line(summary(4, false, 1))).toBe(`  ${dot(false)} ${style.dim("repo")} · ask 4`);
-    expect(line(summary(5, true, 2))).toBe(`    ${dot(true)} ${style.dim("repo")} · ask 5`);
+  test("the green dot streams and the amber mark asks, with depth indenting both", () => {
+    expect(line(summary(4, false))).toBe(`${dot(false)}   ${style.dim("repo")} · ask 4`);
+    expect(line(summary(5, true))).toBe(`${dot(false)} ${warning} ${style.dim("repo")} · ask 5`);
+    expect(line(summary(6, false, 1, true))).toBe(`  ${dot(true)}   ${style.dim("repo")} · ask 6`);
+    expect(line(summary(7, true, 2, true))).toBe(
+      `    ${dot(true)} ${warning} ${style.dim("repo")} · ask 7`,
+    );
   });
 });
 

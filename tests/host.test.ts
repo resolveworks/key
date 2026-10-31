@@ -322,7 +322,7 @@ describe("host", () => {
     expect(await unknown.text()).toBe("Error: no conversation #999999");
   });
 
-  test("an interrupted conversation no longer runs: the dots say it", async () => {
+  test("an interrupted conversation stops streaming: the green dot says it", async () => {
     const hung = stuck();
     faux.setResponses([hung.step]);
 
@@ -330,13 +330,16 @@ describe("host", () => {
     await run("say hello");
     const [running] = await list.until((frame: readonly Summary[]) => frame.length > 0);
     await hung.reached;
-    expect(running.running).toBe(true);
+    expect(running.streaming).toBe(true);
 
     await app.request(`/api/conversations/${running.id}/abort`, { method: "POST" });
     const after = await list.until((frame: readonly Summary[]) =>
-      frame.some((item) => !item.running),
+      frame.some((item) => !item.streaming && !item.attention),
     );
-    expect(after.find((item) => item.id === running.id)?.running).toBe(false);
+    expect(after.find((item) => item.id === running.id)).toMatchObject({
+      streaming: false,
+      attention: false,
+    });
     await list.close();
   });
 
@@ -380,6 +383,43 @@ describe("host", () => {
     // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
     expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/a`);
+  });
+
+  test("a settled cascade leaves attention on its final heir alone", async () => {
+    const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
+    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    const list = await openList();
+    await run("kick off");
+    const listed = await list.until(
+      (frame: readonly Summary[]) =>
+        frame.length === 3 &&
+        frame.some((item) => item.label === "a is on its way" && item.attention),
+    );
+    await list.close();
+
+    // The parent yielded to its heir; the child's result crossed upstream. Only the heir is left.
+    expect(listed.map(({ label, attention }) => ({ label, attention }))).toEqual([
+      { label: "kick off", attention: false },
+      { label: "task for a", attention: false },
+      { label: "a is on its way", attention: true },
+    ]);
+  });
+
+  test("a run that ends without an answer needs attention", async () => {
+    faux.setResponses([
+      fauxAssistantMessage("", { stopReason: "error", errorMessage: "the model broke" }),
+    ]);
+    const list = await openList();
+    await run("say hello");
+    const listed = await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.attention),
+    );
+    await list.close();
+
+    expect(listed.find((item) => item.label === "say hello")).toMatchObject({
+      streaming: false,
+      attention: true,
+    });
   });
 
   test("interleaved cascades hold one block each, the newest cascade's on top", async () => {
