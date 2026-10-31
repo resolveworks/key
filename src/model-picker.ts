@@ -10,7 +10,6 @@ import {
   Input,
   SelectList,
   type SelectListLayoutOptions,
-  type SelectListTheme,
   Spacer,
   Text,
   type TUI,
@@ -18,18 +17,10 @@ import {
 import type { Target } from "./defaults.ts";
 import type { ModelDefaults, ModelInfo } from "./models.ts";
 import { Targets } from "./targets.ts";
-import { style } from "./theme.ts";
+import { selectTheme, style } from "./theme.ts";
 
 const MAX_VISIBLE = 12;
 const LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 56, maxPrimaryColumnWidth: 56 };
-
-const listTheme: SelectListTheme = {
-  selectedPrefix: (text) => style.accent(text),
-  selectedText: (text) => style.bold(text),
-  description: (text) => style.muted(text),
-  scrollInfo: (text) => style.dim(text),
-  noMatch: (text) => style.dim(text),
-};
 
 const key = (provider: string, id: string): string => `${provider}\u0000${id}`;
 
@@ -62,7 +53,7 @@ export class ModelPicker extends Container implements Focusable {
   #header = new Text("", 0, 0);
   #hint = new Text("", 0, 0);
   #listContainer = new Container();
-  #list = new SelectList([], MAX_VISIBLE, listTheme, LAYOUT);
+  #list = new SelectList([], MAX_VISIBLE, selectTheme, LAYOUT);
   #selectedKey: string | undefined;
 
   constructor(
@@ -142,7 +133,7 @@ export class ModelPicker extends Container implements Focusable {
     this.#list = new SelectList(
       filtered.map((model) => ({ value: key(model.provider, model.id), label: label(model) })),
       MAX_VISIBLE,
-      listTheme,
+      selectTheme,
       LAYOUT,
     );
     this.#list.setSelectedIndex(index);

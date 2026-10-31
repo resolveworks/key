@@ -8,6 +8,7 @@ import {
   type MarkdownTheme,
   okhslColor,
   parseColor,
+  type SelectListTheme,
   styleTextWithAnsi,
   type TextAttributes,
 } from "@earendil-works/pi-tui";
@@ -80,6 +81,15 @@ export const style = {
 
 export const bold = (color: Color | undefined, value: string): string =>
   style.bold(on(color)(value));
+
+/** What every select list in the client paints with. */
+export const selectTheme: SelectListTheme = {
+  selectedPrefix: (text) => style.accent(text),
+  selectedText: (text) => style.bold(text),
+  description: (text) => style.muted(text),
+  scrollInfo: (text) => style.dim(text),
+  noMatch: (text) => style.dim(text),
+};
 
 /** The markdown theme: headings, links, code, quotes and bullets each carry their own color. */
 export const markdown: MarkdownTheme = {

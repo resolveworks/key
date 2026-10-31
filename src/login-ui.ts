@@ -10,24 +10,15 @@ import {
   Input,
   matchesKey,
   SelectList,
-  type SelectListTheme,
   Spacer,
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
 import type { LoginEvent, LoginPrompt, ProviderInfo } from "./login.ts";
-import { style } from "./theme.ts";
+import { selectTheme, style } from "./theme.ts";
 
 const MAX_VISIBLE = 12;
 const LAYOUT = { minPrimaryColumnWidth: 56, maxPrimaryColumnWidth: 56 };
-
-const selectTheme: SelectListTheme = {
-  selectedPrefix: (text) => style.accent(text),
-  selectedText: (text) => style.bold(text),
-  description: (text) => style.muted(text),
-  scrollInfo: (text) => style.dim(text),
-  noMatch: (text) => style.dim(text),
-};
 
 type Choice = { readonly provider: ProviderInfo; readonly type: AuthType };
 

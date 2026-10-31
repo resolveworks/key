@@ -7,25 +7,16 @@ import {
   getKeybindings,
   SelectList,
   type SelectListLayoutOptions,
-  type SelectListTheme,
   Spacer,
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
 import type { Target } from "./defaults.ts";
 import { Targets } from "./targets.ts";
-import { style } from "./theme.ts";
+import { selectTheme } from "./theme.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVELS, type ThinkingDefaults } from "./thinking.ts";
 
 const LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 32 };
-
-const listTheme: SelectListTheme = {
-  selectedPrefix: (text) => style.accent(text),
-  selectedText: (text) => style.bold(text),
-  description: (text) => style.muted(text),
-  scrollInfo: (text) => style.dim(text),
-  noMatch: (text) => style.dim(text),
-};
 
 const descriptions: Record<ModelThinkingLevel, string> = {
   off: "no reasoning",
@@ -51,7 +42,7 @@ export class ThinkingPicker extends Container {
       description: descriptions[level],
     })),
     THINKING_LEVELS.length,
-    listTheme,
+    selectTheme,
     LAYOUT,
   );
 

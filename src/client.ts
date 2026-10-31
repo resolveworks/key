@@ -19,7 +19,6 @@ import {
   matchesKey,
   ProcessTerminal,
   SelectList,
-  type SelectListTheme,
   Spacer,
   setKeybindings,
   Text,
@@ -28,7 +27,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { hc } from "hono/client";
 import type { api } from "./api.ts";
-import { type Target, targetName } from "./defaults.ts";
+import type { Target } from "./defaults.ts";
 import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
 import type { LoginEvent, ProviderInfo } from "./login.ts";
@@ -36,7 +35,7 @@ import { LoginPicker, LoginView } from "./login-ui.ts";
 import { ModelPicker } from "./model-picker.ts";
 import type { ModelDefaults, ModelInfo } from "./models.ts";
 import { provider } from "./prompt.ts";
-import { style } from "./theme.ts";
+import { selectTheme, style } from "./theme.ts";
 import type { ThinkingDefaults } from "./thinking.ts";
 import { ThinkingPicker } from "./thinking-picker.ts";
 import { transcript } from "./trajectory.ts";
@@ -52,14 +51,6 @@ export const keybinds: KeybindingsConfig = {
   "tui.input.copy": [],
   "tui.editor.yank": [],
   "tui.select.cancel": ["escape"],
-};
-
-const selectTheme: SelectListTheme = {
-  selectedPrefix: (text) => style.accent(text),
-  selectedText: (text) => style.bold(text),
-  description: (text) => style.muted(text),
-  scrollInfo: (text) => style.dim(text),
-  noMatch: (text) => style.dim(text),
 };
 
 /** One place the screen can be: the composer, where a fresh trajectory's prompt is typed, or
@@ -257,7 +248,7 @@ export async function open(base: string): Promise<void> {
         if (stats !== undefined) footer.watch(view, stats);
       }
     }
-    if (notice !== undefined) show([new Text(style.error(notice), 0, 0)]);
+    if (notice !== undefined) document.addChild(new Text(style.error(notice), 0, 0));
     tui.requestRender();
   };
 
@@ -296,8 +287,6 @@ export async function open(base: string): Promise<void> {
         );
         if (picker !== undefined && mode.kind === "models" && mode.picker === picker)
           picker.setDefault(chosen, model);
-        notice = `default ${targetName(chosen)}: ${model.provider}/${model.id}`;
-        render();
       } catch (error) {
         notice = String(error);
         render();
@@ -336,8 +325,6 @@ export async function open(base: string): Promise<void> {
         await call(() => client.api.thinking.$post({ json: { target: chosen, level } }));
         if (picker !== undefined && mode.kind === "thinking" && mode.picker === picker)
           picker.setDefault(chosen, level);
-        notice = `default ${targetName(chosen)} thinking: ${level}`;
-        render();
       } catch (error) {
         notice = String(error);
         render();
