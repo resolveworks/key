@@ -22,6 +22,7 @@ import {
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
+import { Fetch } from "../src/fetch.ts";
 import { Search } from "../src/search.ts";
 import { type KeyTaskInput, keySystem } from "../src/system.ts";
 import { FakeEnv, fakeGit } from "./git.ts";
@@ -50,6 +51,7 @@ export function keySetup(): KeySetup {
   registry.install(CodingTools);
   registry.install(key.extension);
   registry.install(Search);
+  registry.install(Fetch);
   registry.install(Agents);
   return { faux, models, registry, reports: [] };
 }

@@ -26,6 +26,7 @@ import { type ServerType, serve } from "@hono/node-server";
 import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
+import { Fetch } from "./fetch.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { Search } from "./search.ts";
@@ -73,7 +74,7 @@ const production = (): HostOptions => ({
     mkdirSync(dataDirectory, { recursive: true });
     return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
   },
-  extensions: [CodingTools, KeySystem, Search, Agents],
+  extensions: [CodingTools, KeySystem, Search, Fetch, Agents],
   port: PORT,
   hostname: process.env.KEY_BIND ?? "127.0.0.1",
   thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,

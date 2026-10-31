@@ -17,6 +17,9 @@
     "@earendil-works/pi-tui": "1.4.0",
     "@hono/node-server": "^2.1.5",
     "hono": "^4.13.13",
+    "defuddle": "^0.19.5",
+    "linkedom": "^0.18.13",
+    "playwright-core": "~1.64.1",
     "typebox": "^1.4.3"
   },
   "devDependencies": {

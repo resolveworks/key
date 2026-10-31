@@ -34,6 +34,11 @@ thinking runs at `off`; the default is `high`). `KEY_BIND` in the same file
 sets the interface the server listens on (`127.0.0.1` by default;
 `0.0.0.0` to accept connections from off the box). `BRAVE_API_KEY` in the
 same file gives every conversation `web_search`, the tool that searches the web.
+`web_fetch`, the tool that reads a page as clean markdown, renders through the
+stealth Chrome server on `ws://127.0.0.1:9222` — the `mine-browser.service`
+podman quadlet, documented in [mine](../mine/README.md); `KEY_BROWSER_ENDPOINT`
+in the same file points it elsewhere. A page over the output limits spills its
+full content to a temp file, which `read` pages through.
 Everything the host owns lives in `~/.key` — the session store is SQLite at
 `~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
 
