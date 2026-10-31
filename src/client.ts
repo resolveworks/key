@@ -28,14 +28,16 @@ import {
 } from "@earendil-works/pi-tui";
 import { hc } from "hono/client";
 import type { api } from "./api.ts";
+import { type Target, targetName } from "./defaults.ts";
 import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
 import type { LoginEvent, ProviderInfo } from "./login.ts";
 import { LoginPicker, LoginView } from "./login-ui.ts";
 import { ModelPicker } from "./model-picker.ts";
-import { type ModelDefaults, type ModelInfo, type ModelTarget, targetName } from "./models.ts";
+import type { ModelDefaults, ModelInfo } from "./models.ts";
 import { provider } from "./prompt.ts";
 import { style } from "./theme.ts";
+import type { ThinkingDefaults } from "./thinking.ts";
 import { ThinkingPicker } from "./thinking-picker.ts";
 import { transcript } from "./trajectory.ts";
 
@@ -283,9 +285,9 @@ export async function open(base: string): Promise<void> {
   /** Fetch the two defaults and the catalog, then hand the screen to the picker. The
    * picker's enter sets the default its header names and stays open, so one `/model` can set both;
    * escape returns to `back`. */
-  const showModels = async (target: ModelTarget, back: View): Promise<void> => {
+  const showModels = async (target: Target, back: View): Promise<void> => {
     let picker: ModelPicker | undefined;
-    const set = async (chosen: ModelTarget, model: ModelInfo): Promise<void> => {
+    const set = async (chosen: Target, model: ModelInfo): Promise<void> => {
       try {
         await call(() =>
           client.api.models.defaults.$post({
@@ -312,9 +314,7 @@ export async function open(base: string): Promise<void> {
         models,
         defaults,
         target,
-        (chosen, model) => {
-          void set(chosen, model);
-        },
+        (chosen, model) => void set(chosen, model),
         () => swap(back),
       );
       mode = { kind: "models", back, picker };
@@ -326,31 +326,35 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  /** Fetch the thinking default and hand the screen to its picker; enter sets the default and
-   * returns to `back`, escape returns without a change. */
-  const showThinking = async (back: View): Promise<void> => {
+  /** Fetch the two thinking defaults and hand the screen to their picker. Its enter sets the
+   * default its header names and stays open, so one `/thinking` can set both; escape returns to
+   * `back`. */
+  const showThinking = async (target: Target, back: View): Promise<void> => {
+    let picker: ThinkingPicker | undefined;
+    const set = async (chosen: Target, level: ModelThinkingLevel): Promise<void> => {
+      try {
+        await call(() => client.api.thinking.$post({ json: { target: chosen, level } }));
+        if (picker !== undefined && mode.kind === "thinking" && mode.picker === picker)
+          picker.setDefault(chosen, level);
+        notice = `default ${targetName(chosen)} thinking: ${level}`;
+        render();
+      } catch (error) {
+        notice = String(error);
+        render();
+      }
+    };
     try {
       const body = await call(() => client.api.thinking.$get());
-      const { level } = JSON.parse(body) as { readonly level: ModelThinkingLevel };
-      const picker = new ThinkingPicker(
-        level,
-        (chosen) => void setThinking(back, chosen),
+      const { defaults } = JSON.parse(body) as { readonly defaults: ThinkingDefaults };
+      picker = new ThinkingPicker(
+        tui,
+        defaults,
+        target,
+        (chosen, level) => void set(chosen, level),
         () => swap(back),
       );
       mode = { kind: "thinking", back, picker };
       notice = undefined;
-      render();
-    } catch (error) {
-      notice = String(error);
-      render();
-    }
-  };
-
-  const setThinking = async (back: View, level: ModelThinkingLevel): Promise<void> => {
-    try {
-      await call(() => client.api.thinking.$post({ json: { level } }));
-      swap(back);
-      notice = `default thinking: ${level}`;
       render();
     } catch (error) {
       notice = String(error);
@@ -511,7 +515,7 @@ export async function open(base: string): Promise<void> {
     }
     if (text.trim() === "/thinking") {
       spend();
-      void showThinking(place());
+      void showThinking("conversation", place());
       return;
     }
     if (text.trim() === "/login") {

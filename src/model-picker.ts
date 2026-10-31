@@ -1,6 +1,7 @@
-// The model picker: one selective list over pi's catalog, with the two defaults in
-// view and tab between them. Enter sets the default the header names and stays open; escape closes.
+// The model picker: one selective list over the models of configured providers, with the two
+// defaults in view and tab between them.
 
+import type { ModelRef } from "@earendil-works/pi-durable";
 import {
   Container,
   type Focusable,
@@ -8,17 +9,19 @@ import {
   getKeybindings,
   Input,
   SelectList,
+  type SelectListLayoutOptions,
   type SelectListTheme,
   Spacer,
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
-import type { ModelDefaults, ModelInfo, ModelTarget } from "./models.ts";
-import { targetName } from "./models.ts";
+import type { Target } from "./defaults.ts";
+import type { ModelDefaults, ModelInfo } from "./models.ts";
+import { Targets } from "./targets.ts";
 import { style } from "./theme.ts";
 
 const MAX_VISIBLE = 12;
-const LAYOUT = { minPrimaryColumnWidth: 56, maxPrimaryColumnWidth: 56 };
+const LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 56, maxPrimaryColumnWidth: 56 };
 
 const listTheme: SelectListTheme = {
   selectedPrefix: (text) => style.accent(text),
@@ -28,7 +31,12 @@ const listTheme: SelectListTheme = {
   noMatch: (text) => style.dim(text),
 };
 
-const keyOf = (model: ModelInfo): string => `${model.provider}\u0000${model.id}`;
+const key = (provider: string, id: string): string => `${provider}\u0000${id}`;
+
+const ref = (model: ModelInfo): ModelRef => ({ provider: model.provider, modelId: model.id });
+
+const showModel = (model: ModelRef | undefined): string =>
+  model === undefined ? "(unset)" : `${model.provider}/${model.modelId}`;
 
 const searchText = ({ id, provider, name }: ModelInfo): string =>
   `${provider} ${provider}/${id} ${provider} ${id}${name === "" ? "" : ` ${name}`}`;
@@ -41,45 +49,43 @@ const label = (model: ModelInfo): string => {
 export class ModelPicker extends Container implements Focusable {
   readonly capturesViewportInput = true;
 
-  #target: ModelTarget;
+  #tui: TUI;
   #models: readonly ModelInfo[];
-  #defaults: ModelDefaults;
+  #targets: Targets<ModelRef>;
+  #onSelect: (target: Target, model: ModelInfo) => void;
+  #onCancel: () => void;
   #search = new Input({
     prompt: "  filter ",
     placeholder: "type to narrow",
     placeholderStyle: style.dim,
   });
-  #defaultsText = new Text("", 0, 0);
-  #hintText = new Text("", 0, 0);
+  #header = new Text("", 0, 0);
+  #hint = new Text("", 0, 0);
   #listContainer = new Container();
   #list = new SelectList([], MAX_VISIBLE, listTheme, LAYOUT);
   #selectedKey: string | undefined;
-  #tui: TUI;
-  #onSelect: (target: ModelTarget, model: ModelInfo) => void;
-  #onCancel: () => void;
 
   constructor(
     tui: TUI,
     models: readonly ModelInfo[],
     defaults: ModelDefaults,
-    target: ModelTarget,
-    onSelect: (target: ModelTarget, model: ModelInfo) => void,
+    target: Target,
+    onSelect: (target: Target, model: ModelInfo) => void,
     onCancel: () => void,
   ) {
     super();
     this.#tui = tui;
     this.#models = models;
-    this.#defaults = defaults;
-    this.#target = target;
+    this.#targets = new Targets(defaults, target, showModel);
     this.#onSelect = onSelect;
     this.#onCancel = onCancel;
     this.addChild(new Spacer(1));
-    this.addChild(this.#defaultsText);
+    this.addChild(this.#header);
     this.addChild(this.#search);
     this.addChild(new Spacer(1));
     this.addChild(this.#listContainer);
     this.addChild(new Spacer(1));
-    this.addChild(this.#hintText);
+    this.addChild(this.#hint);
     this.#refresh();
   }
 
@@ -91,22 +97,17 @@ export class ModelPicker extends Container implements Focusable {
     this.#search.focused = value;
   }
 
-  /** Reflect a saved default in place, so `/model` can set both without closing. */
-  setDefault(target: ModelTarget, model: ModelInfo): void {
-    const ref = { provider: model.provider, modelId: model.id };
-    this.#defaults =
-      target === "child"
-        ? { ...this.#defaults, child: ref }
-        : { ...this.#defaults, conversation: ref };
-    this.#target = target;
-    this.#selectedKey = keyOf(model);
+  /** Reflect a saved default in place, so one `/model` can set both without closing. */
+  setDefault(target: Target, model: ModelInfo): void {
+    this.#targets.set(target, ref(model));
+    this.#selectedKey = key(model.provider, model.id);
     this.#refresh();
   }
 
   handleInput(data: string): void {
     const kb = getKeybindings();
     if (kb.matches(data, "tui.input.tab")) {
-      this.#target = this.#target === "conversation" ? "child" : "conversation";
+      this.#targets.toggle();
       this.#selectedKey = undefined;
       this.#refresh();
       return;
@@ -127,16 +128,24 @@ export class ModelPicker extends Container implements Focusable {
   }
 
   #refresh(): void {
+    this.#header.setText(this.#targets.header());
+    this.#hint.setText(this.#targets.hint("configured providers only"));
     const query = this.#search.getValue().trim();
-    const filtered =
-      query === "" ? this.#sort(this.#models) : fuzzyFilter([...this.#models], query, searchText);
-    const items = filtered.map((model) => ({
-      value: keyOf(model),
-      label: label(model),
-    }));
-    const selected = filtered.findIndex((model) => keyOf(model) === this.#selectedKey);
-    this.#list = new SelectList(items, MAX_VISIBLE, listTheme, LAYOUT);
-    this.#list.setSelectedIndex(Math.max(selected, 0));
+    const current = this.#targets.current;
+    const currentKey = current === undefined ? undefined : key(current.provider, current.modelId);
+    const models = this.#sorted(currentKey);
+    const filtered = query === "" ? models : fuzzyFilter([...models], query, searchText);
+    const selected = filtered.findIndex(
+      (model) => key(model.provider, model.id) === (this.#selectedKey ?? currentKey),
+    );
+    const index = Math.max(selected, 0);
+    this.#list = new SelectList(
+      filtered.map((model) => ({ value: key(model.provider, model.id), label: label(model) })),
+      MAX_VISIBLE,
+      listTheme,
+      LAYOUT,
+    );
+    this.#list.setSelectedIndex(index);
     this.#list.onSelectionChange = (item) => {
       this.#selectedKey = item.value;
     };
@@ -145,10 +154,12 @@ export class ModelPicker extends Container implements Focusable {
       const model = this.#models.find(
         (candidate) => candidate.provider === provider && candidate.id === id,
       );
-      if (model !== undefined) this.#onSelect(this.#target, model);
+      if (model === undefined) return;
+      this.#onSelect(this.#targets.target, model);
     };
     this.#list.onCancel = () => this.#onCancel();
-    this.#selectedKey = filtered.length === 0 ? undefined : keyOf(filtered[Math.max(0, selected)]);
+    const shown = filtered[index];
+    this.#selectedKey = shown === undefined ? undefined : key(shown.provider, shown.id);
     this.#listContainer.clear();
     this.#listContainer.addChild(
       filtered.length === 0
@@ -163,36 +174,15 @@ export class ModelPicker extends Container implements Focusable {
           )
         : this.#list,
     );
-    this.#updateHeader();
     this.#tui.requestRender();
   }
 
   /** The target's default first, then by provider: the same shape pi's picker uses. */
-  #sort(models: readonly ModelInfo[]): ModelInfo[] {
-    const current = this.#defaults[this.#target];
-    return [...models].sort((a, b) => {
-      const aCurrent =
-        current !== undefined && a.provider === current.provider && a.id === current.modelId
-          ? 1
-          : 0;
-      const bCurrent =
-        current !== undefined && b.provider === current.provider && b.id === current.modelId
-          ? 1
-          : 0;
-      return (
-        bCurrent - aCurrent || a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id)
-      );
-    });
-  }
-
-  #updateHeader(): void {
-    const ref = (model: { readonly provider: string; readonly modelId: string } | undefined) =>
-      model === undefined ? "(unset)" : `${model.provider}/${model.modelId}`;
-    this.#defaultsText.setText(
-      `${style.muted("defaults")}  ${style.muted("conversations")} ${style.accent(ref(this.#defaults.conversation))}  ${style.muted("children")} ${style.accent(ref(this.#defaults.child))}`,
-    );
-    this.#hintText.setText(
-      `${style.accent(`→ ${targetName(this.#target)}`)} ${style.muted("· configured providers only · tab switches · enter sets · esc closes")}`,
+  #sorted(currentKey: string | undefined): ModelInfo[] {
+    const rank = (model: ModelInfo) => (key(model.provider, model.id) === currentKey ? 1 : 0);
+    return [...this.#models].sort(
+      (a, b) =>
+        rank(b) - rank(a) || a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id),
     );
   }
 }

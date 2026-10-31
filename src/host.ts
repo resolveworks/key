@@ -20,7 +20,9 @@ import {
   createRegistry,
   type Extension,
   Harness,
+  type JsonObject,
   type ModelRef,
+  type SessionDocToken,
   type Storage,
   type TaskGraph,
 } from "@earendil-works/pi-durable";
@@ -33,19 +35,15 @@ import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
+import type { Target } from "./defaults.ts";
 import { Fetch } from "./fetch.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { LoginSession, type ProviderInfo } from "./login.ts";
-import {
-  type ModelDefaults,
-  ModelDefaultsDoc,
-  type ModelInfo,
-  type ModelTarget,
-} from "./models.ts";
+import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.ts";
 import { Search } from "./search.ts";
 import { KeyTask, type KeyTaskInput, keySystem } from "./system.ts";
-import { DEFAULT_THINKING_LEVEL, ThinkingDefaultDoc } from "./thinking.ts";
+import { DEFAULT_THINKING_LEVEL, type ThinkingDefaults, ThinkingDefaultsDoc } from "./thinking.ts";
 
 /** The host's key, its git bound to the real one. */
 const { extension: KeySystem } = keySystem(git);
@@ -145,7 +143,7 @@ export class Host {
   }> {
     const [models, defaults] = await Promise.all([
       this.#options.models().getAvailable(),
-      this.#defaults(),
+      this.#stored(ModelDefaultsDoc),
     ]);
     return {
       defaults,
@@ -158,17 +156,20 @@ export class Host {
     };
   }
 
-  /** The level a new conversation runs at: `/thinking`'s choice, else the default. */
-  async thinkingLevel(): Promise<ModelThinkingLevel> {
-    return (
-      (await this.#harness.snapshot(ThinkingDefaultDoc, context))?.level ?? DEFAULT_THINKING_LEVEL
-    );
+  /** The levels new conversations and their children run at: `/thinking`'s choices, else the
+   * default. */
+  async thinkingDefaults(): Promise<Required<ThinkingDefaults>> {
+    const defaults = await this.#stored(ThinkingDefaultsDoc);
+    return {
+      conversation: defaults.conversation ?? DEFAULT_THINKING_LEVEL,
+      child: defaults.child ?? DEFAULT_THINKING_LEVEL,
+    };
   }
 
-  /** Set the level new conversations run at; each clamps it to what its model supports. */
-  async setThinkingDefault(level: ModelThinkingLevel): Promise<void> {
+  /** Set one target's level; each conversation clamps it to what its model supports. */
+  async setThinkingDefault(target: Target, level: ModelThinkingLevel): Promise<void> {
     await this.#harness.commit(async (tx) => {
-      (await tx.doc(ThinkingDefaultDoc)).level = level;
+      (await tx.doc(ThinkingDefaultsDoc))[target] = level;
     }, context);
   }
 
@@ -228,7 +229,7 @@ export class Host {
   }
 
   /** Point one default at a catalog model; a request fails later if its provider has no key. */
-  async setModelDefault(target: ModelTarget, ref: ModelRef): Promise<void> {
+  async setModelDefault(target: Target, ref: ModelRef): Promise<void> {
     if (this.#options.models().getModel(ref.provider, ref.modelId) === undefined)
       throw new Error(`unknown model: ${ref.provider}/${ref.modelId}`);
     await this.#harness.commit(async (tx) => {
@@ -282,10 +283,10 @@ export class Host {
           const child = (await tx.doc(ModelDefaultsDoc)).child;
           if (child === undefined) throw new Error("no child model default: set one with /model");
           const model = this.#model(child);
-          const requested = (await tx.doc(ThinkingDefaultDoc)).level ?? DEFAULT_THINKING_LEVEL;
+          const level = (await tx.doc(ThinkingDefaultsDoc)).child ?? DEFAULT_THINKING_LEVEL;
           await configure(tx, conversation.id, {
             model: child,
-            thinkingLevel: clampThinkingLevel(model, requested),
+            thinkingLevel: clampThinkingLevel(model, level),
           });
         },
         onReport: (report) => console.error("key:", report),
@@ -329,9 +330,9 @@ export class Host {
     return model;
   }
 
-  /** The two stored defaults, exactly as `/model` left them. */
-  async #defaults(): Promise<ModelDefaults> {
-    return (await this.#harness.snapshot(ModelDefaultsDoc, context)) ?? {};
+  /** A document's stored value, exactly as its command left it, or what it starts as. */
+  async #stored<T extends JsonObject>(doc: SessionDocToken<T>): Promise<T> {
+    return (await this.#harness.snapshot(doc, context)) ?? doc.definition.initial();
   }
 
   /** The prompt's path completions, answered from the host's own filesystem: the line as it stands
@@ -350,15 +351,16 @@ export class Host {
 
   /** Start a cascade in a directory: an ownerless conversation and its first prompt. */
   async run(cwd: string, prompt: string): Promise<number> {
-    const { conversation: ref } = await this.#defaults();
+    const { conversation: ref } = await this.#stored(ModelDefaultsDoc);
     if (ref === undefined) throw new Error("no conversation model default: set one with /model");
+    const { conversation: level } = await this.thinkingDefaults();
     const conversation = await this.#harness.createConversation(
       {
         ownership: { kind: "ownerless" },
         agent: {
           model: ref,
           cwd,
-          thinkingLevel: clampThinkingLevel(this.#model(ref), await this.thinkingLevel()),
+          thinkingLevel: clampThinkingLevel(this.#model(ref), level),
         },
       },
       context,

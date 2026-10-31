@@ -1,12 +1,31 @@
-// The `/thinking` picker: every level pi-ai knows, the session default in view. Enter sets it and
-// closes; escape closes without a change.
+// The thinking picker: every level pi-ai knows, with the two defaults in view and tab between
+// them.
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { Container, SelectList, type SelectListTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+  Container,
+  getKeybindings,
+  SelectList,
+  type SelectListLayoutOptions,
+  type SelectListTheme,
+  Spacer,
+  Text,
+  type TUI,
+} from "@earendil-works/pi-tui";
+import type { Target } from "./defaults.ts";
+import { Targets } from "./targets.ts";
 import { style } from "./theme.ts";
-import { THINKING_LEVELS } from "./thinking.ts";
+import { DEFAULT_THINKING_LEVEL, THINKING_LEVELS, type ThinkingDefaults } from "./thinking.ts";
 
-const LAYOUT = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 32 };
+const LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 32 };
+
+const listTheme: SelectListTheme = {
+  selectedPrefix: (text) => style.accent(text),
+  selectedText: (text) => style.bold(text),
+  description: (text) => style.muted(text),
+  scrollInfo: (text) => style.dim(text),
+  noMatch: (text) => style.dim(text),
+};
 
 const descriptions: Record<ModelThinkingLevel, string> = {
   off: "no reasoning",
@@ -18,49 +37,69 @@ const descriptions: Record<ModelThinkingLevel, string> = {
   max: "maximum reasoning",
 };
 
-const listTheme: SelectListTheme = {
-  selectedPrefix: (text) => style.accent(text),
-  selectedText: (text) => style.bold(text),
-  description: (text) => style.muted(text),
-  scrollInfo: (text) => style.dim(text),
-  noMatch: (text) => style.dim(text),
-};
-
 export class ThinkingPicker extends Container {
   readonly capturesViewportInput = true;
 
-  #list: SelectList;
+  #tui: TUI;
+  #targets: Targets<ModelThinkingLevel>;
+  #header = new Text("", 0, 0);
+  #hint = new Text("", 0, 0);
+  #list = new SelectList(
+    THINKING_LEVELS.map((level) => ({
+      value: level,
+      label: level,
+      description: descriptions[level],
+    })),
+    THINKING_LEVELS.length,
+    listTheme,
+    LAYOUT,
+  );
 
   constructor(
-    current: ModelThinkingLevel,
-    onSelect: (level: ModelThinkingLevel) => void,
+    tui: TUI,
+    defaults: ThinkingDefaults,
+    target: Target,
+    onSelect: (target: Target, level: ModelThinkingLevel) => void,
     onCancel: () => void,
   ) {
     super();
-    this.#list = new SelectList(
-      THINKING_LEVELS.map((level) => ({
-        value: level,
-        label: `${level === current ? "✓ " : "  "}${level}`,
-        description: descriptions[level],
-      })),
-      THINKING_LEVELS.length,
-      listTheme,
-      LAYOUT,
-    );
-    this.#list.setSelectedIndex(Math.max(THINKING_LEVELS.indexOf(current), 0));
-    this.#list.onSelect = (item) => onSelect(item.value as ModelThinkingLevel);
+    this.#tui = tui;
+    this.#targets = new Targets(defaults, target, (level) => level ?? DEFAULT_THINKING_LEVEL);
+    this.#list.onSelect = (item) => {
+      const level = THINKING_LEVELS.find((candidate) => candidate === item.value);
+      if (level !== undefined) onSelect(this.#targets.target, level);
+    };
     this.#list.onCancel = onCancel;
     this.addChild(new Spacer(1));
-    this.addChild(new Text(`${style.muted("default thinking")} ${style.accent(current)}`, 0, 0));
+    this.addChild(this.#header);
     this.addChild(new Spacer(1));
     this.addChild(this.#list);
     this.addChild(new Spacer(1));
-    this.addChild(
-      new Text(style.muted("  enter sets the level new conversations run at · esc closes"), 0, 0),
-    );
+    this.addChild(this.#hint);
+    this.#refresh();
+  }
+
+  /** Reflect a saved default in place, so one `/thinking` can set both without closing. */
+  setDefault(target: Target, level: ModelThinkingLevel): void {
+    this.#targets.set(target, level);
+    this.#refresh();
   }
 
   handleInput(data: string): void {
+    if (getKeybindings().matches(data, "tui.input.tab")) {
+      this.#targets.toggle();
+      this.#refresh();
+      return;
+    }
     this.#list.handleInput(data);
+  }
+
+  #refresh(): void {
+    this.#header.setText(this.#targets.header());
+    this.#hint.setText(this.#targets.hint());
+    this.#list.setSelectedIndex(
+      Math.max(THINKING_LEVELS.indexOf(this.#targets.current ?? DEFAULT_THINKING_LEVEL), 0),
+    );
+    this.#tui.requestRender();
   }
 }

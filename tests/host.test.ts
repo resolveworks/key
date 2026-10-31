@@ -145,14 +145,22 @@ describe("host", () => {
     ]);
   });
 
-  test("the host answers the thinking default, high until /thinking sets one", async () => {
-    expect(await (await app.request("/api/thinking")).json()).toEqual({ level: "high" });
-    expect((await setThinking("low")).status).toBe(202);
-    expect(await (await app.request("/api/thinking")).json()).toEqual({ level: "low" });
+  test("the host answers the two thinking defaults, high until /thinking sets them", async () => {
+    expect(await (await app.request("/api/thinking")).json()).toEqual({
+      defaults: { conversation: "high", child: "high" },
+    });
+    expect((await setThinking("conversation", "low")).status).toBe(202);
+    expect(await (await app.request("/api/thinking")).json()).toEqual({
+      defaults: { conversation: "low", child: "high" },
+    });
+    expect((await setThinking("child", "minimal")).status).toBe(202);
+    expect(await (await app.request("/api/thinking")).json()).toEqual({
+      defaults: { conversation: "low", child: "minimal" },
+    });
   });
 
   test("an unknown thinking level is rejected", async () => {
-    const response = await setThinking("loud");
+    const response = await setThinking("conversation", "loud");
     expect(response.status).toBe(500);
     expect(await response.text()).toContain("/level");
   });
@@ -220,7 +228,8 @@ describe("host", () => {
       });
     expect((await set("conversation", "deepseek-chat")).status).toBe(202);
     expect((await set("child", "deepseek-flash")).status).toBe(202);
-    expect((await setThinking("low")).status).toBe(202);
+    expect((await setThinking("conversation", "low")).status).toBe(202);
+    expect((await setThinking("child", "minimal")).status).toBe(202);
 
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
@@ -233,11 +242,13 @@ describe("host", () => {
     expect((await statsOf(idOf(listed, "task for a"))).model).toBe("deepseek-flash");
     expect((await statsOf(idOf(listed, "a is on its way"))).model).toBe("deepseek-flash");
     expect((await statsOf(idOf(listed, "kick off"))).thinkingLevel).toBe("low");
-    expect((await statsOf(idOf(listed, "task for a"))).thinkingLevel).toBe("low");
+    expect((await statsOf(idOf(listed, "task for a"))).thinkingLevel).toBe("minimal");
+    expect((await statsOf(idOf(listed, "a is on its way"))).thinkingLevel).toBe("minimal");
   });
 
-  test("the thinking default is clamped to each conversation's model", async () => {
-    expect((await setThinking("xhigh")).status).toBe(202);
+  test("the thinking defaults are clamped to each conversation's model", async () => {
+    expect((await setThinking("conversation", "xhigh")).status).toBe(202);
+    expect((await setThinking("child", "xhigh")).status).toBe(202);
     await host.setModelDefault("child", { provider: "deepseek", modelId: "deepseek-plain" });
 
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
@@ -528,12 +539,12 @@ describe("host", () => {
     return conversation;
   }
 
-  /** Set the level new conversations run at, as `/thinking` does. */
-  async function setThinking(level: string): Promise<Response> {
+  /** Set one target's thinking level, as `/thinking` does. */
+  async function setThinking(target: string, level: string): Promise<Response> {
     return await app.request("/api/thinking", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ level }),
+      body: JSON.stringify({ target, level }),
     });
   }
 

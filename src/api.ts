@@ -7,6 +7,7 @@ import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import Type from "typebox";
 import { Parse, ParseError } from "typebox/value";
+import { TARGETS, type Target } from "./defaults.ts";
 import type { Host, Summary } from "./host.ts";
 import { THINKING_LEVELS } from "./thinking.ts";
 
@@ -30,15 +31,19 @@ const CompleteInput = Type.Object({
   force: Type.Optional(Type.Boolean()),
 });
 
+/** Which of the two defaults a request sets. */
+const DefaultTarget = Type.Unsafe<Target>({ type: "string", enum: [...TARGETS] });
+
 /** What `POST /api/models/defaults` takes: which default, and the model it points at. */
 const ModelDefaultInput = Type.Object({
-  target: Type.Union([Type.Literal("conversation"), Type.Literal("child")]),
+  target: DefaultTarget,
   provider: Type.String({ minLength: 1 }),
   modelId: Type.String({ minLength: 1 }),
 });
 
-/** What `POST /api/thinking` takes: the level new conversations run at. */
+/** What `POST /api/thinking` takes: which default, and the level it points at. */
 const ThinkingInput = Type.Object({
+  target: DefaultTarget,
   level: Type.Unsafe<ModelThinkingLevel>({ type: "string", enum: [...THINKING_LEVELS] }),
 });
 
@@ -62,10 +67,10 @@ const index = `key host
   POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a conversation
   POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
-  GET  /api/models                     catalog and the two defaults
+  GET  /api/models                     the configured models and the two defaults
   POST /api/models/defaults            {target, provider, modelId}: set a default
-  GET  /api/thinking                   the level new conversations run at
-  POST /api/thinking                   {level}: set it
+  GET  /api/thinking                   the levels conversations and children run at
+  POST /api/thinking                   {target, level}: set one
   GET  /api/providers                  providers and their auth methods
   POST /api/login                      {provider, type}: run a provider login
   GET  /api/login                      the login's prompts and notices (SSE)
@@ -145,12 +150,13 @@ export function api(host: Host) {
           return c.body(null, 202);
         },
       )
-      .get("/api/thinking", async (c) => c.json({ level: await host.thinkingLevel() }))
+      .get("/api/thinking", async (c) => c.json({ defaults: await host.thinkingDefaults() }))
       .post(
         "/api/thinking",
         validator("json", (body) => Parse(ThinkingInput, body)),
         async (c) => {
-          await host.setThinkingDefault(c.req.valid("json").level);
+          const { target, level } = c.req.valid("json");
+          await host.setThinkingDefault(target, level);
           return c.body(null, 202);
         },
       )

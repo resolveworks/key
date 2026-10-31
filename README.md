@@ -31,15 +31,17 @@ credential in `~/.key/auth.json`. There is no env file. `/model` in the client
 sets the two defaults, stored on the session: the model a new conversation
 starts on, and the model the children it spawns run on. Tab switches between
 conversations and children; enter sets the one the header names. The picker
-lists pi's whole catalog; a conversation on a provider without a credential
-fails loudly when it runs. There is no model-default fallback: until both
-defaults are set, a new conversation or a child fails loudly. Existing
-conversations keep the model they started on.
+lists the configured providers' models; a conversation on a provider without a
+credential fails loudly when it runs. There is no model-default fallback:
+until both defaults are set, a new conversation or a child fails loudly.
+Existing conversations keep the model they started on.
 
-`/thinking` sets the level new conversations run at, stored on the session with
-the model defaults. It defaults to `high` until set; each conversation clamps
-the level to what its model supports, so a model without thinking runs at `off`.
-Existing conversations keep the level they started on. `KEY_BIND` sets the
+`/thinking` sets the two levels, stored on the session with the model defaults:
+what a new conversation starts at, and what the children it spawns run at. Tab
+switches between conversations and children; enter sets the one the header
+names. Both default to `high` until set; each conversation clamps the level to
+what its model supports, so a model without thinking runs at `off`. Existing
+conversations keep the level they started on. `KEY_BIND` sets the
 interface the server listens on (`127.0.0.1` by default; `0.0.0.0` to accept
 connections from off the box). `BRAVE_API_KEY` in the host's environment gives
 every conversation `web_search`, the tool that searches the web. `web_fetch`,
@@ -63,10 +65,10 @@ POST /api/run                         {prompt, cwd} → {conversation}: start a 
 POST /api/complete                    {cwd, text, force}: the host's completion of one prompt line
 POST /api/conversations/:id/messages  {prompt}: message a conversation
 POST /api/conversations/:id/abort     interrupt a conversation: abort its current work
-GET  /api/models                      the catalog and the two defaults
+GET  /api/models                      the configured models and the two defaults
 POST /api/models/defaults             {target, provider, modelId}: set a default
-GET  /api/thinking                    the level new conversations run at
-POST /api/thinking                    {level}: set it
+GET  /api/thinking                    the levels conversations and children run at
+POST /api/thinking                    {target, level}: set one
 GET  /api/providers                   providers and their auth methods
 POST /api/login                       {provider, type}: run a provider login
 GET  /api/login                       the login's prompts and notices (SSE)

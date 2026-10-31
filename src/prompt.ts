@@ -32,7 +32,7 @@ export function provider(
     {
       value: "thinking",
       label: "thinking",
-      description: "set the thinking level new conversations run at",
+      description: "set the conversation and child thinking defaults",
     },
     {
       value: "login",
