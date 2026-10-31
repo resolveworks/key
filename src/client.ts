@@ -266,9 +266,11 @@ export async function open(base: string): Promise<void> {
     render();
   };
 
-  /** Cover the screen with the list; the view beneath keeps its draft for the return. */
+  /** Cover the screen with the list, opening on the conversation beneath it when there is one;
+   * the view beneath keeps its draft for the return. */
   const showList = (): void => {
-    mode = { kind: "list", back: place(), selected: undefined };
+    const here = place();
+    mode = { kind: "list", back: here, selected: here.kind === "transcript" ? here.id : undefined };
     notice = undefined;
     render();
   };
