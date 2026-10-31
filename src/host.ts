@@ -405,9 +405,13 @@ export class Host {
   }): void {
     if (record.kind !== KeyTask.definition.name) return;
     const input = record.input as KeyTaskInput;
-    this.#prompts.set(record.id, input.prompt);
-    if ("name" in input) this.#children.add(record.id);
-    else this.#succeeded.add(record.conversationId);
+    if (input.kind === "fork") {
+      this.#prompts.set(record.id, input.prompt);
+      this.#children.add(record.id);
+    } else {
+      this.#prompts.set(record.id, `successor of #${record.conversationId}`);
+      this.#succeeded.add(record.conversationId);
+    }
     if (record.state.status === "completing" || record.state.status === "terminal")
       this.#ended.add(record.id);
   }

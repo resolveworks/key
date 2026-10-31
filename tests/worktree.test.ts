@@ -62,7 +62,7 @@ describe("a child's run", () => {
     const setup = keySetup();
     const answer: FauxResponseStep = (request) => {
       const text = requestText(request.messages);
-      if (text.includes("Upstream results") || text.includes("ask the child"))
+      if (text.includes("Successor of conversation") || text.includes("ask the child"))
         return fauxAssistantMessage("done");
       if (request.messages.at(-1)?.role === "toolResult")
         return fauxAssistantMessage("parent done");
@@ -78,9 +78,10 @@ describe("a child's run", () => {
     expect((await submission.wait(context)).status).toBe("done");
     const task = await harness.commit(async (tx) => {
       const records = await tx.scanTasks({ kind: KeyTask.definition.name }, 100);
-      const child = records.items.find(
-        (record) => (record.input as { readonly name?: string }).name === name,
-      );
+      const child = records.items.find((record) => {
+        const input = record.input as { readonly kind?: string; readonly name?: string };
+        return input.kind === "fork" && input.name === name;
+      });
       if (child === undefined) throw new Error(`no child ${name}`);
       return child.id;
     }, context);

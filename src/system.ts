@@ -1,6 +1,6 @@
-import { contentText, Type } from "@earendil-works/pi-ai";
+import { type AssistantMessage, contentText, Type } from "@earendil-works/pi-ai";
 import {
-  AssistantEntry,
+  AgentDoc,
   type ConversationId,
   type Cursor,
   configure,
@@ -11,6 +11,7 @@ import {
   type EntryRecord,
   GenerationTask,
   hook,
+  ProviderDoc,
   runEndTask,
   section,
   type TaskId,
@@ -20,16 +21,17 @@ import {
 import type { Git } from "./git.ts";
 import { CHILD_NAME, ensureWorktree } from "./worktree.ts";
 
-/** A fork or successor: one prompt in the conversation this task owns. */
+/** A fork or the successor of a run: a task in a fresh conversation. */
 export type KeyTaskInput =
   | {
+      readonly kind: "fork";
       readonly prompt: string;
       /** The fork's worktree and branch; forks cannot fork again. */
       readonly name: string;
     }
   | {
-      readonly prompt: string;
-      /** The fork tasks whose settled results join into this successor's prompt. */
+      readonly kind: "successor";
+      /** The fork tasks whose conversations the successor frames, then queries through ask. */
       readonly on: readonly TaskId<string>[];
     };
 
@@ -44,8 +46,8 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
   initial: () => ({ phase: "wait" }),
   phases: {
     wait: async (record, runtime, context) => {
-      const on = "on" in record.input ? record.input.on : undefined;
-      if (on !== undefined) {
+      if (record.input.kind === "successor") {
+        const on = record.input.on;
         await runtime.commit(
           () => ({
             status: "waiting",
@@ -74,20 +76,10 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
       if (handle === undefined)
         throw new Error(`key.run ${record.id}: conversation ${conversationId} is gone`);
 
-      const { prompt } = record.input;
-      const on = "on" in record.input ? record.input.on : undefined;
-      const upstream =
-        on === undefined
-          ? []
-          : (await runtime.outcomes(on, context)).map((outcome, index) =>
-              outcome.status === "completed"
-                ? `task #${on[index]} completed:\n${outcome.result}`
-                : `task #${on[index]} ${outcome.status}`,
-            );
       const text =
-        upstream.length === 0
-          ? prompt
-          : `${prompt}\n\nUpstream results:\n\n${upstream.join("\n\n")}`;
+        record.input.kind === "fork"
+          ? record.input.prompt
+          : await successorPrompt(record.input, record.id, record.conversationId, runtime, context);
       const submission = await handle.submit(
         { type: "input", content: text, requestId: `key.run:${record.id}`, whenBusy: "steer" },
         context,
@@ -128,6 +120,33 @@ function answerOf(entry: EntryRecord | undefined): string {
   return contentText(message.content, "");
 }
 
+/** The successor's opening: only the conversations before it, named by id. Their words stay behind ask. */
+async function successorPrompt(
+  input: Extract<KeyTaskInput, { readonly kind: "successor" }>,
+  taskId: number,
+  predecessor: ConversationId,
+  runtime: Parameters<typeof KeyTask.definition.phases.run>[1],
+  context: Parameters<typeof KeyTask.definition.phases.run>[2],
+): Promise<string> {
+  const children: { readonly task: TaskId<string>; readonly conversation: ConversationId }[] = [];
+  await runtime.commit(async (tx) => {
+    for (const task of input.on) {
+      const conversation = (await tx.scanConversations({ ownerTaskId: task }, 1)).items[0];
+      if (conversation === undefined)
+        throw new Error(`key.run ${taskId}: task #${task} owns no conversation`);
+      children.push({ task, conversation: conversation.id });
+    }
+    return undefined;
+  }, context);
+  return [
+    `Successor of conversation #${predecessor}.`,
+    "",
+    "Before you:",
+    `- conversation #${predecessor}`,
+    ...children.map(({ task, conversation }) => `- task #${task}: conversation #${conversation}`),
+  ].join("\n");
+}
+
 /** Create one asynchronous branch and the conversation it owns, in the current conversation. */
 /** Create a run's task; a successor mints no conversation here — its wait ends first, and the
  * conversation it runs in is minted when the wait does. */
@@ -138,8 +157,8 @@ async function createRun(tx: Tx, input: KeyTaskInput): Promise<TaskId<string>> {
   });
 }
 
-/** The successor a completed run requests: its final answer and the forks to join. */
-type SpawnInput = { readonly prompt: string; readonly on: TaskId<string>[] };
+/** The successor a completed run requests: the forks it joins. */
+type SpawnInput = { readonly on: TaskId<string>[] };
 
 /** Create the successor's task without keeping the completed run busy with it; the conversation
  * is minted when the successor's wait ends, so the heir lists newer than every fork it joins. */
@@ -150,7 +169,7 @@ const SpawnTask = defineTask<SpawnInput, { readonly phase: "spawn" }, null>({
   phases: {
     spawn: async (record, runtime, context) => {
       await runtime.commit(async (tx) => {
-        await createRun(tx, { prompt: record.input.prompt, on: record.input.on });
+        await createRun(tx, { kind: "successor", on: record.input.on });
         return { status: "terminal", outcome: { status: "completed", result: null } };
       }, context);
     },
@@ -173,7 +192,7 @@ const forkTool = (git: Git) => {
   const Fork = defineTool({
     name: "fork",
     description:
-      "Start one child task immediately in its own git worktree and conversation. You do not wait for it. Call fork once per child; calling it several times forks several children. When your run answers, a fresh successor starts once all its children settle, with your final answer and their results. A child does not fork.",
+      "Start one child task immediately in its own git worktree and conversation. You do not wait for it. Call fork once per child; calling it several times forks several children. When your run answers, a fresh successor starts once all its children settle, with their conversation ids. It queries them through ask. A child does not fork.",
     parameters: Type.Object({
       name: Type.String({
         pattern: CHILD_NAME.source,
@@ -189,13 +208,13 @@ const forkTool = (git: Git) => {
       const taskId = await call.commit(async (tx) => {
         const creation = await tx.doc(ForkCreation, call.taskId);
         if (creation.taskId !== undefined) return creation.taskId;
-        const task = await createRun(tx, { prompt, name });
+        const task = await createRun(tx, { kind: "fork", prompt, name });
         const conversation = await tx.createConversation({
           ownership: { kind: "task", taskId: task },
         });
         await configure(tx, conversation.id, {
           cwd: worktree.path,
-          tools: { remove: [Fork] },
+          tools: { remove: [Fork, Ask] },
         });
         creation.taskId = task;
         return task;
@@ -208,6 +227,109 @@ const forkTool = (git: Git) => {
   });
   return Fork;
 };
+
+/** One question answered from a conversation's frozen context; the target is never appended to. */
+type AskInput = {
+  readonly conversation: ConversationId;
+  readonly question: string;
+};
+
+type AskResult = {
+  readonly text: string;
+  readonly usage: AssistantMessage["usage"];
+};
+
+const AskTask = defineTask<AskInput, { readonly phase: "ask" }, AskResult>({
+  name: "key.ask",
+  version: 1,
+  initial: () => ({ phase: "ask" }),
+  phases: {
+    ask: async (record, runtime, context) => {
+      const { conversation, question } = record.input;
+      const agent = await runtime.snapshot(AgentDoc, conversation, context);
+      if (agent?.model === undefined)
+        throw new Error(`key.ask ${record.id}: conversation #${conversation} has no model`);
+      const ref = agent.model;
+      const model = runtime.models.getModel(ref.provider, ref.modelId);
+      if (model === undefined)
+        throw new Error(`key.ask ${record.id}: unknown model ${ref.provider}/${ref.modelId}`);
+
+      const view = await runtime.context(conversation, context);
+      const provider = await runtime.snapshot(ProviderDoc, conversation, context);
+      const answer = await runtime.models.completeSimple(
+        model,
+        {
+          messages: [
+            ...view.messages,
+            { role: "user", content: question, timestamp: runtime.now() },
+          ],
+        },
+        {
+          signal: runtime.signal,
+          telemetry: context.telemetry,
+          ...(provider === undefined ? {} : { sessionId: provider.sessionId }),
+          ...(agent.thinkingLevel === "off" ? {} : { reasoning: agent.thinkingLevel }),
+        },
+      );
+      runtime.signal.throwIfAborted();
+      if (answer.stopReason === "error")
+        throw new Error(`key.ask ${record.id}: ${answer.errorMessage ?? "model error"}`);
+
+      await runtime.commit(
+        () => ({
+          status: "terminal",
+          outcome: {
+            status: "completed",
+            result: { text: contentText(answer.content, ""), usage: answer.usage },
+          },
+        }),
+        context,
+      );
+    },
+  },
+  abort: async (_record, runtime, context) => {
+    await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context);
+  },
+});
+
+/** A replay of one ask tool call reattaches to the question its first attempt started. */
+const AskCall = defineDoc<{ taskId?: TaskId<AskResult> }>({
+  kind: "key.ask-call",
+  version: 1,
+  scope: "task",
+  initial: () => ({}),
+  checkpointWhen: () => false,
+});
+
+const Ask = defineTool({
+  name: "ask",
+  description:
+    "Ask a settled conversation a question. The answer comes from that conversation's own frozen context; the conversation is never modified. Batch compound questions into one ask; several asks may run in parallel.",
+  parameters: Type.Object({
+    conversation: Type.Number({ description: "The conversation id from the framing." }),
+    question: Type.String({ description: "The question to answer from that conversation." }),
+  }),
+  replay: "safe",
+  execute: async ({ conversation, question }, api, context) => {
+    const task = await api.commit(async (tx) => {
+      const call = await tx.doc(AskCall, api.taskId);
+      if (call.taskId !== undefined) return call.taskId;
+      call.taskId = await tx.createTask(
+        AskTask,
+        { conversation: conversation as ConversationId, question },
+        { ownership: { kind: "task", taskId: api.taskId } },
+      );
+      return call.taskId;
+    }, context);
+    const settled = await api.waitForTask(task, context);
+    if (settled.state.outcome.status !== "completed")
+      throw new Error(`ask failed: ${settled.state.outcome.status}`);
+    return {
+      output: [{ type: "text", text: settled.state.outcome.result.text }],
+      usage: settled.state.outcome.result.usage,
+    };
+  },
+});
 
 /** The host's system: direct conversation runs, with tasks only at cascade boundaries. */
 export const keySystem = (git: Git) => {
@@ -257,13 +379,12 @@ export const keySystem = (git: Git) => {
               cursor = page.next;
             } while (cursor !== undefined);
             if (on.length === 0) return undefined;
-            const answer = await api.entry(AssistantEntry, run.answer, context);
-            return { tasks: [runEndTask(SpawnTask, { prompt: answerOf(answer), on })] };
+            return { tasks: [runEndTask(SpawnTask, { on })] };
           },
         }),
       ],
-      tasks: [KeyTask, SpawnTask],
-      tools: [Fork],
+      tasks: [KeyTask, SpawnTask, AskTask],
+      tools: [Fork, Ask],
     }),
     task: KeyTask,
   };

@@ -234,16 +234,17 @@ describe("host", () => {
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
-    await run("kick off");
+    const kickoff = await runId("kick off");
+    const heir = `successor of #${kickoff}`;
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
     await list.close();
 
     expect((await statsOf(idOf(listed, "kick off"))).model).toBe("deepseek-chat");
     expect((await statsOf(idOf(listed, "task for a"))).model).toBe("deepseek-flash");
-    expect((await statsOf(idOf(listed, "a is on its way"))).model).toBe("deepseek-flash");
+    expect((await statsOf(idOf(listed, heir))).model).toBe("deepseek-flash");
     expect((await statsOf(idOf(listed, "kick off"))).thinkingLevel).toBe("low");
     expect((await statsOf(idOf(listed, "task for a"))).thinkingLevel).toBe("minimal");
-    expect((await statsOf(idOf(listed, "a is on its way"))).thinkingLevel).toBe("minimal");
+    expect((await statsOf(idOf(listed, heir))).thinkingLevel).toBe("minimal");
   });
 
   test("the thinking defaults are clamped to each conversation's model", async () => {
@@ -371,14 +372,14 @@ describe("host", () => {
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
-    await run("kick off");
+    const id = await runId("kick off");
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
     await list.close();
 
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
       { label: "kick off", depth: 0 },
       { label: "task for a", depth: 1 },
-      { label: "a is on its way", depth: 1 },
+      { label: `successor of #${id}`, depth: 1 },
     ]);
     // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
@@ -389,19 +390,19 @@ describe("host", () => {
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
-    await run("kick off");
+    const id = await runId("kick off");
+    const heir = `successor of #${id}`;
     const listed = await list.until(
       (frame: readonly Summary[]) =>
-        frame.length === 3 &&
-        frame.some((item) => item.label === "a is on its way" && item.attention),
+        frame.length === 3 && frame.some((item) => item.label === heir && item.attention),
     );
     await list.close();
 
-    // The parent yielded to its heir; the child's result crossed upstream. Only the heir is left.
+    // The parent yielded to its heir. Only the heir is left.
     expect(listed.map(({ label, attention }) => ({ label, attention }))).toEqual([
       { label: "kick off", attention: false },
       { label: "task for a", attention: false },
-      { label: "a is on its way", attention: true },
+      { label: heir, attention: true },
     ]);
   });
 
@@ -425,14 +426,14 @@ describe("host", () => {
   test("interleaved cascades hold one block each, the newest cascade's on top", async () => {
     const child = held("a answers");
     const second: FauxResponseStep = (request) => {
-      if (requestText(request.messages).includes("Upstream results"))
+      if (requestText(request.messages).includes("Successor of conversation"))
         return turn("the second summed");
       return request.messages.at(-1)?.role === "toolResult"
         ? turn("the second heir")
         : turn("the second forks b.", ["b"]);
     };
     const first: FauxResponseStep = (request) =>
-      requestText(request.messages).includes("Upstream results")
+      requestText(request.messages).includes("Successor of conversation")
         ? turn("the first summed")
         : turn("the first heir");
     const answer = route(first, {
@@ -451,16 +452,16 @@ describe("host", () => {
       answer,
     ]);
     const list = await openList();
-    await run("the first");
+    const firstRun = await runId("the first");
     await child.asked;
-    await run("the second");
+    const secondRun = await runId("the second");
 
     // The second cascade finishes while the first's child is held: its block sits on top.
     const midway = await list.until((frame: readonly Summary[]) => frame.length === 5);
     expect(midway.map(({ label }) => label)).toEqual([
       "the second",
       "task for b",
-      "the second heir",
+      `successor of #${secondRun}`,
       "the first",
       "task for a",
     ]);
@@ -472,10 +473,10 @@ describe("host", () => {
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
       { label: "the first", depth: 0 },
       { label: "task for a", depth: 1 },
-      { label: "the first heir", depth: 1 },
+      { label: `successor of #${firstRun}`, depth: 1 },
       { label: "the second", depth: 0 },
       { label: "task for b", depth: 1 },
-      { label: "the second heir", depth: 1 },
+      { label: `successor of #${secondRun}`, depth: 1 },
     ]);
     // The first block leads on the strength of its newer heir, though its kickoff is the older.
     expect(listed[0].id).toBeLessThan(listed[3].id);
@@ -495,16 +496,19 @@ describe("host", () => {
       turn("summed"),
     ]);
     const list = await openList();
-    await run("kick off");
+    const kickoff = await runId("kick off");
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 5);
     await list.close();
 
+    const heir = `successor of #${kickoff}`;
+    const heirId = listed.find((item) => item.label === heir)?.id;
+    expect(heirId).toBeDefined();
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
       { label: "kick off", depth: 0 },
       { label: "task for a", depth: 1 },
-      { label: "the first heir", depth: 1 },
+      { label: heir, depth: 1 },
       { label: "task for b", depth: 2 },
-      { label: "the second heir", depth: 2 },
+      { label: `successor of #${heirId}`, depth: 2 },
     ]);
   });
 
@@ -570,6 +574,12 @@ describe("host", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt, cwd: REPO }),
     });
+  }
+
+  /** Start a conversation from a prompt, then return the id the run endpoint answered. */
+  async function runId(prompt: string): Promise<number> {
+    const { conversation } = (await (await run(prompt)).json()) as { conversation: number };
+    return conversation;
   }
 
   /** Start a conversation from a prompt: the ID the run endpoint answers. */

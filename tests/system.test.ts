@@ -18,6 +18,7 @@ import {
   keySetup,
   MODEL,
   openKey,
+  requestText,
   route,
   unanswered,
 } from "./harness.ts";
@@ -54,11 +55,12 @@ function turn(text: string, forks: readonly string[] = []) {
   );
 }
 
-const children = (records: readonly KeyRecord[]) => records.filter((r) => "name" in r.input);
+const children = (records: readonly KeyRecord[]) =>
+  records.filter((record) => record.input.kind === "fork");
 const nameOf = (record: KeyRecord): string | undefined =>
-  "name" in record.input ? record.input.name : undefined;
+  record.input.kind === "fork" ? record.input.name : undefined;
 const onOf = (record: KeyRecord): readonly TaskId<string>[] | undefined =>
-  "on" in record.input ? record.input.on : undefined;
+  record.input.kind === "successor" ? record.input.on : undefined;
 
 function successor(
   records: readonly KeyRecord[],
@@ -124,8 +126,8 @@ describe("the fork cascade", () => {
     const child = children(await cascade(harness))[0];
     const next = await waitForSuccessor(harness, [child.id]);
 
-    expect(child.input).toEqual({ prompt: "task for a", name: "a" });
-    expect(next.input).toEqual({ prompt: "a is on its way", on: [child.id] });
+    expect(child.input).toEqual({ kind: "fork", prompt: "task for a", name: "a" });
+    expect(next.input).toEqual({ kind: "successor", on: [child.id] });
     await harness.waitForTask(next.id, context);
   });
 
@@ -165,8 +167,13 @@ describe("the fork cascade", () => {
 
     const transcript = await entries(harness, parent);
     expect(JSON.stringify(transcript)).not.toContain("CHILD-ANSWER-BENEATH-THE-SURFACE");
-    // It crosses only into the successor, as an upstream result.
-    expect(next.input.prompt).toBe("the parent ends here");
+    // The successor gets only the lineage, never the words that crossed before it.
+    const successorTranscript = await entries(harness, await conversationOf(harness, next.id));
+    const text = JSON.stringify(successorTranscript);
+    expect(text).not.toContain("the parent ends here");
+    expect(text).not.toContain("CHILD-ANSWER-BENEATH-THE-SURFACE");
+    expect(text).toContain(`conversation #${parent}`);
+    expect(text).toContain(`conversation #${await conversationOf(harness, child.id)}`);
     await harness.waitForTask(next.id, context);
   });
 
@@ -227,6 +234,59 @@ describe("fork results", () => {
   });
 });
 
+describe("ask", () => {
+  it("answers from a frozen conversation and leaves it untouched", async () => {
+    const { faux, harness } = await fresh();
+    const seen: string[] = [];
+    let target: ConversationId | undefined;
+    const step: FauxResponseStep = (request) => {
+      const text = requestText(request.messages);
+      const raw = JSON.stringify(request.messages);
+      seen.push(raw);
+      if (text.includes("task for a")) return turn("a answers");
+      if (text.includes("Successor of conversation")) {
+        if (raw.includes("ANSWER-FROM-FROZEN")) return turn("successor done");
+        if (target === undefined) throw new Error("ask target not set");
+        return fauxAssistantMessage(
+          fauxToolCall("ask", { conversation: target, question: "WHY-ASK" }),
+          { stopReason: "toolUse" },
+        );
+      }
+      if (text.includes("WHY-ASK")) return fauxAssistantMessage("ANSWER-FROM-FROZEN");
+      return request.messages.at(-1)?.role === "toolResult"
+        ? turn("parent final")
+        : turn("parent final", ["a"]);
+    };
+    faux.setResponses(Array.from({ length: 8 }, () => step));
+
+    const handle = await conversation(harness);
+    const parent = handle.id;
+    target = parent;
+    const submission = await handle.submit({ type: "input", content: "kick off" }, context);
+    harness.resume();
+    expect((await submission.wait(context)).status).toBe("done");
+    const before = await entries(harness, parent);
+
+    const next = await waitForSuccessor(harness);
+    await harness.waitForTask(next.id, context);
+
+    // The ask read the predecessor's own context, including its answer, and appended nothing there.
+    const asked = seen.find(
+      (text) => text.includes("WHY-ASK") && !text.includes("Successor of conversation"),
+    );
+    expect(asked).toContain("kick off");
+    expect(asked).toContain("parent final");
+    expect(await entries(harness, parent)).toEqual(before);
+
+    // Only the lineage reached the successor.
+    const successor = JSON.stringify(
+      await entries(harness, await conversationOf(harness, next.id)),
+    );
+    expect(successor).not.toContain("parent final");
+    expect(successor).toContain(`conversation #${parent}`);
+  });
+});
+
 describe("a continuation", () => {
   it("messages a conversation in place and joins only that run's forks", async () => {
     const { faux, harness } = await fresh();
@@ -253,7 +313,7 @@ describe("a continuation", () => {
     const transcript = await entries(harness, kickoff);
     expect(transcript.filter((entry) => entry.kind === "pi.user")).toHaveLength(2);
     expect(children(await cascade(harness)).map(nameOf)).toEqual(["a", "b"]);
-    expect(next.input).toEqual({ prompt: "b is on its way", on: [b.id] });
+    expect(next.input).toEqual({ kind: "successor", on: [b.id] });
   });
 });
 
@@ -267,7 +327,7 @@ describe("an interruption", () => {
     const kickoff = await run(harness, "kick off");
     await stuck.reached;
     const child = children(await cascade(harness))[0];
-    expect(child.input).toEqual({ prompt: "task for a", name: "a" });
+    expect(child.input).toEqual({ kind: "fork", prompt: "task for a", name: "a" });
     await harness.waitForTask(child.id, context);
 
     const handle = await harness.conversation(kickoff, context);
@@ -300,7 +360,9 @@ describe("an interruption", () => {
       status: "aborted",
     });
     const transcript = await entries(harness, await conversationOf(harness, next.id));
-    expect(JSON.stringify(transcript)).toContain(`task #${child.id} aborted`);
+    expect(JSON.stringify(transcript)).toContain(
+      `task #${child.id}: conversation #${await conversationOf(harness, child.id)}`,
+    );
   });
 
   it("a message after an interrupt joins only its own forks", async () => {
@@ -331,6 +393,6 @@ describe("an interruption", () => {
     await harness.waitForTask(next.id, context);
 
     expect(children(await cascade(harness)).map(nameOf)).toEqual(["a", "b"]);
-    expect(next.input).toEqual({ prompt: "wrapped up", on: [b.id] });
+    expect(next.input).toEqual({ kind: "successor", on: [b.id] });
   });
 });

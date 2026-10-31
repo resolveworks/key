@@ -52,8 +52,10 @@ async function restart(
   return openKey(storage, setup, env);
 }
 
-const nameOf = (record: { readonly input: unknown }) =>
-  (record.input as { readonly name?: string }).name;
+const nameOf = (record: { readonly input: unknown }) => {
+  const input = record.input as { readonly kind?: string; readonly name?: string };
+  return input.kind === "fork" ? input.name : undefined;
+};
 
 /** Start one prompt directly in an ownerless conversation. */
 async function run(
@@ -139,7 +141,11 @@ describe("restart", () => {
     expect((await initial.wait(context)).status).toBe("done");
     const minted = await vi.waitFor(async () => {
       const records = await cascade(first);
-      expect(records.filter((record) => "on" in record.input)).toHaveLength(1);
+      expect(
+        records.filter(
+          (record) => (record.input as { readonly kind?: string }).kind === "successor",
+        ),
+      ).toHaveLength(1);
       return records;
     });
     expect(minted.filter((record) => nameOf(record) !== undefined).map(nameOf)).toEqual([
@@ -175,10 +181,12 @@ describe("restart", () => {
     );
     const children = after.filter((record) => nameOf(record) !== undefined);
     expect(children.map(nameOf)).toEqual(["kid-a", "kid-b"]);
-    const successors = after.filter((record) => "on" in record.input);
+    const successors = after.filter(
+      (record) => (record.input as { readonly kind?: string }).kind === "successor",
+    );
     expect(successors).toHaveLength(1);
     expect(successors[0]?.input).toMatchObject({
-      prompt: "forked",
+      kind: "successor",
       on: children.map((record) => record.id),
     });
     for (const child of children) {
