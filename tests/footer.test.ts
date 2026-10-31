@@ -1,13 +1,16 @@
-import type { ConversationView, EntryRecord } from "@earendil-works/pi-durable";
+import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
 import { contextTokens, Footer, shortenHome, tokens, totals } from "../src/footer.ts";
 
-const view = (entries: readonly EntryRecord[], cwd = "/key/repo"): ConversationView =>
+// A run in flight: the branded task ID is the package's to allocate, so the fake view brands one.
+const liveRun = { run: { taskId: 1, inputs: [], turns: 0 } } as unknown as LiveState;
+
+const view = (entries: readonly EntryRecord[], cwd = "/key/repo", live = false): ConversationView =>
   ({
     conversation: {} as ConversationView["conversation"],
     entries,
-    docs: { "pi.agent": { cwd }, "pi.usage": usage },
+    docs: { "pi.agent": { cwd }, "pi.live": live ? liveRun : undefined, "pi.usage": usage },
   }) as unknown as ConversationView;
 
 const usage = {
@@ -105,16 +108,12 @@ describe("footer", () => {
 
   test("two dim lines: where it runs, and what it spent against the window", () => {
     const footer = new Footer();
-    footer.watch(
-      view([asked("fix the footer"), answered(1200, 8600)], "/key/repo"),
-      {
-        branch: "main",
-        contextWindow: 128_000,
-        model: "deepseek-flash",
-        thinkingLevel: "high" as const,
-      },
-      true,
-    );
+    footer.watch(view([asked("fix the footer"), answered(1200, 8600)], "/key/repo"), {
+      branch: "main",
+      contextWindow: 128_000,
+      model: "deepseek-flash",
+      thinkingLevel: "high" as const,
+    });
     const [place, spent] = footer.render(100);
     expect(place).toContain("/key/repo");
     expect(place).toContain("(main)");
@@ -126,11 +125,11 @@ describe("footer", () => {
 
   test("the place line carries the place alone", () => {
     const footer = new Footer();
-    footer.watch(
-      view([asked("fix the footer test flake\n\nthen the rest")]),
-      { contextWindow: 128_000, model: "deepseek-flash", thinkingLevel: "high" },
-      false,
-    );
+    footer.watch(view([asked("fix the footer test flake\n\nthen the rest")]), {
+      contextWindow: 128_000,
+      model: "deepseek-flash",
+      thinkingLevel: "high",
+    });
     const [place] = footer.render(100);
     expect(stripTerminalSequences(place)).toBe("/key/repo");
   });
@@ -150,29 +149,25 @@ describe("footer", () => {
 
   test("a transcript draws exactly where it runs and what it spent", () => {
     const footer = new Footer();
-    footer.watch(
-      view([answered(1200, 8600)]),
-      {
-        contextWindow: 128_000,
-        model: "deepseek-flash",
-        thinkingLevel: "high",
-      },
-      true,
-    );
+    footer.watch(view([answered(1200, 8600)]), {
+      contextWindow: 128_000,
+      model: "deepseek-flash",
+      thinkingLevel: "high",
+    });
     expect(footer.render(100)).toHaveLength(2);
   });
 
-  test("the stats line opens with the list's dot: filled while the chain streams, hollow once it settles", () => {
+  test("the stats line opens with a dot: filled while the conversation streams, hollow once it settles", () => {
     const stats = {
       contextWindow: 128_000,
       model: "deepseek-flash",
       thinkingLevel: "high" as const,
     };
     const footer = new Footer();
-    footer.watch(view([answered(1200, 8600)]), stats, true);
+    footer.watch(view([answered(1200, 8600)], "/key/repo", true), stats);
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^● ↑1\.2k/);
 
-    footer.watch(view([answered(1200, 8600)]), stats, false);
+    footer.watch(view([answered(1200, 8600)]), stats);
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^○ ↑1\.2k/);
   });
 });

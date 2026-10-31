@@ -4,7 +4,7 @@
 import { homedir } from "node:os";
 import type { ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
-import type { ConversationView, UsageState } from "@earendil-works/pi-durable";
+import type { ConversationView, LiveState, UsageState } from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { style } from "./theme.ts";
 
@@ -83,8 +83,8 @@ function cacheHitRate(view: ConversationView): number | undefined {
 }
 
 /**
- * The dot the list puts before a conversation and the footer before its spend: filled while the
- * chain streams, hollow once it settles.
+ * The dot the list puts before a conversation and the footer before its spend: filled while it is
+ * live, hollow once it settles.
  */
 export function dot(running: boolean): string {
   return running ? style.success("●") : style.dim("○");
@@ -102,8 +102,6 @@ export class Footer implements Component {
   #window = 0;
   #model = "";
   #thinking = "";
-  /** The task graph's verdict on this conversation, drawn beside the list's dot from the same graph. */
-  #running = false;
 
   /** Nothing is cached: the stats are derived from the view the client hands in every frame. */
   invalidate(): void {}
@@ -114,7 +112,6 @@ export class Footer implements Component {
     this.#window = 0;
     this.#model = "";
     this.#thinking = "";
-    this.#running = false;
   }
 
   /** Where the next trajectory would run, and the host's word on it. */
@@ -129,15 +126,14 @@ export class Footer implements Component {
     this.#cwd = undefined;
   }
 
-  /** Draw one transcript: where it runs, what it has spent, and whether its chain still streams. */
-  watch(view: ConversationView, stats: Stats, running: boolean): void {
+  /** Draw one transcript: where it runs, what it has spent, and whether it streams. */
+  watch(view: ConversationView, stats: Stats): void {
     this.#view = view;
     this.#cwd = (view.docs["pi.agent"] as { readonly cwd?: string } | undefined)?.cwd ?? "";
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
     this.#model = stats.model;
     this.#thinking = stats.thinkingLevel === "off" ? "thinking off" : stats.thinkingLevel;
-    this.#running = running;
   }
 
   render(width: number): string[] {
@@ -159,7 +155,8 @@ export class Footer implements Component {
     if (usage.cost.total) spent.push(`$${usage.cost.total.toFixed(3)}`);
     spent.push(this.#context(contextTokens(this.#view)));
 
-    const left = `${dot(this.#running)} ${spent.join(" ")}`;
+    const live = this.#view.docs["pi.live"] as LiveState | undefined;
+    const left = `${dot(live?.run !== undefined)} ${spent.join(" ")}`;
     const leftWidth = visibleWidth(left);
     const name = truncateToWidth(
       `${this.#model}${this.#thinking === "" ? "" : ` • ${this.#thinking}`}`,

@@ -106,7 +106,7 @@ export async function open(base: string): Promise<void> {
   /** The login stream, live only while the login view is open. */
   let loginWatch: (() => void) | undefined;
 
-  /** The task graph's verdict on one conversation: the list's dot and everything else read it here. */
+  /** The task graph's verdict on one conversation: the list's dot, the ring, and the interrupt gate. */
   const runs = (id: number): boolean =>
     summaries.some((summary) => summary.id === id && summary.running);
 
@@ -252,8 +252,7 @@ export async function open(base: string): Promise<void> {
         footer.show(summary?.cwd ?? process.cwd());
       } else {
         show(transcript(view));
-        // The list's dot and the footer's are one answer from one graph, read in one place.
-        if (stats !== undefined) footer.watch(view, stats, runs(id));
+        if (stats !== undefined) footer.watch(view, stats);
       }
     }
     if (notice !== undefined) show([new Text(style.error(notice), 0, 0)]);
