@@ -19,7 +19,7 @@ describe("provider", () => {
 
   test("/new's completion is the command and the path it would run, one item", async () => {
     const complete = vi.fn();
-    const suggestions = await provider(complete, freshDefault).getSuggestions(["/n"], 0, 2, {
+    const suggestions = await provider(complete, freshDefault).getSuggestions(["/ne"], 0, 3, {
       signal,
     });
     expect(complete).not.toHaveBeenCalled();

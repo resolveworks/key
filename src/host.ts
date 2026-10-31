@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { AuthType, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AgentDoc,
@@ -27,9 +27,11 @@ import { type ServerType, serve } from "@hono/node-server";
 import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
+import { FileCredentialStore } from "./auth.ts";
 import { Fetch } from "./fetch.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
+import { LoginSession, type ProviderInfo } from "./login.ts";
 import {
   type ModelDefaults,
   ModelDefaultsDoc,
@@ -47,7 +49,7 @@ const SCAN_PAGE_SIZE = 256;
 
 /** The port `key serve` binds; the client and a plain `new Host()` agree on it. */
 export const PORT = 7317;
-/** Everything the host owns lives here, outside every project: store, env. */
+/** Everything the host owns lives here, outside every project: store, credentials. */
 const dataDirectory = join(homedir(), ".key");
 
 /** What the host runs on. `new Host()` is one box: defaults on the session at `PORT`. */
@@ -62,17 +64,22 @@ export type HostOptions = {
   readonly thinkingLevel: () => ModelThinkingLevel;
 };
 
-const production = (): HostOptions => ({
-  models: () => builtinModels(),
-  storage: async () => {
-    mkdirSync(dataDirectory, { recursive: true });
-    return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
-  },
-  extensions: [CodingTools, KeySystem, Search, Fetch, Agents],
-  port: PORT,
-  hostname: process.env.KEY_BIND ?? "127.0.0.1",
-  thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,
-});
+const production = (): HostOptions => {
+  const models = builtinModels({
+    credentials: new FileCredentialStore(join(dataDirectory, "auth.json")),
+  });
+  return {
+    models: () => models,
+    storage: async () => {
+      mkdirSync(dataDirectory, { recursive: true });
+      return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
+    },
+    extensions: [CodingTools, KeySystem, Search, Fetch, Agents],
+    port: PORT,
+    hostname: process.env.KEY_BIND ?? "127.0.0.1",
+    thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,
+  };
+};
 
 /** One line in the transcript picker: a conversation and whether it has live work. */
 export type Summary = {
@@ -95,6 +102,7 @@ export class Host {
   #port!: number;
   #app?: Hono;
   #listeners = new Set<(summaries: readonly Summary[]) => void>();
+  #login?: LoginSession;
   #options: HostOptions;
 
   constructor(options: HostOptions = production()) {
@@ -142,6 +150,61 @@ export class Host {
         contextWindow,
       })),
     };
+  }
+
+  /** Every provider `/login` can configure, with what it offers and whether it is set up. */
+  async providers(): Promise<readonly ProviderInfo[]> {
+    const models = this.#options.models();
+    return Promise.all(
+      [...models.getProviders()]
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(async (provider) => {
+          const status = await models.checkAuth(provider.id);
+          return {
+            id: provider.id,
+            name: provider.name,
+            ...(provider.auth.apiKey === undefined
+              ? {}
+              : {
+                  apiKey: {
+                    name: provider.auth.apiKey.name,
+                    login: provider.auth.apiKey.login !== undefined,
+                  },
+                }),
+            ...(provider.auth.oauth === undefined
+              ? {}
+              : {
+                  oauth: {
+                    name: provider.auth.oauth.name,
+                    ...(provider.auth.oauth.loginLabel === undefined
+                      ? {}
+                      : { label: provider.auth.oauth.loginLabel }),
+                    login: true,
+                    subscription: provider.auth.oauth.isSubscription === true,
+                  },
+                }),
+            ...(status === undefined ? {} : { status }),
+          };
+        }),
+    );
+  }
+
+  /** Begin a login the client follows; a new one cancels whatever was still waiting. */
+  startLogin(providerId: string, type: AuthType): void {
+    const models = this.#options.models();
+    const provider = models.getProvider(providerId);
+    if (provider === undefined) throw new Error(`unknown provider: ${providerId}`);
+    const method = type === "oauth" ? provider.auth.oauth : provider.auth.apiKey;
+    if (method?.login === undefined)
+      throw new Error(`${provider.name} does not support ${type} login`);
+    this.#login?.abort();
+    this.#login = new LoginSession(models, provider, type);
+    this.#login.start();
+  }
+
+  /** The login the client is following, if any. */
+  get login(): LoginSession | undefined {
+    return this.#login;
   }
 
   /** Point one default at a catalog model; a request fails later if its provider has no key. */
@@ -372,6 +435,7 @@ export class Host {
   }
 
   async close(): Promise<void> {
+    this.#login?.abort();
     const closed = this.#server?.close() ?? Promise.resolve();
     await this.#harness.close(context);
     await closed;

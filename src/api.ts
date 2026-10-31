@@ -35,6 +35,18 @@ const ModelDefaultInput = Type.Object({
   modelId: Type.String({ minLength: 1 }),
 });
 
+/** What `POST /api/login` takes: the provider whose flow to run, and how to authenticate. */
+const LoginInput = Type.Object({
+  provider: Type.String({ minLength: 1 }),
+  type: Type.Union([Type.Literal("api_key"), Type.Literal("oauth")]),
+});
+
+/** What `POST /api/login/respond` takes: the prompt it answers, and the value typed or chosen. */
+const LoginAnswerInput = Type.Object({
+  id: Type.Number(),
+  value: Type.String(),
+});
+
 const index = `key host
 
   GET  /api/conversations              transcripts, then changes (SSE)
@@ -45,6 +57,11 @@ const index = `key host
   POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
   GET  /api/models                     catalog and the two defaults
   POST /api/models/defaults            {target, provider, modelId}: set a default
+  GET  /api/providers                  providers and their auth methods
+  POST /api/login                      {provider, type}: run a provider login
+  GET  /api/login                      the login's prompts and notices (SSE)
+  POST /api/login/respond              {id, value}: answer the waiting prompt
+  POST /api/login/abort                cancel the login
 `;
 
 /** What one thrown error answers: the error as text — but a parse failure keeps its details on
@@ -119,6 +136,68 @@ export function api(host: Host) {
           return c.body(null, 202);
         },
       )
+      .get("/api/providers", async (c) => c.json(await host.providers()))
+      .post(
+        "/api/login",
+        validator("json", (body) => Parse(LoginInput, body)),
+        (c) => {
+          const { provider, type } = c.req.valid("json");
+          host.startLogin(provider, type);
+          return c.body(null, 202);
+        },
+      )
+      .get("/api/login", (c) => {
+        const login = host.login;
+        if (login === undefined) return c.text("no login in progress", 404);
+        return streamSSE(c, async (stream) => {
+          await new Promise<void>((resolve) => {
+            let sent = 0;
+            let settled = false;
+            let stop = (): void => {};
+            let chain = Promise.resolve();
+            const finish = (): void => {
+              if (settled) return;
+              settled = true;
+              stop();
+              resolve();
+            };
+            const flush = (): void => {
+              chain = chain
+                .then(async () => {
+                  while (sent < login.events.length) {
+                    const event = login.events[sent++];
+                    if (!stream.aborted) await stream.writeSSE({ data: JSON.stringify(event) });
+                  }
+                  if (login.finished) finish();
+                })
+                .catch(() => finish());
+            };
+            stop = login.follow(flush);
+            flush();
+            stream.onAbort(() => {
+              stop();
+              resolve();
+            });
+          });
+        });
+      })
+      .post(
+        "/api/login/respond",
+        validator("json", (body) => Parse(LoginAnswerInput, body)),
+        (c) => {
+          const login = host.login;
+          if (login === undefined) throw new Error("no login in progress");
+          const { id, value } = c.req.valid("json");
+          login.answer(id, value);
+          return c.body(null, 202);
+        },
+      )
+      .post("/api/login/abort", (c) => {
+        const login = host.login;
+        if (login === undefined) throw new Error("no login in progress");
+        login.abort();
+        return c.body(null, 202);
+      })
       .post(
         "/api/complete",
         validator("json", (body) => Parse(CompleteInput, body)),

@@ -29,6 +29,11 @@ export function provider(
       label: "model",
       description: "set the conversation and child defaults",
     },
+    {
+      value: "login",
+      label: "login",
+      description: "configure a provider",
+    },
     { value: `new ${freshDefault()}`, label: `new ${freshDefault()}`, description: "start fresh" },
   ];
   // The library's provider kept for its text grammar alone: an unforced line that starts with "/"

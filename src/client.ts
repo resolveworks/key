@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import type { AuthType } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import {
   type AutocompleteSuggestions,
@@ -29,6 +30,8 @@ import { hc } from "hono/client";
 import type { api } from "./api.ts";
 import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
+import type { LoginEvent, ProviderInfo } from "./login.ts";
+import { LoginPicker, LoginView } from "./login-ui.ts";
 import { ModelPicker } from "./model-picker.ts";
 import { type ModelDefaults, type ModelInfo, type ModelTarget, targetName } from "./models.ts";
 import { provider } from "./prompt.ts";
@@ -68,7 +71,9 @@ type View =
 type Mode =
   | { readonly kind: "view"; readonly view: View }
   | { readonly kind: "list"; readonly back: View; selected: number | undefined }
-  | { readonly kind: "models"; readonly back: View; readonly picker: ModelPicker };
+  | { readonly kind: "models"; readonly back: View; readonly picker: ModelPicker }
+  | { readonly kind: "login"; readonly back: View; readonly picker: LoginPicker }
+  | { readonly kind: "login-flow"; readonly back: View; readonly view: LoginView };
 
 /** A view's name: "new" for the composer, its number for a conversation — its key in the drafts,
  * and its place in the ring when it is a live one. */
@@ -96,6 +101,8 @@ export async function open(base: string): Promise<void> {
   /** A failed action, shown once and replaced by whatever the state says next. */
   let notice: string | undefined;
   let starting = false;
+  /** The login stream, live only while the login view is open. */
+  let loginWatch: (() => void) | undefined;
 
   /** The task graph's verdict on one conversation: the list's dot and everything else read it here. */
   const runs = (id: number): boolean =>
@@ -225,6 +232,16 @@ export async function open(base: string): Promise<void> {
       show([mode.picker]);
       tui.setFocus(mode.picker);
       footer.clear();
+    } else if (mode.kind === "login") {
+      hidePrompt();
+      show([mode.picker]);
+      tui.setFocus(mode.picker);
+      footer.clear();
+    } else if (mode.kind === "login-flow") {
+      hidePrompt();
+      show([mode.view]);
+      tui.setFocus(mode.view);
+      footer.clear();
     } else if (mode.view.kind === "new") {
       showPrompt();
       show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
@@ -250,6 +267,8 @@ export async function open(base: string): Promise<void> {
    * its own draft, and the cursor records where a restart picks up. The one way the open view
    * ever changes — a conversation's lines are only ever appended, so history stays in scrollback. */
   const swap = (next: View): void => {
+    loginWatch?.();
+    loginWatch = undefined;
     drafts.set(nameOf(place()), prompt.getText());
     prompt.setText(drafts.get(nameOf(next)) ?? "");
     saveCursor(next.kind === "transcript" ? next.id : undefined);
@@ -309,6 +328,84 @@ export async function open(base: string): Promise<void> {
       notice = String(error);
       render();
     }
+  };
+
+  /** Fetch the providers and hand the screen to the login picker. */
+  const showLogin = async (back: View): Promise<void> => {
+    try {
+      const body = await call(() => client.api.providers.$get());
+      const providers = JSON.parse(body) as readonly ProviderInfo[];
+      const picker = new LoginPicker(
+        tui,
+        providers,
+        (provider, type) => void startLogin(back, provider, type),
+        () => swap(back),
+      );
+      mode = { kind: "login", back, picker };
+      notice = undefined;
+      render();
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
+  };
+
+  /** Start the chosen flow on the host, then follow its prompts and notices. */
+  const startLogin = async (back: View, provider: ProviderInfo, type: AuthType): Promise<void> => {
+    try {
+      await call(() => client.api.login.$post({ json: { provider: provider.id, type } }));
+      const view = new LoginView(
+        tui,
+        provider,
+        type,
+        (id, value) => void answerLogin(id, value),
+        () => void cancelLogin(back),
+        (message) => finishLogin(back, provider, type, message),
+      );
+      mode = { kind: "login-flow", back, view };
+      notice = undefined;
+      render();
+      loginWatch = follow<LoginEvent>(client.api.login.$url(), (event) => view.apply(event));
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
+  };
+
+  const answerLogin = async (id: number, value: string): Promise<void> => {
+    try {
+      await call(() => client.api.login.respond.$post({ json: { id, value } }));
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
+  };
+
+  const cancelLogin = async (back: View): Promise<void> => {
+    let failure: string | undefined;
+    try {
+      await call(() => client.api.login.abort.$post());
+    } catch (error) {
+      failure = String(error);
+    }
+    swap(back);
+    if (failure !== undefined) {
+      notice = failure;
+      render();
+    }
+  };
+
+  const finishLogin = (
+    back: View,
+    provider: ProviderInfo,
+    type: AuthType,
+    message: string | undefined,
+  ): void => {
+    swap(back);
+    notice =
+      message ??
+      (type === "oauth" ? `logged in to ${provider.name}` : `saved API key for ${provider.name}`);
+    render();
   };
 
   /** Spend the open view's draft: whatever took the text — a command that ran, a clear, a send
@@ -384,6 +481,11 @@ export async function open(base: string): Promise<void> {
       void showModels("conversation", place());
       return;
     }
+    if (text.trim() === "/login") {
+      spend();
+      void showLogin(place());
+      return;
+    }
     const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());
     if (fresh !== null) {
       // A path names where the fresh trajectory runs; unnamed it keeps the directory of the
@@ -412,7 +514,8 @@ export async function open(base: string): Promise<void> {
     // cycle twice and one ctrl+c would quit on its own release.
     if (isKeyRelease(data)) return undefined;
     // The picker owns every key while it is open: its filter, its list, its escape.
-    if (mode.kind === "models") return undefined;
+    if (mode.kind === "models" || mode.kind === "login" || mode.kind === "login-flow")
+      return undefined;
     if (matchesKey(data, "ctrl+c")) {
       const now = Date.now();
       if (now - lastCtrlC < 500) quit();

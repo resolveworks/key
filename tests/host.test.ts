@@ -9,6 +9,7 @@ import {
   fauxText,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
+import { groqProvider } from "@earendil-works/pi-ai/providers/groq";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -17,6 +18,7 @@ import { Agents } from "../src/agents.ts";
 import type { api } from "../src/api.ts";
 import type { Stats } from "../src/footer.ts";
 import { Host, type Summary } from "../src/host.ts";
+import type { LoginEvent, ProviderInfo } from "../src/login.ts";
 import { keySystem } from "../src/system.ts";
 import { fakeGit, REPO } from "./git.ts";
 import { requestText, route } from "./harness.ts";
@@ -76,6 +78,7 @@ describe("host", () => {
     });
     const models = createModels();
     models.setProvider(faux.provider);
+    models.setProvider(groqProvider());
     host = new Host({
       models: () => models,
       storage: () => new MemoryStorage(),
@@ -134,6 +137,52 @@ describe("host", () => {
     expect(body.models.map(({ provider, id }) => `${provider}/${id}`)).toEqual(
       expect.arrayContaining(["deepseek/deepseek-flash", "deepseek/deepseek-chat"]),
     );
+  });
+
+  test("the host lists the providers and the methods /login can start", async () => {
+    const body = (await (await app.request("/api/providers")).json()) as readonly ProviderInfo[];
+    expect(body.find((provider) => provider.id === "groq")).toMatchObject({
+      id: "groq",
+      name: "Groq",
+      apiKey: { login: true },
+    });
+  });
+
+  test("a login takes the provider's prompt and stores what it answered", async () => {
+    const start = await app.request("/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "groq", type: "api_key" }),
+    });
+    expect(start.status).toBe(202);
+
+    const stream = await app.request("/api/login");
+    expect(stream.headers.get("content-type")).toBe("text/event-stream");
+    const frames = new Frames(stream.body as ReadableStream<Uint8Array>);
+    const prompt = await frames.until<LoginEvent>((event) => event.kind === "prompt");
+    if (prompt.kind !== "prompt") throw new Error("expected a login prompt");
+    expect(prompt.prompt).toMatchObject({ type: "secret" });
+
+    const answer = await app.request("/api/login/respond", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: prompt.id, value: "gsk-test" }),
+    });
+    expect(answer.status).toBe(202);
+    expect(await frames.until<LoginEvent>((event) => event.kind === "done")).toMatchObject({
+      kind: "done",
+      provider: "groq",
+      type: "api_key",
+    });
+    await frames.close();
+
+    const providers = (await (
+      await app.request("/api/providers")
+    ).json()) as readonly ProviderInfo[];
+    expect(providers.find((provider) => provider.id === "groq")?.status).toMatchObject({
+      type: "api_key",
+      source: "stored credential",
+    });
   });
 
   test("the two defaults steer new conversations and their children", async () => {

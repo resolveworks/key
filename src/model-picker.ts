@@ -136,7 +136,7 @@ export class ModelPicker extends Container implements Focusable {
     }));
     const selected = filtered.findIndex((model) => keyOf(model) === this.#selectedKey);
     this.#list = new SelectList(items, MAX_VISIBLE, listTheme, LAYOUT);
-    this.#list.setSelectedIndex(selected < 0 ? 0 : selected);
+    this.#list.setSelectedIndex(Math.max(selected, 0));
     this.#list.onSelectionChange = (item) => {
       this.#selectedKey = item.value;
     };

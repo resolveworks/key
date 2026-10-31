@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { open } from "./client.ts";
 import { Host, PORT } from "./host.ts";
@@ -47,7 +45,6 @@ async function main(): Promise<void> {
 }
 
 async function serve(): Promise<void> {
-  process.loadEnvFile(join(homedir(), ".key", ".env"));
   const host = new Host();
   await host.open();
   await host.listen();

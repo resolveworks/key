@@ -25,28 +25,30 @@ pnpm serve      # own the session and serve the graph on 127.0.0.1:7317
 pnpm client     # chat with a running host
 ```
 
-Put provider API keys in `~/.key/.env`; the host loads them on start. `/model`
-in the client sets the two defaults, stored on the session: the model a new
-conversation starts on, and the model the children it spawns run on. Tab
-switches between conversations and children; enter sets the one the header
-names. The picker lists pi's whole catalog, whether or not a provider key is
-present; when a conversation runs on a provider, that provider's own env var
-(`ZAI_CODING_CN_API_KEY` for `zai-coding-cn`, say) is what the request uses.
-There is no model-default fallback: until both defaults are set, a new
-conversation or a child fails loudly. Existing conversations keep the model
-they started on. `KEY_THINKING_LEVEL` in the same file sets the level every
-conversation runs at (a model without thinking runs at `off`; the default is
-`high`). `KEY_BIND` in the same file
-sets the interface the server listens on (`127.0.0.1` by default;
-`0.0.0.0` to accept connections from off the box). `BRAVE_API_KEY` in the
-same file gives every conversation `web_search`, the tool that searches the web.
-`web_fetch`, the tool that reads a page as clean markdown, renders through the
-stealth Chrome server on `ws://127.0.0.1:9222` — the `mine-browser.service`
-podman quadlet, documented in [mine](../mine/README.md); `KEY_BROWSER_ENDPOINT`
-in the same file points it elsewhere. A page over the output limits spills its
-full content to a temp file, which `read` pages through.
+Configure providers from the client with `/login`: it lists pi's providers and
+their account or API-key methods, asks what the provider asks, and stores the
+credential in `~/.key/auth.json`. There is no env file. `/model` in the client
+sets the two defaults, stored on the session: the model a new conversation
+starts on, and the model the children it spawns run on. Tab switches between
+conversations and children; enter sets the one the header names. The picker
+lists pi's whole catalog; a conversation on a provider without a credential
+fails loudly when it runs. There is no model-default fallback: until both
+defaults are set, a new conversation or a child fails loudly. Existing
+conversations keep the model they started on.
+
+`KEY_THINKING_LEVEL` in the host's environment sets the level every conversation
+runs at (a model without thinking runs at `off`; the default is `high`).
+`KEY_BIND` sets the interface the server listens on (`127.0.0.1` by default;
+`0.0.0.0` to accept connections from off the box). `BRAVE_API_KEY` in the host's
+environment gives every conversation `web_search`, the tool that searches the
+web. `web_fetch`, the tool that reads a page as clean markdown, renders through
+the stealth Chrome server on `ws://127.0.0.1:9222` — the
+`mine-browser.service` podman quadlet, documented in [mine](../mine/README.md);
+`KEY_BROWSER_ENDPOINT` points it elsewhere. A page over the output limits spills
+its full content to a temp file, which `read` pages through.
 Everything the host owns lives in `~/.key` — the session store is SQLite at
-`~/.key/session.sqlite`. Set `KEY_HOST` to point the client at another host.
+`~/.key/session.sqlite`, credentials at `~/.key/auth.json`. Set `KEY_HOST` to
+point the client at another host.
 
 ## HTTP API
 
@@ -61,6 +63,11 @@ POST /api/conversations/:id/messages  {prompt}: message a conversation
 POST /api/conversations/:id/abort     interrupt a conversation: abort its current work
 GET  /api/models                      the catalog and the two defaults
 POST /api/models/defaults             {target, provider, modelId}: set a default
+GET  /api/providers                   providers and their auth methods
+POST /api/login                       {provider, type}: run a provider login
+GET  /api/login                       the login's prompts and notices (SSE)
+POST /api/login/respond               {id, value}: answer the waiting prompt
+POST /api/login/abort                 cancel the login
 ```
 
 ## Core idea
