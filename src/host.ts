@@ -46,6 +46,7 @@ import { git } from "./git.ts";
 import { LoginSession, type ProviderInfo } from "./login.ts";
 import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.ts";
 import { Search } from "./search.ts";
+import { SeenDoc } from "./seen.ts";
 import { KeyTask, type KeyTaskInput, keySystem } from "./system.ts";
 import { DEFAULT_THINKING_LEVEL, type ThinkingDefaults, ThinkingDefaultsDoc } from "./thinking.ts";
 
@@ -97,7 +98,7 @@ export type Summary = {
   readonly depth: number;
   /** This conversation's own run is in flight. */
   readonly streaming: boolean;
-  /** The cascade stopped here, and the next move is the human's. */
+  /** The cascade stopped here, the next move is the human's, and no one has looked since. */
   readonly attention: boolean;
 };
 
@@ -136,10 +137,13 @@ export class Host {
     return () => this.#listeners.delete(listener);
   }
 
-  /** One conversation's live view, when the conversation exists. */
+  /** One conversation's live view, when the conversation exists. Attaching one is a human
+   * looking: the conversation's stop counts as seen, its mark retired. */
   async watch(id: number) {
     const conversation = await this.#harness.conversation(id as ConversationId, context);
-    return conversation?.watch(context);
+    if (conversation === undefined) return undefined;
+    await this.#see(id);
+    return conversation.watch(context);
   }
 
   /** The models of configured providers, and the two defaults `/model` edits. */
@@ -371,6 +375,17 @@ export class Host {
     await conversation.abort(context);
   }
 
+  /** Mark a conversation's stop seen, then publish: every list drops its mark at once. */
+  async #see(id: number): Promise<void> {
+    const added = await this.#harness.commit(async (tx) => {
+      const doc = await tx.doc(SeenDoc);
+      if (doc.seen.includes(id)) return false;
+      doc.seen.push(id);
+      return true;
+    }, context);
+    if (added) await this.#publish();
+  }
+
   /** Recompute the transcript list and push it to every attached client. */
   async #publish(): Promise<void> {
     this.#summaries = await this.#summarise();
@@ -423,7 +438,7 @@ export class Host {
       succeeded.has(id) || (owner !== undefined && forks.has(owner) && ended.has(owner));
     /** Whether the cascade stopped here with the next move the human's: an open frontier, or a
      * task that cannot move on its own. A closed branch's failure crosses upstream as its result. */
-    const attention = (
+    const stopped = (
       id: number,
       live: LiveState | undefined,
       owner: number | undefined,
@@ -433,17 +448,31 @@ export class Host {
       if (live?.runFailure !== undefined) return live.runFailure.reason !== "aborted";
       return !cascade.has(id);
     };
-    return forest(conversations).map(({ id, depth }) => {
+    const seen = new Set((await this.#stored(SeenDoc)).seen);
+    /** A mark whose stop ended: the cascade moved on, so the next stop flags anew. */
+    const retired = new Set<number>();
+    const summaries = forest(conversations).map(({ id, depth }) => {
       const live = states.get(id);
+      const stoppedHere = stopped(id, live, owners.get(id));
+      if (!stoppedHere && seen.has(id)) retired.add(id);
       return {
         id,
         label: prompts.get(id)?.split("\n", 1)[0]?.trim() ?? "",
         cwd: cwds.get(id) ?? "",
         depth,
         streaming: live?.run !== undefined,
-        attention: attention(id, live, owners.get(id)),
+        attention: stoppedHere && !seen.has(id),
       };
     });
+    // Retire the marks whose stops ended, in the pass that saw them end: the doc keeps only
+    // the stops that stand.
+    if (retired.size > 0) {
+      await this.#harness.commit(async (tx) => {
+        const doc = await tx.doc(SeenDoc);
+        doc.seen = doc.seen.filter((id) => !retired.has(id));
+      }, context);
+    }
+    return summaries;
   }
 
   /** The conversations and their key.run tasks, as one commit sees them: the graph holds live
