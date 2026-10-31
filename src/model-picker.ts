@@ -1,5 +1,5 @@
-// The model picker: one selective list over the models of configured providers, with the two
-// defaults in view and tab between them.
+// The model picker: one selective list over the configured providers' models, the two defaults
+// in view, tab between them.
 
 import type { ModelRef } from "@earendil-works/pi-durable";
 import {

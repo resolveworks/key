@@ -61,7 +61,7 @@ export const PORT = 7317;
 /** Everything the host owns lives here, outside every project: store, credentials. */
 const dataDirectory = join(homedir(), ".key");
 
-/** What the host runs on. `new Host()` is one box: defaults on the session at `PORT`. */
+/** One box's defaults: the session store under `PORT`. */
 export type HostOptions = {
   readonly models: () => Models;
   readonly storage: () => Storage | Promise<Storage>;
@@ -90,13 +90,12 @@ const production = (): HostOptions => {
 /** One line in the transcript picker: a conversation, whether it streams, and whether it needs a human. */
 export type Summary = {
   readonly id: number;
-  /** The prompt that started this conversation. */
+  /** The first line of the prompt that started this conversation. */
   readonly label: string;
-  /** The directory this conversation runs in. */
   readonly cwd: string;
   /** Steps below the conversation whose task created this one: 0 for a cascade's kickoff. */
   readonly depth: number;
-  /** This conversation's own run is in flight. */
+  /** This conversation's own run is in flight — its children's do not count. */
   readonly streaming: boolean;
   /** The cascade stopped here, the next move is the human's, and no one has looked since. */
   readonly attention: boolean;
@@ -131,14 +130,12 @@ export class Host {
     return this.#summaries;
   }
 
-  /** Subscribe to every later transcript list; the returned function unsubscribes. */
   onSummaries(listener: (summaries: readonly Summary[]) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
 
-  /** One conversation's live view, when the conversation exists. Attaching one is a human
-   * looking: the conversation's stop counts as seen, its mark retired. */
+  /** Attaching one is a human looking: the conversation's stop counts as seen, its mark retired. */
   async watch(id: number) {
     const conversation = await this.#harness.conversation(id as ConversationId, context);
     if (conversation === undefined) return undefined;
@@ -146,7 +143,6 @@ export class Host {
     return conversation.watch(context);
   }
 
-  /** The models of configured providers, and the two defaults `/model` edits. */
   async modelSettings(): Promise<{
     readonly defaults: ModelDefaults;
     readonly models: readonly ModelInfo[];
@@ -166,8 +162,6 @@ export class Host {
     };
   }
 
-  /** The levels new conversations and their children run at: `/thinking`'s choices, else the
-   * default. */
   async thinkingDefaults(): Promise<Required<ThinkingDefaults>> {
     const defaults = await this.#stored(ThinkingDefaultsDoc);
     return {
@@ -176,14 +170,13 @@ export class Host {
     };
   }
 
-  /** Set one target's level; each conversation clamps it to what its model supports. */
+  /** Each conversation clamps its level to what its model supports. */
   async setThinkingDefault(target: Target, level: ModelThinkingLevel): Promise<void> {
     await this.#harness.commit(async (tx) => {
       (await tx.doc(ThinkingDefaultsDoc))[target] = level;
     }, context);
   }
 
-  /** Every provider `/login` can configure, with what it offers and whether it is set up. */
   async providers(): Promise<readonly ProviderInfo[]> {
     const models = this.#options.models();
     return Promise.all(
@@ -220,7 +213,7 @@ export class Host {
     );
   }
 
-  /** Begin a login the client follows; a new one cancels whatever was still waiting. */
+  /** A new one cancels whatever was still waiting. */
   startLogin(providerId: string, type: AuthType): void {
     const models = this.#options.models();
     const provider = models.getProvider(providerId);
@@ -233,12 +226,11 @@ export class Host {
     this.#login.start();
   }
 
-  /** The login the client is following, if any. */
   get login(): LoginSession | undefined {
     return this.#login;
   }
 
-  /** Point one default at a catalog model; a request fails later if its provider has no key. */
+  /** A request fails later if its provider has no key. */
   async setModelDefault(target: Target, ref: ModelRef): Promise<void> {
     if (this.#options.models().getModel(ref.provider, ref.modelId) === undefined)
       throw new Error(`unknown model: ${ref.provider}/${ref.modelId}`);
@@ -247,7 +239,6 @@ export class Host {
     }, context);
   }
 
-  /** What a view cannot say: the branch, the context window, the model and its level. */
   async stats(view: ConversationView): Promise<Stats> {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
     const ref = agent?.model;
@@ -320,13 +311,11 @@ export class Host {
     return model;
   }
 
-  /** A document's stored value, exactly as its command left it, or what it starts as. */
   async #stored<T extends JsonObject>(doc: SessionDocToken<T>): Promise<T> {
     return (await this.#harness.snapshot(doc, context)) ?? doc.definition.initial();
   }
 
-  /** The prompt's path completions, answered from the host's own filesystem: the line as it stands
-   * before the cursor, and whether the tab key forced the asking. */
+  /** Answered from the host's own filesystem — the one the trajectories run on. */
   complete(
     cwd: string,
     text: string,

@@ -43,7 +43,6 @@ export class FileCredentialStore implements CredentialStore {
     renameSync(temporary, this.#path);
   }
 
-  /** Mutations are serialized; a read-modify-write never loses the credential beside it. */
   #serial<T>(task: () => Promise<T> | T, options?: AuthOperationOptions): Promise<T> {
     const previous = this.#tail;
     const run = (async () => {

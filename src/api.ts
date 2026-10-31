@@ -1,4 +1,4 @@
-// The API: hono routes over the host. Bodies parse through TypeBox; both streams are SSE.
+// hono routes over the host: TypeBox-validated bodies, SSE for the two streams.
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
@@ -11,49 +11,40 @@ import { TARGETS, type Target } from "./defaults.ts";
 import type { Host, Summary } from "./host.ts";
 import { THINKING_LEVELS } from "./thinking.ts";
 
-/** A prompt any endpoint takes: at least one character that is not whitespace. */
+/** A prompt: at least one character that is not whitespace. */
 const Prompt = Type.String({ pattern: "\\S" });
 
-/** What `POST /api/run` takes: a trajectory's prompt, and the directory it runs in. */
 const RunInput = Type.Object({
   prompt: Prompt,
   cwd: Type.String({ minLength: 1 }),
 });
 
-/** What `POST /api/conversations/:id/messages` takes: the prompt that messages a conversation. */
 const MessageInput = Type.Object({ prompt: Prompt });
 
-/** What `POST /api/complete` takes: the line as it stands before the cursor, the directory it
- * names paths against, and whether the tab key forced the asking. */
 const CompleteInput = Type.Object({
   cwd: Type.String({ minLength: 1 }),
   text: Type.String(),
   force: Type.Optional(Type.Boolean()),
 });
 
-/** Which of the two defaults a request sets. */
 const DefaultTarget = Type.Unsafe<Target>({ type: "string", enum: [...TARGETS] });
 
-/** What `POST /api/models/defaults` takes: which default, and the model it points at. */
 const ModelDefaultInput = Type.Object({
   target: DefaultTarget,
   provider: Type.String({ minLength: 1 }),
   modelId: Type.String({ minLength: 1 }),
 });
 
-/** What `POST /api/thinking` takes: which default, and the level it points at. */
 const ThinkingInput = Type.Object({
   target: DefaultTarget,
   level: Type.Unsafe<ModelThinkingLevel>({ type: "string", enum: [...THINKING_LEVELS] }),
 });
 
-/** What `POST /api/login` takes: the provider whose flow to run, and how to authenticate. */
 const LoginInput = Type.Object({
   provider: Type.String({ minLength: 1 }),
   type: Type.Union([Type.Literal("api_key"), Type.Literal("oauth")]),
 });
 
-/** What `POST /api/login/respond` takes: the prompt it answers, and the value typed or chosen. */
 const LoginAnswerInput = Type.Object({
   id: Type.Number(),
   value: Type.String(),
@@ -78,8 +69,7 @@ const index = `key host
   POST /api/login/abort                cancel the login
 `;
 
-/** What one thrown error answers: the error as text — but a parse failure keeps its details on
- * its cause, so those answer as the paths the schema failed on. */
+/** A parse failure answers as the paths the schema failed on; everything else, as itself. */
 function answer(error: unknown): string {
   if (error instanceof ParseError)
     return error.cause.errors
@@ -88,7 +78,7 @@ function answer(error: unknown): string {
   return String(error);
 }
 
-/** The host's whole HTTP surface, chained so its type carries every route to the client. */
+/** Chained so its type carries every route to the client. */
 export function api(host: Host) {
   return (
     new Hono()

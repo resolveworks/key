@@ -10,7 +10,6 @@ type SearchResult = {
   readonly extra_snippets?: readonly string[];
 };
 
-/** The results a search answers with, as the markdown the model reads. */
 const asMarkdown = (results: readonly SearchResult[]): string =>
   results
     .map((result, index) => {

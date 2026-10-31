@@ -15,20 +15,19 @@ const browserEndpoint = (): string => process.env.KEY_BROWSER_ENDPOINT ?? "ws://
 
 /** Playwright's connect() has no timeout by default. */
 const CONNECT_TIMEOUT_MS = 10_000;
-/** Navigation timeout per fetch. */
 const NAVIGATION_TIMEOUT_MS = 60_000;
 
 /** The harness's own bounds on a tool result; over either, the whole markdown spills to a file. */
 const MAX_BYTES = 50 * 1024;
 const MAX_LINES = 2000;
 
-/** Whether the harness will cut this text: over bytes, or over lines counted as its bounds count them. */
+/** Lines counted as the harness's bounds count them. */
 function overLimits(text: string): boolean {
   const lines = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
   return new TextEncoder().encode(text).length > MAX_BYTES || lines > MAX_LINES;
 }
 
-/** The whole markdown in a temp file, as the path the diagnostic names for the model. */
+/** The whole markdown in a temp file, for the diagnostic to name. */
 async function spill(markdown: string): Promise<string> {
   const path = join(tmpdir(), `key-web-${randomBytes(8).toString("hex")}.md`);
   await writeFile(path, markdown, "utf8");

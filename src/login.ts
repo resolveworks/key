@@ -1,6 +1,5 @@
-// One provider login, run by the host and watched by the client: pi-ai owns the flow, the host
-// relays what it asks and says, and the client sends back the answer. Credentials are persisted
-// by the Models' store before `done` is emitted.
+// One provider login: pi-ai owns the flow, the host relays what it asks and says, the client
+// sends back the answer.
 
 import { randomUUID } from "node:crypto";
 import type {
@@ -12,7 +11,6 @@ import type {
   Provider,
 } from "@earendil-works/pi-ai";
 
-/** What `/login` offers for a provider: how it authenticates, and whether it already does. */
 export type ProviderInfo = {
   readonly id: string;
   readonly name: string;
@@ -100,12 +98,12 @@ export class LoginSession {
     return this.#finished;
   }
 
-  /** Start the flow; its prompts arrive through `events`, its answers through `answer`. */
+  /** Start the flow; its answers arrive through `answer`. */
   start(): void {
     void this.#run();
   }
 
-  /** Call whenever an event lands; the callback reads `events` from its own cursor. */
+  /** The callback reads `events` from its own cursor. */
   follow(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);

@@ -16,7 +16,6 @@ import {
 const mode = getTerminalColorMode();
 const hex = (value: string): Color => parseColor(value);
 
-/** The dark foreground palette. */
 const fg = {
   accent: hex("#b281d6"),
   success: hex("#68d391"),
@@ -35,7 +34,6 @@ const fg = {
   diffRemoved: hex("#f08c66"),
 } as const;
 
-/** The dark background palette. */
 const bg = {
   user: hex("#2b3553"),
   toolPending: okhslColor(229, 0.05, 0.24),
@@ -43,7 +41,7 @@ const bg = {
   toolError: okhslColor(19, 0.54, 0.25),
 } as const;
 
-/** A style is just the function that paints text with it, so styles compose like any other decorator. */
+/** A style is just the function that paints text with it, so styles compose. */
 type Style = (text: string) => string;
 type Attributes = TextAttributes;
 
@@ -53,7 +51,7 @@ function on(color: Color | undefined, attributes: Attributes = {}): Style {
   return (value) => styleTextWithAnsi(value, prefix, undefined, attributes);
 }
 
-/** A color behind the text, padded by the component that draws it. */
+/** A color behind the text; padding is the drawing component's. */
 function behind(color: Color | undefined): Style {
   const prefix = color === undefined ? undefined : backgroundAnsi(color, mode);
   return (value) => styleTextWithAnsi(value, undefined, prefix, {});
@@ -84,7 +82,6 @@ export const style = {
 export const bold = (color: Color | undefined, value: string): string =>
   style.bold(on(color)(value));
 
-/** What every select list in the client paints with. */
 export const selectTheme: SelectListTheme = {
   selectedPrefix: (text) => style.accent(text),
   selectedText: (text) => style.bold(text),
@@ -93,7 +90,6 @@ export const selectTheme: SelectListTheme = {
   noMatch: (text) => style.dim(text),
 };
 
-/** The markdown theme: headings, links, code, quotes and bullets each carry their own color. */
 export const markdown: MarkdownTheme = {
   heading: (value) => bold(fg.mdHeading, value),
   link: (value) => style.underline(on(fg.mdLink)(value)),
@@ -111,7 +107,6 @@ export const markdown: MarkdownTheme = {
   strikethrough: (value) => on(undefined, { strikethrough: true })(value),
 };
 
-/** Diff lines: added green, removed red, context muted. */
 export const diff = {
   added: on(fg.diffAdded),
   removed: on(fg.diffRemoved),

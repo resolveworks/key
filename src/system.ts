@@ -26,7 +26,7 @@ export type KeyTaskInput =
   | {
       readonly kind: "fork";
       readonly prompt: string;
-      /** The fork's worktree and branch; forks cannot fork again. */
+      /** The fork's worktree and branch name; forks cannot fork again. */
       readonly name: string;
     }
   | {
@@ -120,7 +120,8 @@ function answerOf(entry: EntryRecord | undefined): string {
   return contentText(message.content, "");
 }
 
-/** The successor's opening: only the conversations before it, named by id. Their words stay behind ask. */
+/** The successor's opening: only the conversations before it, named by id. Their words stay
+ * behind ask. */
 async function successorPrompt(
   input: Extract<KeyTaskInput, { readonly kind: "successor" }>,
   taskId: number,
@@ -147,8 +148,8 @@ async function successorPrompt(
   ].join("\n");
 }
 
-/** Create a run's task; a successor mints no conversation here — its wait ends first, and the
- * conversation it runs in is minted when the wait does. */
+/** A successor mints no conversation here — its wait ends first, and the conversation it runs
+ * in is minted when the wait does. */
 async function createRun(tx: Tx, input: KeyTaskInput): Promise<TaskId<string>> {
   return tx.createTask(KeyTask, input, {
     ownership: { kind: "conversation" },
@@ -159,8 +160,8 @@ async function createRun(tx: Tx, input: KeyTaskInput): Promise<TaskId<string>> {
 /** The successor a completed run requests: the forks it joins. */
 type SpawnInput = { readonly on: TaskId<string>[] };
 
-/** Create the successor's task without keeping the completed run busy with it; the conversation
- * is minted when the successor's wait ends, so the heir lists newer than every fork it joins. */
+/** The successor's task, without keeping the completed run busy with it: the heir lists newer
+ * than every fork it joins. */
 const SpawnTask = defineTask<SpawnInput, { readonly phase: "spawn" }, null>({
   name: "key.spawn",
   version: 1,

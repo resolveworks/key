@@ -4,14 +4,12 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { defineDoc } from "@earendil-works/pi-durable";
 import type { Defaults } from "./defaults.ts";
 
-/** Every level pi-ai knows, weakest first: what `/thinking` lists. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-/** What each target runs at until `/thinking` says otherwise; a model without thinking clamps it
- * to `off`. */
+/** What each target runs at until `/thinking` says otherwise; a model without thinking clamps
+ * it to `off`. */
 export const DEFAULT_THINKING_LEVEL: ModelThinkingLevel = "high";
 
-/** The two choices `/thinking` stores; an absent one means the default above. */
 export type ThinkingDefaults = Defaults<ModelThinkingLevel>;
 
 export const ThinkingDefaultsDoc = defineDoc<ThinkingDefaults>({

@@ -1,5 +1,4 @@
-// The thinking picker: every level pi-ai knows, with the two defaults in view and tab between
-// them.
+// The thinking picker: every level pi-ai knows, the two defaults in view, tab between them.
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {

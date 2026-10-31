@@ -4,19 +4,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Git } from "./git.ts";
 
-/** Lowercase kebab-case, the name the branch and the directory use. */
 export const CHILD_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const BRANCH_PREFIX = "agent/";
 
 export type Worktree = { readonly path: string; readonly branch: string };
 
-/** The branch a child with this name works on. */
 export function branchFor(name: string): string {
   return `${BRANCH_PREFIX}${name}`;
 }
 
-/** Create the child's worktree in the repository at `cwd`, or accept the one a crashed attempt made. */
+/** Create the child's worktree in the repository at `cwd`, or accept the one a crashed attempt
+ * left. */
 export async function ensureWorktree(name: string, git: Git, cwd: string): Promise<Worktree> {
   if (!CHILD_NAME.test(name))
     throw new Error(`key: child name "${name}" must be lowercase kebab-case`);
@@ -28,7 +27,6 @@ export async function ensureWorktree(name: string, git: Git, cwd: string): Promi
   return { path, branch };
 }
 
-/** Whether the worktree list already holds this path on this branch. */
 async function registered(path: string, branch: string, git: Git, cwd: string): Promise<boolean> {
   const list = await git(["worktree", "list", "--porcelain"], cwd);
   return list.split("\n\n").some((block) => {

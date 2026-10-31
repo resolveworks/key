@@ -1,6 +1,5 @@
-// The client: a dumb terminal chat. It types a prompt, asks the host to start a trajectory, then
-// streams it. All state lives in the host; the client keeps which view is open — and every
-// view's own draft — and renders the whole screen from that state on change.
+// A dumb terminal chat: all state lives in the host; the client keeps which view is open —
+// and every view's own draft — and renders the whole screen from that state on change.
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -44,18 +43,15 @@ const RECONNECT_MS = 250;
 /** Where a client restart picks up: the transcript that was open, if any. */
 const cursorFile = join(process.cwd(), ".key", "client.json");
 
-/** This client's opinions over pi-tui's editing grammar. Absent inherits the default, an
- * entry rebinds, and [] claims a key outright: the input listener owns ctrl+c and ctrl+y, so
- * nothing below it may answer to those keys. */
+/** This client's opinions over pi-tui's editing grammar: [] claims a key outright, so the
+ * input listener below can own ctrl+c and ctrl+y. */
 export const keybinds: KeybindingsConfig = {
   "tui.input.copy": [],
   "tui.editor.yank": [],
   "tui.select.cancel": ["escape"],
 };
 
-/** One place the screen can be: the composer, where a fresh trajectory's prompt is typed, or
- * one open conversation. A fresh trajectory runs where `/new` named — by default where the
- * conversation before it ran. */
+/** A fresh trajectory runs where `/new` named it — by default where the conversation before it ran. */
 type View =
   | { readonly kind: "new"; readonly cwd?: string }
   | { readonly kind: "transcript"; readonly id: number };
@@ -70,52 +66,41 @@ type Mode =
   | { readonly kind: "login"; readonly back: View; readonly picker: LoginPicker }
   | { readonly kind: "login-flow"; readonly back: View; readonly view: LoginView };
 
-/** A view's name: "new" for the composer, its number for a conversation — its key in the drafts,
- * and its place in the ring when it is a live one. */
+/** A view's key in the drafts, and its place in the ring. */
 type Name = "new" | number;
 
 const nameOf = (view: View): Name => (view.kind === "new" ? "new" : view.id);
 
-/** Attach to the host, chat from the prompt, and open past trajectories from the list. */
 export async function open(base: string): Promise<void> {
   setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, keybinds));
   const tui = new TuiMainScreen(new ProcessTerminal());
   const client = hc<ReturnType<typeof api>>(base);
 
-  // All client state. Every change flows through `render`, which derives the whole screen from it.
-  /** The composer: one per client, retargeted by `/new` — a place in the ring only while its
-   * draft has text; empty, it is just the screen's idle state. */
+  // All client state; every change flows through `render`, which derives the whole screen from it.
+  /** The composer: retargeted by `/new`; a place in the ring only while its draft has text. */
   let composer: View = { kind: "new" };
   let mode: Mode = { kind: "view", view: composer };
-  /** Every view's unsent text. The editor mirrors the open view's entry; a swap exchanges them,
-   * so a draft never follows its typist into another conversation. */
+  /** Every view's unsent text; a swap exchanges them, so a draft never follows its typist. */
   const drafts = new Map<Name, string>();
   let summaries: readonly Summary[] = [];
   let view: ConversationView | undefined;
   let stats: Stats | undefined;
-  /** A failed action, shown once and replaced by whatever the state says next. */
+  /** A failed action, shown once until the next state replaces it. */
   let notice: string | undefined;
   let starting = false;
-  /** The login stream, live only while the login view is open. */
   let loginWatch: (() => void) | undefined;
 
-  /** Whether one conversation's own run is in flight: the interrupt gate. */
   const streaming = (id: number): boolean =>
     summaries.some((summary) => summary.id === id && summary.streaming);
 
-  /** The view the screen is on — or, under the list, the one it covers: the one whose draft the
-   * editor holds. */
+  /** The view the editor holds the draft of — on screen, or covered by the list. */
   const place = (): View => (mode.kind === "view" ? mode.view : mode.back);
 
-  /** The conversation on screen, when the screen is on one: the stream follows it, escape
-   * interrupts it. */
   const openConversation = (): number | undefined =>
     mode.kind === "view" && mode.view.kind === "transcript" ? mode.view.id : undefined;
 
-  /** What `/new` would leave: the open conversation's directory — a child's worktree answered
-   * by its cascade's kickoff — or, from the composer, the target it already carries. The default
-   * it takes and the completion it offers both read it, so neither can name a place the other
-   * would not run. */
+  /** What `/new` would leave: the open conversation's directory — a child's worktree answered by
+   * its cascade's kickoff — or, from the composer, the target it already carries. */
   const leaving = (): { readonly cwd: string } | undefined => {
     const here = place();
     return here.kind === "transcript"
@@ -123,18 +108,17 @@ export async function open(base: string): Promise<void> {
       : { cwd: here.cwd ?? "" };
   };
 
-  /** Where a bare `/new` would run — what it would leave, else the client's own — carried by
-   * the command's own completion, so a tab types it. */
+  /** The default `/new`'s own completion carries, so a tab types it. */
   const freshDefault = (): string => shortenHome(freshCwd(undefined, leaving(), process.cwd()));
 
-  // The terminal owns the screen and the scrollback. Within a view the document only grows, so
+  // The terminal owns the screen and the scrollback: within a view the document only grows, so
   // rendered lines scroll up into history instead of being redrawn. A selector replaces the
   // document and clears the dock and the footer, so the list owns a clean screen.
   const document = new Container();
   const dock = new Container();
   const prompt = new Editor(tui, { borderColor: style.borderMuted, selectList: selectTheme });
-  // The prompt's paths complete on the host: the trajectories run on its filesystem, not this one.
-  // A superseded completion aborts its request, and the editor wants no answer rather than a crash.
+  // Completions run on the host's filesystem, not this one; a superseded request is aborted, and
+  // the editor wants no answer rather than a crash.
   const complete = async (
     text: string,
     force: boolean,
@@ -154,22 +138,17 @@ export async function open(base: string): Promise<void> {
     }
   };
   prompt.setAutocompleteProvider(provider(complete, freshDefault));
-  /** The composer's draft — the editor's text while the composer is open, its store while it is
-   * covered. Text is what makes the composer a place; the ring asks for it. */
+  /** The composer's draft, wherever it lives: the editor's text while open, its store while covered. */
   const composerDraft = (): string =>
     place().kind === "new" ? prompt.getText() : (drafts.get("new") ?? "");
-  // The last two lines: where this transcript runs, and what it has spent so far.
   const footer = new Footer();
   tui.addChild(document);
   tui.addChild(dock);
   tui.addChild(footer);
 
-  // Effects: the transcript stream runs exactly while a transcript is open, and the dock holds
-  // the prompt exactly when typing is possible.
   let watching: { readonly stop: () => void } | undefined;
   let watchedId: number | undefined;
 
-  /** Replace the document; streaming appends, a view switch starts a new one. */
   const show = (components: readonly Component[]): void => {
     document.clear();
     for (const component of components) document.addChild(component);
@@ -183,7 +162,6 @@ export async function open(base: string): Promise<void> {
 
   const hidePrompt = (): void => dock.clear();
 
-  /** The one effect: keep the transcript stream in step with the open view. */
   const syncWatch = (): void => {
     const id = openConversation();
     if (id === watchedId) return;
@@ -204,10 +182,9 @@ export async function open(base: string): Promise<void> {
     };
   };
 
-  /** View = f(state): the whole screen derives from the client state, on every change. */
+  /** View = f(state). */
   const render = (): void => {
     syncWatch();
-    // The footer says what the transcript it draws is doing.
     if (mode.kind === "list") {
       const page = mode;
       hidePrompt();
@@ -252,9 +229,8 @@ export async function open(base: string): Promise<void> {
     tui.requestRender();
   };
 
-  /** Swap in another view: the leaving one keeps what was typed in it, the entering one lends
-   * its own draft, and the cursor records where a restart picks up. The one way the open view
-   * ever changes — a conversation's lines are only ever appended, so history stays in scrollback. */
+  /** The one way the open view ever changes: the leaving view keeps its draft, the entering one
+   * lends its own, and the cursor records where a restart picks up. */
   const swap = (next: View): void => {
     loginWatch?.();
     loginWatch = undefined;
@@ -266,8 +242,7 @@ export async function open(base: string): Promise<void> {
     render();
   };
 
-  /** Cover the screen with the list, opening on the conversation beneath it when there is one;
-   * the view beneath keeps its draft for the return. */
+  /** Cover the screen with the list, opening on the conversation beneath it. */
   const showList = (): void => {
     const here = place();
     mode = { kind: "list", back: here, selected: here.kind === "transcript" ? here.id : undefined };
@@ -275,9 +250,8 @@ export async function open(base: string): Promise<void> {
     render();
   };
 
-  /** Fetch the two defaults and the catalog, then hand the screen to the picker. The
-   * picker's enter sets the default its header names and stays open, so one `/model` can set both;
-   * escape returns to `back`. */
+  /** The picker's enter sets the default its header names and stays open, so one `/model` can
+   * set both; escape returns to `back`. */
   const showModels = async (target: Target, back: View): Promise<void> => {
     let picker: ModelPicker | undefined;
     const set = async (chosen: Target, model: ModelInfo): Promise<void> => {
@@ -317,9 +291,8 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  /** Fetch the two thinking defaults and hand the screen to their picker. Its enter sets the
-   * default its header names and stays open, so one `/thinking` can set both; escape returns to
-   * `back`. */
+  /** The picker's enter sets the default its header names and stays open, so one `/thinking`
+   * can set both; escape returns to `back`. */
   const showThinking = async (target: Target, back: View): Promise<void> => {
     let picker: ThinkingPicker | undefined;
     const set = async (chosen: Target, level: ModelThinkingLevel): Promise<void> => {
@@ -351,7 +324,6 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  /** Fetch the providers and hand the screen to the login picker. */
   const showLogin = async (back: View): Promise<void> => {
     try {
       const body = await call(() => client.api.providers.$get());
@@ -371,7 +343,6 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  /** Start the chosen flow on the host, then follow its prompts and notices. */
   const startLogin = async (back: View, provider: ProviderInfo, type: AuthType): Promise<void> => {
     try {
       await call(() => client.api.login.$post({ json: { provider: provider.id, type } }));
@@ -429,8 +400,7 @@ export async function open(base: string): Promise<void> {
     render();
   };
 
-  /** Spend the open view's draft: whatever took the text — a command that ran, a clear, a send
-   * the host took — it leaves the editor and the view's store both. */
+  /** Clear one view's draft from its store and the editor both. */
   const spend = (): void => {
     drafts.set(nameOf(place()), "");
     prompt.setText("");
@@ -443,8 +413,8 @@ export async function open(base: string): Promise<void> {
   };
 
   /** Send one view's draft: a message to its conversation, or — from the composer — a fresh
-   * trajectory, opening the conversation its answer names. The draft leaves only when the host
-   * takes it; a failure leaves it typed, ready to retry. */
+   * trajectory. The draft leaves only when the host takes it; a failure leaves it typed, ready
+   * to retry. */
   const send = async (from: View, text: string): Promise<void> => {
     const value = text.trim();
     if (value === "" || starting) return;
@@ -465,7 +435,7 @@ export async function open(base: string): Promise<void> {
         const body = await call(() => client.api.run.$post({ json: { prompt: value, cwd } }));
         opened = (JSON.parse(body) as { conversation: number }).conversation;
       }
-      // The text left its view: that draft is spent — the editor too, when it still shows it.
+      // Spent in the editor too, but only when it still shows the view that sent.
       if (nameOf(place()) === nameOf(from)) spend();
       else drafts.set(nameOf(from), "");
       if (opened !== undefined) swap({ kind: "transcript", id: opened });
@@ -481,7 +451,6 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  /** Interrupt an open conversation's current work. */
   const interrupt = async (id: number): Promise<void> => {
     try {
       await call(() => client.api.conversations[":id"].abort.$post({ param: { id: String(id) } }));
@@ -514,10 +483,7 @@ export async function open(base: string): Promise<void> {
     }
     const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());
     if (fresh !== null) {
-      // A path names where the fresh trajectory runs; unnamed it keeps the directory of the
-      // place it leaves — the composer's own target, from the composer — the default the
-      // completion carries. Either way the directory answers here, at the prompt —
-      // not as a trajectory failing its first step.
+      // The directory answers here, at the prompt — not as a trajectory failing its first step.
       try {
         composer = { kind: "new", cwd: targetCwd(freshCwd(fresh[1], leaving(), process.cwd())) };
         spend();
@@ -532,14 +498,14 @@ export async function open(base: string): Promise<void> {
   };
 
   // Exit convention: ctrl+c clears the prompt and quits on a second press; ctrl+d quits on an
-  // empty prompt. With text in the prompt ctrl+d falls through to delete-forward.
+  // empty prompt, falling through to delete-forward when there is text.
   let lastCtrlC = 0;
   tui.addInputListener((data) => {
     // A kitty terminal reports both events of one press, and pi-tui filters releases only for
-    // the focused component — listeners hear them too. Unheard-of here, one ctrl+y would
-    // cycle twice and one ctrl+c would quit on its own release.
+    // the focused component — without this, one ctrl+y would cycle twice and one ctrl+c would
+    // quit on its own release.
     if (isKeyRelease(data)) return undefined;
-    // The picker owns every key while it is open: its filter, its list, its escape.
+    // The picker owns every key while it is open.
     if (
       mode.kind === "models" ||
       mode.kind === "thinking" ||
@@ -561,18 +527,16 @@ export async function open(base: string): Promise<void> {
       quit();
       return { consume: true };
     }
-    // Esc interrupts the open conversation's run, as pi's esc esc does. Only an empty prompt: with a
-    // draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
+    // Esc interrupts the open conversation's run, as pi's esc esc does. Only on an empty prompt:
+    // with a draft, autocomplete may hold the Esc, and the fall-through keeps it the editor's.
     if (matchesKey(data, "escape") && prompt.getText() === "") {
       const id = openConversation();
       if (id !== undefined && streaming(id)) void interrupt(id);
     }
-    // Ctrl+y steps forward through the places that need a human, ctrl+o back, alt+tab-style: a
-    // drafted composer and the attention conversations in the list's order are the ring, and it
-    // wraps — so a `/new` in progress, draft and all, is ever a step away. An empty composer is no
-    // place, and with nothing needing attention the key lands nowhere — still consumed. Ctrl+letters
-    // ride their own byte in every terminal — Konsole included — where ctrl+tab is byte-identical to
-    // plain tab.
+    // Ctrl+y and ctrl+o step through the ring — the drafted composer and the attention
+    // conversations — wrapping, alt+tab-style. From a place not in the ring, or with nothing
+    // needing attention, the key lands nowhere — still consumed. Ctrl+letters ride their own
+    // byte in every terminal, where ctrl+tab is byte-identical to plain tab.
     const chords = [
       ["ctrl+y", 1],
       ["ctrl+o", -1],
@@ -583,8 +547,8 @@ export async function open(base: string): Promise<void> {
       if (next !== undefined) swap(next === "new" ? composer : { kind: "transcript", id: next });
       return { consume: true };
     }
-    // Ctrl+l covers the screen with the list — the /list command at a press, minus its spend:
-    // nothing was typed, so the covered view keeps its draft for the return.
+    // Ctrl+l covers the screen with the list, minus `/list`'s spend: nothing was typed, so the
+    // covered view keeps its draft.
     if (matchesKey(data, "ctrl+l")) {
       showList();
       return { consume: true };
@@ -611,16 +575,15 @@ export async function open(base: string): Promise<void> {
     return undefined;
   });
 
-  // The first frame is already a complete view, so it starts on the one view that needs no host.
+  // The first frame needs no host, so the screen starts on it.
   render();
   tui.start();
-  // A resize re-renders what stands, but the list sizes itself from the terminal — it must be
+  // A resize re-renders what stands, but the list sizes itself from the terminal and must be
   // rebuilt to fill the new one.
   process.stdout.on("resize", () => render());
 
-  // The first summaries are the verdict on the cursor: a cursor is a hint, never a fact, and a
-  // stale one must land on a fresh trajectory rather than a dead view. Every frame after only
-  // refreshes the screen — the list's status dots included.
+  // The first summaries are the verdict on the cursor: a stale cursor must land on a fresh
+  // trajectory, never a dead view. Every frame after only refreshes the screen.
   const cursor = loadCursor();
   let restored = false;
   follow<readonly Summary[]>(client.api.conversations.$url(), (next) => {
@@ -634,7 +597,6 @@ export async function open(base: string): Promise<void> {
   });
 }
 
-/** The transcript the last client had open, if it is still there. */
 function loadCursor(): number | undefined {
   try {
     const { conversation } = JSON.parse(readFileSync(cursorFile, "utf8")) as {
@@ -651,8 +613,8 @@ function saveCursor(conversation: number | undefined): void {
   writeFileSync(cursorFile, JSON.stringify({ conversation: conversation ?? null }));
 }
 
-/** The directory `/new` names: `~` is home, everything else resolves against the client's own
- * cwd. Whatever does not name a directory throws — the notice says it where it was typed. */
+/** The directory `/new` names: `~` is home; whatever does not name a directory throws, and the
+ * notice says it where it was typed. */
 export function targetCwd(path: string): string {
   const home = homedir();
   const expanded = path === "~" || path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
@@ -661,10 +623,8 @@ export function targetCwd(path: string): string {
   return resolved;
 }
 
-/** Where `/new` starts the next trajectory: the path it named, else the directory of the place
- * it leaves — the conversation open, or the composer's own target — else the client's own. The
- * command's completion carries the answer, so the default is on the line and a path is
- * an invitation to differ from it. */
+/** Where `/new` runs next: its named path, else the directory of the place it leaves, else
+ * the client's own. */
 export function freshCwd(
   named: string | undefined,
   leaving: { readonly cwd: string } | undefined,
@@ -673,29 +633,25 @@ export function freshCwd(
   return named ?? (leaving?.cwd || client);
 }
 
-/** What a conversation hands a fresh trajectory: its own directory at its cascade's head — and
- * below the head, the head's own, for the only directory below a head is a forked child's
+/** What a conversation hands a fresh trajectory: its own directory at its cascade's head —
+ * below the head the head's own, for the only directory below a head is a forked child's
  * worktree, and a `/new` from a child continues the project, not its checkout. */
 export function inheritCwd(summaries: readonly Summary[], id: number): string {
   const at = summaries.findIndex((summary) => summary.id === id);
   const open = summaries[at];
   if (open === undefined || open.depth === 0) return open?.cwd ?? "";
-  // The list is the graph flattened: one contiguous block per cascade, its kickoff the depth-0
-  // line at its head — the first one at or before this conversation is its own.
+  // One contiguous block per cascade, its kickoff the depth-0 line at its head.
   const kickoff = summaries.slice(0, at + 1).findLastIndex((summary) => summary.depth === 0);
   return summaries[kickoff]?.cwd ?? open.cwd;
 }
 
-/** One line of the list: the cascade's depth as indentation, two spaces a level, then the
- * streaming dot, the attention mark, the directory and the prompt. */
 export function line(summary: Summary): string {
   return `${"  ".repeat(summary.depth)}${dot(summary.streaming)} ${
     summary.attention ? style.warning("!") : " "
   } ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`;
 }
 
-/** One selectable transcript: what was asked, where it ran, and whether it runs now. The
- * window is the screen: every row the terminal has, less the spacer above and the scroll
+/** One selectable transcript per row the terminal has, less the spacer above and the scroll
  * indicator below. */
 function makeList(summaries: readonly Summary[], rows: number): SelectList {
   return new SelectList(
@@ -706,13 +662,9 @@ function makeList(summaries: readonly Summary[], rows: number): SelectList {
   );
 }
 
-/** The places that need a human as a ring: a drafted composer first — a trajectory being written
- * is the newest thing — then the attention conversations in the list's order, newest cascade
- * first. The composer is a place only while its draft has text; an empty `/new` never joins the
- * ring. From one of the places, its neighbor in `direction`, wrapping — so a trajectory in
- * progress is ever a step away. From a place not in the ring — a settled conversation, an empty
- * composer — the first attention forward and the last back; with none, the drafted composer;
- * with nothing that needs attention, nowhere. */
+/** The places that need a human as a ring: a drafted composer first, then the attention
+ * conversations in the list's order. An empty composer is no place; from a place not in the
+ * ring, the first attention forward and the last back; with none, nowhere. */
 export function cycle(
   summaries: readonly Summary[],
   current: Name,
@@ -728,8 +680,7 @@ export function cycle(
 }
 
 /** One step of the list's home row: a line is one entry, a cascade is one block — the run that
- * starts at a kickoff, depth 0 — landing on the neighboring block's kickoff. Both wrap, as the
- * list's own arrows do, and an empty list leaves nowhere to go. */
+ * starts at a kickoff — landing on the neighboring block's kickoff. */
 export function stepList(
   summaries: readonly Summary[],
   current: number | undefined,
@@ -748,11 +699,10 @@ export function stepList(
   return summaries[kickoffs[(block + direction + kickoffs.length) % kickoffs.length]].id;
 }
 
-/** One frame of a transcript: its view, and the stats the view cannot carry. */
 type Frame = { readonly view: ConversationView; readonly stats: Stats };
 
-/** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts. The platform's
- * EventSource owns the connection; `pnpm client` runs it behind --experimental-eventsource. */
+/** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts; `pnpm
+ * client` runs EventSource behind --experimental-eventsource. */
 function follow<T>(url: URL, onFrame: (frame: T) => void): () => void {
   let stopped = false;
   let current: EventSource | undefined;
@@ -775,8 +725,7 @@ function follow<T>(url: URL, onFrame: (frame: T) => void): () => void {
   };
 }
 
-/** Run one client call, retrying only a restarting one; a failure throws with the host's word. The
- * answer is the host's body, for whoever asked for it. */
+/** Run one client call, retrying only a restarting one. */
 async function call(
   request: () => Promise<{ ok: boolean; status: number; text(): Promise<string> }>,
 ): Promise<string> {

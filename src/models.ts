@@ -6,7 +6,6 @@ import type { Defaults } from "./defaults.ts";
 /** The two choices `/model` stores; an absent one is unset, never inherited from the environment. */
 export type ModelDefaults = Defaults<ModelRef>;
 
-/** One model from a configured provider, as the picker lists it. */
 export type ModelInfo = {
   readonly provider: string;
   readonly id: string;

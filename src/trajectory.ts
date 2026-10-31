@@ -20,15 +20,14 @@ import { diff, markdown, style } from "./theme.ts";
 /** Collapsed tool output shows this many lines. */
 const PREVIEW_LINES = 5;
 
-/** A view as the components that draw it: settled entries, then the live generation still being written. */
+/** A view as components: settled entries, then the live generation still being written. */
 export function transcript(view: ConversationView): readonly Component[] {
   const blocks: Component[] = [];
   const calls = callIndex(view);
   for (const entry of view.entries) blocks.push(...entryBlocks(entry, calls));
   const live = view.docs["pi.live"] as LiveState | undefined;
   // A running call is an entry already: durable commits the tool-calling answer before its round
-  // starts, so its box comes from `entries` with the call's arguments. Only a generation still
-  // being written lives in the document.
+  // starts. Only a generation still being written lives in the document.
   if (live?.generation?.message !== undefined) {
     blocks.push(...assistantBlocks(live.generation.message as AssistantMessage, calls, true));
   }
@@ -37,10 +36,7 @@ export function transcript(view: ConversationView): readonly Component[] {
   return [...layout(blocks), new Spacer(1)];
 }
 
-/**
- * The transcript's two indexes: every call's arguments, and which calls have a result. A running
- * call has the first and not the second, which is how its box knows to say it is still going.
- */
+/** A running call has the first and not the second, which is how its box knows it is still going. */
 type Calls = {
   readonly arguments: ReadonlyMap<string, unknown>;
   readonly answered: ReadonlySet<string>;
@@ -67,7 +63,7 @@ function messagesOf(view: ConversationView): readonly Message[] {
   );
 }
 
-/** Turns separate with a blank line; each component supplies its own gutter, so nothing is inset here. */
+/** Turns separate with a blank line; each component supplies its own gutter, so nothing is inset. */
 function layout(blocks: readonly Component[]): readonly Component[] {
   const rows: Component[] = [];
   blocks.forEach((block, index) => {
@@ -107,7 +103,8 @@ function userBlocks(message: Message): readonly Component[] {
   return [new Markdown(text, 1, 1, markdown, { color: style.text, bgColor: style.userBg })];
 }
 
-/** Assistant turns: text as markdown, thinking in italics above it. Tool calls get no box of their own. */
+/** Assistant turns: text as markdown, thinking in italics above it. Tool calls get no box of
+ * their own — settled ones come as tool-result entries, running ones below. */
 function assistantBlocks(
   message: AssistantMessage,
   calls: Calls,
@@ -159,7 +156,7 @@ function stopReasonText(message: AssistantMessage): string {
   }
 }
 
-/** A settled call: its box, with the diff it made or the tail of what it printed beneath the title. */
+/** A settled call's box. */
 function toolResultBox(message: ToolResultMessage, calls: Calls): Component {
   const call = calls.arguments.get(message.toolCallId);
   return toolBox(
@@ -174,11 +171,8 @@ function toolResultBox(message: ToolResultMessage, calls: Calls): Component {
   );
 }
 
-/**
- * What a box needs to know about a call: whether it is still running, its title, and what it printed.
- * `details` stays `unknown`, because the live slot and the settled message come from different copies of
- * the JSON types.
- */
+/** `details` stays `unknown`: the live slot and the settled message come from different copies of
+ * the JSON types. */
 type Call = {
   readonly status: ToolSlot["status"];
   readonly name: string;
@@ -187,7 +181,7 @@ type Call = {
   readonly details?: unknown;
 };
 
-/** A tool call: a titled box colored by outcome, holding the result's first lines. */
+/** A tool call: a titled box colored by outcome. */
 function toolBox(slot: Call, isError = false): Component {
   const background =
     slot.status !== "done"
@@ -205,7 +199,7 @@ function toolBox(slot: Call, isError = false): Component {
   return box;
 }
 
-/** `name argument`: the identifying argument, dimmed, on one line. */
+/** `name argument`: the identifying argument, dimmed. */
 function toolTitle(name: string, args: unknown): string {
   const first =
     args !== null && typeof args === "object"
