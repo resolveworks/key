@@ -423,6 +423,51 @@ describe("host", () => {
     });
   });
 
+  test("opening a transcript retires its need for attention", async () => {
+    const list = await openList();
+    const id = await startRun("say hello");
+    await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.id === id && item.attention),
+    );
+
+    // Attaching the transcript's view is the human looking: the mark retires, in every list.
+    await (await app.request(`/api/conversations/${id}`)).body?.cancel();
+    const retired = await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.id === id && !item.attention),
+    );
+    await list.close();
+    expect(retired.find((item) => item.id === id)?.attention).toBe(false);
+  });
+
+  test("a continued conversation flags again when its new run ends", async () => {
+    const list = await openList();
+    const id = await startRun("say hello");
+    await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.id === id && item.attention),
+    );
+    await (await app.request(`/api/conversations/${id}`)).body?.cancel();
+    await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.id === id && !item.attention),
+    );
+
+    // The run the looker starts ends as a new stop, unseen: it flags again.
+    faux.setResponses([fauxAssistantMessage("hello again")]);
+    const message = await app.request(`/api/conversations/${id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "again" }),
+    });
+    expect(message.status).toBe(202);
+    const reflagged = await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.id === id && item.attention && !item.streaming),
+    );
+    await list.close();
+    expect(reflagged.find((item) => item.id === id)).toMatchObject({
+      attention: true,
+      streaming: false,
+    });
+  });
+
   test("interleaved cascades hold one block each, the newest cascade's on top", async () => {
     const child = held("a answers");
     const second: FauxResponseStep = (request) => {
