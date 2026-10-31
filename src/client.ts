@@ -211,7 +211,7 @@ export async function open(base: string): Promise<void> {
     if (mode.kind === "list") {
       const page = mode;
       hidePrompt();
-      const list = makeList(summaries);
+      const list = makeList(summaries, tui.terminal.rows);
       const index = summaries.findIndex((summary) => summary.id === page.selected);
       if (index >= 0) list.setSelectedIndex(index);
       list.onSelectionChange = (item) => {
@@ -614,6 +614,9 @@ export async function open(base: string): Promise<void> {
   // The first frame is already a complete view, so it starts on the one view that needs no host.
   render();
   tui.start();
+  // A resize re-renders what stands, but the list sizes itself from the terminal — it must be
+  // rebuilt to fill the new one.
+  process.stdout.on("resize", () => render());
 
   // The first summaries are the verdict on the cursor: a cursor is a hint, never a fact, and a
   // stale one must land on a fresh trajectory rather than a dead view. Every frame after only
@@ -691,11 +694,13 @@ export function line(summary: Summary): string {
   } ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`;
 }
 
-/** One selectable transcript: what was asked, where it ran, and whether it runs now. */
-function makeList(summaries: readonly Summary[]): SelectList {
+/** One selectable transcript: what was asked, where it ran, and whether it runs now. The
+ * window is the screen: every row the terminal has, less the spacer above and the scroll
+ * indicator below. */
+function makeList(summaries: readonly Summary[], rows: number): SelectList {
   return new SelectList(
     summaries.map((summary) => ({ value: String(summary.id), label: line(summary) })),
-    20,
+    Math.max(1, rows - 2),
     selectTheme,
     { minPrimaryColumnWidth: 64, maxPrimaryColumnWidth: 64 },
   );
