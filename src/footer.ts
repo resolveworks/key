@@ -1,22 +1,27 @@
-// The footer: the directory the transcript runs in, and beneath it the run's spend — tokens,
-// cache hits, cost — against the model's context window, with the model on the right.
+// The footer: the directory the transcript runs in, and beneath it what the run has
+// spent — tokens, cache hits, cost — against the model's context window, with the model on the right.
 
 import { homedir } from "node:os";
-import type { ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
+import type { Usage } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
-import type { ConversationView, LiveState, UsageState } from "@earendil-works/pi-durable";
+import type {
+  AgentState,
+  ConversationView,
+  LiveState,
+  UsageState,
+} from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { style } from "./theme.ts";
 
 /** What the host tells the client about a conversation, beyond its view. */
 export type Stats = {
+  /** The branch the directory is on, when it is a repository. */
   readonly branch?: string;
+  /** The context window of the model the conversation runs. */
   readonly contextWindow: number;
-  readonly model: string;
-  /** The level the next request runs at. */
-  readonly thinkingLevel: ModelThinkingLevel;
 };
 
+/** Compact token counts: 812, 6.4k, 21k, 1.3M. */
 export function tokens(count: number): string {
   if (count < 1000) return count.toString();
   if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
@@ -25,6 +30,7 @@ export function tokens(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
+/** `~/Projects/key` rather than the whole home path; anything else stays as it is. */
 export function shortenHome(path: string): string {
   const home = homedir();
   if (path === home) return "~";
@@ -62,11 +68,12 @@ function add(total: Usage, usage: Usage): void {
   total.cost.total += usage.cost.total;
 }
 
+/** The context the next request carries: pi-ai's estimate over the messages the entries project. */
 export function contextTokens(view: ConversationView): number {
   return estimateContextTokens(view.entries.flatMap((entry) => entry.model ?? [])).tokens;
 }
 
-/** The share of the last answered turn's prompt that it read from cache. */
+/** The newest cache hit rate: the share of the last answered turn's prompt that it read from cache. */
 function cacheHitRate(view: ConversationView): number | undefined {
   const usage = view.entries
     .flatMap((entry) => entry.model ?? [])
@@ -76,12 +83,19 @@ function cacheHitRate(view: ConversationView): number | undefined {
   return prompt > 0 ? (usage.cacheRead / prompt) * 100 : undefined;
 }
 
+/**
+ * The green dot the list and the footer put before a conversation: filled while its own run
+ * streams, hollow once it settles.
+ */
 export function dot(streaming: boolean): string {
   return streaming ? style.success("●") : style.dim("○");
 }
 
-/** `show` names where the next trajectory would run, `watch` the open transcript, `clear`
- * neither — a selector owns the whole screen. */
+/**
+ * The footer over one transcript: where it runs and what it has spent. `show` names a
+ * place the next trajectory would run, `watch` the open transcript, `clear` neither — the
+ * selector owns the whole screen — and `render` draws whichever.
+ */
 export class Footer implements Component {
   #view: ConversationView | undefined;
   #cwd: string | undefined;
@@ -101,24 +115,28 @@ export class Footer implements Component {
     this.#thinking = "";
   }
 
+  /** Where the next trajectory would run, and the host's word on it. */
   show(cwd: string): void {
     this.#reset();
     this.#cwd = cwd;
   }
 
-  /** No place names the list: nothing runs there and none can start. */
+  /** No place names the list: nothing runs there and none can start, so nothing is drawn. */
   clear(): void {
     this.#reset();
     this.#cwd = undefined;
   }
 
+  /** Draw one transcript: where it runs, what it has spent, and whether it streams. */
   watch(view: ConversationView, stats: Stats): void {
+    const agent = view.docs["pi.agent"] as AgentState | undefined;
     this.#view = view;
-    this.#cwd = (view.docs["pi.agent"] as { readonly cwd?: string } | undefined)?.cwd ?? "";
+    this.#cwd = agent?.cwd ?? "";
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
-    this.#model = stats.model;
-    this.#thinking = stats.thinkingLevel === "off" ? "thinking off" : stats.thinkingLevel;
+    this.#model = agent?.model?.modelId ?? "";
+    const level = agent?.thinkingLevel ?? "off";
+    this.#thinking = level === "off" ? "thinking off" : level;
   }
 
   render(width: number): string[] {
@@ -152,7 +170,7 @@ export class Footer implements Component {
     return [...lines, `${style.dim(left)}${style.dim(`${" ".repeat(gap)}${name}`)}`];
   }
 
-  /** Red past 90%, amber past 70%. */
+  /** `12.4%/1.0M`, red past 90% and amber past 70%. */
   #context(used: number): string {
     if (this.#window <= 0) return "?";
     const percent = (used / this.#window) * 100;

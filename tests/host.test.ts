@@ -10,7 +10,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { groqProvider } from "@earendil-works/pi-ai/providers/groq";
-import type { ConversationView } from "@earendil-works/pi-durable";
+import type { AgentState, ConversationView } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -239,12 +239,14 @@ describe("host", () => {
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
     await list.close();
 
-    expect((await statsOf(idOf(listed, "kick off"))).model).toBe("deepseek-chat");
-    expect((await statsOf(idOf(listed, "task for a"))).model).toBe("deepseek-flash");
-    expect((await statsOf(idOf(listed, heir))).model).toBe("deepseek-flash");
-    expect((await statsOf(idOf(listed, "kick off"))).thinkingLevel).toBe("low");
-    expect((await statsOf(idOf(listed, "task for a"))).thinkingLevel).toBe("minimal");
-    expect((await statsOf(idOf(listed, heir))).thinkingLevel).toBe("minimal");
+    expect((await statsOf(idOf(listed, "kick off"))).agent?.model?.modelId).toBe("deepseek-chat");
+    expect((await statsOf(idOf(listed, "task for a"))).agent?.model?.modelId).toBe(
+      "deepseek-flash",
+    );
+    expect((await statsOf(idOf(listed, heir))).agent?.model?.modelId).toBe("deepseek-flash");
+    expect((await statsOf(idOf(listed, "kick off"))).agent?.thinkingLevel).toBe("low");
+    expect((await statsOf(idOf(listed, "task for a"))).agent?.thinkingLevel).toBe("minimal");
+    expect((await statsOf(idOf(listed, heir))).agent?.thinkingLevel).toBe("minimal");
   });
 
   test("the thinking defaults are clamped to each conversation's model", async () => {
@@ -260,8 +262,8 @@ describe("host", () => {
     await list.close();
 
     // The fake reasoning model supports high but not xhigh; the plain one supports only off.
-    expect((await statsOf(idOf(listed, "kick off"))).thinkingLevel).toBe("high");
-    expect((await statsOf(idOf(listed, "task for a"))).thinkingLevel).toBe("off");
+    expect((await statsOf(idOf(listed, "kick off"))).agent?.thinkingLevel).toBe("high");
+    expect((await statsOf(idOf(listed, "task for a"))).agent?.thinkingLevel).toBe("off");
   });
 
   test("without a conversation default a run fails loudly instead of falling back", async () => {
@@ -585,7 +587,10 @@ describe("host", () => {
     ]);
     const answer = snapshot.entries.at(-1)?.model?.[0];
     expect(answer).toMatchObject({ role: "assistant", content: [{ text: "hello" }] });
-    expect(stats).toMatchObject({ model: "deepseek-flash", thinkingLevel: "high" });
+    expect(snapshot.docs["pi.agent"]).toMatchObject({
+      model: { modelId: "deepseek-flash" },
+      thinkingLevel: "high",
+    });
     expect(stats.contextWindow).toBeGreaterThan(0);
     await frames.close();
   });
@@ -651,13 +656,18 @@ describe("host", () => {
     });
   }
 
-  /** What the footer needs of one conversation, read the way the transcript stream reads it. */
-  async function statsOf(id: number): Promise<Stats> {
+  /** One conversation's agent doc and the stats its view cannot carry, read the way the
+   * transcript stream reads them. */
+  async function statsOf(id: number): Promise<{
+    stats: Stats;
+    agent: AgentState | undefined;
+  }> {
     const watch = await host.watch(id);
     if (watch === undefined) throw new Error(`no conversation #${id}`);
     const stats = await host.stats(watch.value);
+    const agent = watch.value.docs["pi.agent"] as AgentState | undefined;
     await watch.stop();
-    return stats;
+    return { stats, agent };
   }
 
   /** The ID of the conversation a summary labels. */

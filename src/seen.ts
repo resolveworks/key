@@ -2,8 +2,8 @@
 
 import { defineDoc } from "@earendil-works/pi-durable";
 
-/** The conversations whose current stop has been looked at. A mark belongs to the stop it
- * silenced: the cascade moving on retires it, so the next stop flags. */
+/** The conversations whose current stop has been looked at, by opening their transcript. A mark
+ * belongs to the stop it silenced: the cascade moving on retires it, so the next stop flags. */
 export const SeenDoc = defineDoc<{ seen: number[] }>({
   kind: "key.seen",
   version: 1,
