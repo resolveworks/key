@@ -147,7 +147,6 @@ async function successorPrompt(
   ].join("\n");
 }
 
-/** Create one asynchronous branch and the conversation it owns, in the current conversation. */
 /** Create a run's task; a successor mints no conversation here — its wait ends first, and the
  * conversation it runs in is minted when the wait does. */
 async function createRun(tx: Tx, input: KeyTaskInput): Promise<TaskId<string>> {

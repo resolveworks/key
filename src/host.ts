@@ -24,9 +24,11 @@ import {
   LiveDoc,
   type LiveState,
   type ModelRef,
+  type Page,
   type SessionDocToken,
   type Storage,
   type TaskGraph,
+  type TaskRecord,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -101,12 +103,6 @@ export type Summary = {
 
 export class Host {
   #harness!: Harness;
-  #prompts = new Map<number, string>();
-  /** Fork child tasks, and those whose run has ended. */
-  #children = new Set<number>();
-  #ended = new Set<number>();
-  /** Conversations whose answered run started a successor. */
-  #succeeded = new Set<number>();
   #summaries: readonly Summary[] = [];
   #graph: TaskGraph = { tasks: {} };
   #server!: ServerType;
@@ -304,26 +300,6 @@ export class Host {
       context,
     );
 
-    // Prompts are not in the graph, so recover every key.run's input and then follow commits.
-    await this.#harness.commit(async (tx) => {
-      let cursor: Cursor | undefined;
-      for (;;) {
-        const page = await tx.scanTasks({ kind: KeyTask.definition.name }, SCAN_PAGE_SIZE, cursor);
-        for (const record of page.items) this.#record(record);
-        if (page.next === undefined) break;
-        cursor = page.next;
-      }
-    }, context);
-
-    this.#harness.observeCommits({
-      advance: (publication) => {
-        for (const change of publication.changes) {
-          if (change.type === "task") this.#record(change.value);
-        }
-      },
-      end: () => {},
-    });
-
     await this.#publish();
     const watch = await this.#harness.watchTaskGraph(context);
     watch.start(async (call) => {
@@ -395,27 +371,6 @@ export class Host {
     await conversation.abort(context);
   }
 
-  /** A prompt is not in the graph: the task records keep it, and the lineage the list reads. */
-  #record(record: {
-    readonly id: number;
-    readonly kind: string;
-    readonly conversationId: number;
-    readonly input: unknown;
-    readonly state: { readonly status: string };
-  }): void {
-    if (record.kind !== KeyTask.definition.name) return;
-    const input = record.input as KeyTaskInput;
-    if (input.kind === "fork") {
-      this.#prompts.set(record.id, input.prompt);
-      this.#children.add(record.id);
-    } else {
-      this.#prompts.set(record.id, `successor of #${record.conversationId}`);
-      this.#succeeded.add(record.conversationId);
-    }
-    if (record.state.status === "completing" || record.state.status === "terminal")
-      this.#ended.add(record.id);
-  }
-
   /** Recompute the transcript list and push it to every attached client. */
   async #publish(): Promise<void> {
     this.#summaries = await this.#summarise();
@@ -423,8 +378,8 @@ export class Host {
   }
 
   async #summarise(): Promise<readonly Summary[]> {
-    const listed = await this.#scanConversations();
-    const owners = new Map(listed.map(({ id, owner }) => [id, owner?.taskId]));
+    const { conversations, runs } = await this.#scan();
+    const owners = new Map(conversations.map(({ id, owner }) => [id, owner?.taskId]));
     // The graph holds live tasks only. Cascade liveness suppresses the final-frontier dot;
     // a blocked task is the one live state that needs the human now.
     const cascade = new Set<number>();
@@ -436,54 +391,89 @@ export class Host {
       if (node.conversations.length === 0) blocked.add(node.conversationId);
       else for (const owned of node.conversations) blocked.add(owned);
     }
+    // The runs' stored records, live or ended: each one's label, which are forks, and which
+    // conversations answered into a successor.
+    const labels = new Map<number, string>();
+    const forks = new Set<number>();
+    const ended = new Set<number>();
+    const succeeded = new Set<number>();
+    for (const run of runs) {
+      labels.set(
+        run.id,
+        run.input.kind === "fork" ? run.input.prompt : `successor of #${run.conversationId}`,
+      );
+      if (run.input.kind === "fork") forks.add(run.id);
+      else succeeded.add(run.conversationId);
+      if (run.state.status === "completing" || run.state.status === "terminal") ended.add(run.id);
+    }
     const cwds = new Map<number, string>();
     const prompts = new Map<number, string>();
     const states = new Map<number, LiveState>();
-    for (const { id, owner } of listed) {
+    for (const { id, owner } of conversations) {
       const cwd = (await this.#harness.snapshot(AgentDoc, id as ConversationId, context))?.cwd;
       if (cwd !== undefined) cwds.set(id, cwd);
       const live = await this.#harness.snapshot(LiveDoc, id as ConversationId, context);
       if (live !== undefined) states.set(id, live);
-      const prompt =
-        owner === undefined ? await this.#kickoffPrompt(id) : this.#prompts.get(owner.taskId);
+      const prompt = owner === undefined ? await this.#kickoffPrompt(id) : labels.get(owner.taskId);
       if (prompt !== undefined) prompts.set(id, prompt);
     }
-    return forest(listed).map(({ id, depth }) => {
+    /** A conversation whose story continues elsewhere: a forking run's successor, or a fork
+     * child that has ended. Its own stopping is not the human's turn. */
+    const closed = (id: number, owner: number | undefined): boolean =>
+      succeeded.has(id) || (owner !== undefined && forks.has(owner) && ended.has(owner));
+    /** Whether the cascade stopped here with the next move the human's: an open frontier, or a
+     * task that cannot move on its own. A closed branch's failure crosses upstream as its result. */
+    const attention = (
+      id: number,
+      live: LiveState | undefined,
+      owner: number | undefined,
+    ): boolean => {
+      if (blocked.has(id)) return true;
+      if (closed(id, owner)) return false;
+      if (live?.runFailure !== undefined) return live.runFailure.reason !== "aborted";
+      return !cascade.has(id);
+    };
+    return forest(conversations).map(({ id, depth }) => {
       const live = states.get(id);
-      const owner = owners.get(id);
       return {
         id,
         label: prompts.get(id)?.split("\n", 1)[0]?.trim() ?? "",
         cwd: cwds.get(id) ?? "",
         depth,
         streaming: live?.run !== undefined,
-        attention: this.#attention(id, live, owner, cascade, blocked),
+        attention: attention(id, live, owners.get(id)),
       };
     });
   }
 
-  /** Whether the cascade stopped here with the next move the human's: an open frontier, or a
-   * task that cannot move on its own. A closed branch's failure crosses upstream as its result. */
-  #attention(
-    id: number,
-    live: LiveState | undefined,
-    owner: number | undefined,
-    cascade: ReadonlySet<number>,
-    blocked: ReadonlySet<number>,
-  ): boolean {
-    if (blocked.has(id)) return true;
-    if (this.#closed(id, owner)) return false;
-    if (live?.runFailure !== undefined) return live.runFailure.reason !== "aborted";
-    return !cascade.has(id);
-  }
-
-  /** A conversation whose story continues elsewhere: a forking run's successor, or a fork
-   * child that has ended. Its own stopping is not the human's turn. */
-  #closed(id: number, owner: number | undefined): boolean {
-    return (
-      this.#succeeded.has(id) ||
-      (owner !== undefined && this.#children.has(owner) && this.#ended.has(owner))
-    );
+  /** The conversations and their key.run tasks, as one commit sees them: the graph holds live
+   * tasks only, so the list reads the stored records, live or ended. */
+  async #scan(): Promise<{
+    readonly conversations: readonly ContextConversation[];
+    readonly runs: readonly RunRecord[];
+  }> {
+    return this.#harness.commit(async (tx) => {
+      const all = async <T>(
+        scan: (cursor: Cursor | undefined) => Promise<Page<T, Cursor>>,
+      ): Promise<readonly T[]> => {
+        const items: T[] = [];
+        let cursor: Cursor | undefined;
+        for (;;) {
+          const page = await scan(cursor);
+          items.push(...page.items);
+          if (page.next === undefined) return items;
+          cursor = page.next;
+        }
+      };
+      return {
+        conversations: (
+          await all((cursor) => tx.scanConversations({}, SCAN_PAGE_SIZE, cursor))
+        ).map(({ id, owner }) => ({ id, owner })),
+        runs: (await all((cursor) =>
+          tx.scanTasks({ kind: KeyTask.definition.name }, SCAN_PAGE_SIZE, cursor),
+        )) as RunRecord[],
+      };
+    }, context);
   }
 
   /** An ownerless conversation is named by the human prompt that started it. */
@@ -496,20 +486,6 @@ export class Host {
     return message?.role === "user" && typeof message.content === "string"
       ? message.content
       : undefined;
-  }
-
-  async #scanConversations(): Promise<readonly ContextConversation[]> {
-    return this.#harness.commit(async (tx) => {
-      const found: ContextConversation[] = [];
-      let cursor: Cursor | undefined;
-      for (;;) {
-        const page = await tx.scanConversations({}, SCAN_PAGE_SIZE, cursor);
-        for (const record of page.items) found.push({ id: record.id, owner: record.owner });
-        if (page.next === undefined) break;
-        cursor = page.next;
-      }
-      return found;
-    }, context);
   }
 
   async listen(): Promise<void> {
@@ -537,6 +513,9 @@ type Creator = { readonly taskId: number; readonly conversationId: number };
 
 /** A conversation the list shows, with the task edge that names and places it. */
 type ContextConversation = { readonly id: number; readonly owner?: Creator };
+
+/** A key.run's stored record: its input names the conversation it mints. */
+type RunRecord = TaskRecord<KeyTaskInput, unknown, string>;
 
 /** A listed conversation placed for display: `depth` hops under its cascade's kickoff. */
 type Placed = ContextConversation & { depth: number };
