@@ -3,7 +3,12 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AuthType, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import {
+  type AuthType,
+  clampThinkingLevel,
+  type Models,
+  type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AgentDoc,
@@ -40,6 +45,7 @@ import {
 } from "./models.ts";
 import { Search } from "./search.ts";
 import { KeyTask, type KeyTaskInput, keySystem } from "./system.ts";
+import { DEFAULT_THINKING_LEVEL, ThinkingDefaultDoc } from "./thinking.ts";
 
 /** The host's key, its git bound to the real one. */
 const { extension: KeySystem } = keySystem(git);
@@ -60,8 +66,6 @@ export type HostOptions = {
   readonly port: number;
   /** The interface the server listens on: `KEY_BIND`, loopback by default. */
   readonly hostname: string;
-  /** The level a new conversation runs at: the host's env, or its own. */
-  readonly thinkingLevel: () => ModelThinkingLevel;
 };
 
 const production = (): HostOptions => {
@@ -77,7 +81,6 @@ const production = (): HostOptions => {
     extensions: [CodingTools, KeySystem, Search, Fetch, Agents],
     port: PORT,
     hostname: process.env.KEY_BIND ?? "127.0.0.1",
-    thinkingLevel: () => (process.env.KEY_THINKING_LEVEL ?? "high") as ModelThinkingLevel,
   };
 };
 
@@ -150,6 +153,20 @@ export class Host {
         contextWindow,
       })),
     };
+  }
+
+  /** The level a new conversation runs at: `/thinking`'s choice, else the default. */
+  async thinkingLevel(): Promise<ModelThinkingLevel> {
+    return (
+      (await this.#harness.snapshot(ThinkingDefaultDoc, context))?.level ?? DEFAULT_THINKING_LEVEL
+    );
+  }
+
+  /** Set the level new conversations run at; each clamps it to what its model supports. */
+  async setThinkingDefault(level: ModelThinkingLevel): Promise<void> {
+    await this.#harness.commit(async (tx) => {
+      (await tx.doc(ThinkingDefaultDoc)).level = level;
+    }, context);
   }
 
   /** Every provider `/login` can configure, with what it offers and whether it is set up. */
@@ -227,7 +244,7 @@ export class Host {
       ...(branch === undefined ? {} : { branch }),
       contextWindow: model?.contextWindow ?? 0,
       model: ref.modelId,
-      thinkingLevel: agent?.thinkingLevel ?? this.#options.thinkingLevel(),
+      thinkingLevel: agent?.thinkingLevel ?? "off",
     };
   }
 
@@ -261,7 +278,12 @@ export class Host {
           if (conversation.owner === undefined) return;
           const child = (await tx.doc(ModelDefaultsDoc)).child;
           if (child === undefined) throw new Error("no child model default: set one with /model");
-          await configure(tx, conversation.id, { model: child });
+          const model = this.#model(child);
+          const requested = (await tx.doc(ThinkingDefaultDoc)).level ?? DEFAULT_THINKING_LEVEL;
+          await configure(tx, conversation.id, {
+            model: child,
+            thinkingLevel: clampThinkingLevel(model, requested),
+          });
         },
         onReport: (report) => console.error("key:", report),
       },
@@ -297,6 +319,13 @@ export class Host {
     });
   }
 
+  /** One catalog model, or the loud failure of a default that names none. */
+  #model(ref: { readonly provider: string; readonly modelId: string }) {
+    const model = this.#options.models().getModel(ref.provider, ref.modelId);
+    if (model === undefined) throw new Error(`unknown model: ${ref.provider}/${ref.modelId}`);
+    return model;
+  }
+
   /** The two stored defaults, exactly as `/model` left them. */
   async #defaults(): Promise<ModelDefaults> {
     return (await this.#harness.snapshot(ModelDefaultsDoc, context)) ?? {};
@@ -318,15 +347,15 @@ export class Host {
 
   /** Start a cascade in a directory: an ownerless conversation and its first prompt. */
   async run(cwd: string, prompt: string): Promise<number> {
-    const { conversation: model } = await this.#defaults();
-    if (model === undefined) throw new Error("no conversation model default: set one with /model");
+    const { conversation: ref } = await this.#defaults();
+    if (ref === undefined) throw new Error("no conversation model default: set one with /model");
     const conversation = await this.#harness.createConversation(
       {
         ownership: { kind: "ownerless" },
         agent: {
-          model,
+          model: ref,
           cwd,
-          thinkingLevel: this.#options.thinkingLevel(),
+          thinkingLevel: clampThinkingLevel(this.#model(ref), await this.thinkingLevel()),
         },
       },
       context,

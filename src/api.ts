@@ -1,5 +1,6 @@
 // The API: hono routes over the host. Bodies parse through TypeBox; both streams are SSE.
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -7,6 +8,7 @@ import { validator } from "hono/validator";
 import Type from "typebox";
 import { Parse, ParseError } from "typebox/value";
 import type { Host, Summary } from "./host.ts";
+import { THINKING_LEVELS } from "./thinking.ts";
 
 /** A prompt any endpoint takes: at least one character that is not whitespace. */
 const Prompt = Type.String({ pattern: "\\S" });
@@ -35,6 +37,11 @@ const ModelDefaultInput = Type.Object({
   modelId: Type.String({ minLength: 1 }),
 });
 
+/** What `POST /api/thinking` takes: the level new conversations run at. */
+const ThinkingInput = Type.Object({
+  level: Type.Unsafe<ModelThinkingLevel>({ type: "string", enum: [...THINKING_LEVELS] }),
+});
+
 /** What `POST /api/login` takes: the provider whose flow to run, and how to authenticate. */
 const LoginInput = Type.Object({
   provider: Type.String({ minLength: 1 }),
@@ -57,6 +64,8 @@ const index = `key host
   POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
   GET  /api/models                     catalog and the two defaults
   POST /api/models/defaults            {target, provider, modelId}: set a default
+  GET  /api/thinking                   the level new conversations run at
+  POST /api/thinking                   {level}: set it
   GET  /api/providers                  providers and their auth methods
   POST /api/login                      {provider, type}: run a provider login
   GET  /api/login                      the login's prompts and notices (SSE)
@@ -133,6 +142,15 @@ export function api(host: Host) {
         async (c) => {
           const { target, provider, modelId } = c.req.valid("json");
           await host.setModelDefault(target, { provider, modelId });
+          return c.body(null, 202);
+        },
+      )
+      .get("/api/thinking", async (c) => c.json({ level: await host.thinkingLevel() }))
+      .post(
+        "/api/thinking",
+        validator("json", (body) => Parse(ThinkingInput, body)),
+        async (c) => {
+          await host.setThinkingDefault(c.req.valid("json").level);
           return c.body(null, 202);
         },
       )

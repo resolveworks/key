@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { AuthType } from "@earendil-works/pi-ai";
+import type { AuthType, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import {
   type AutocompleteSuggestions,
@@ -36,6 +36,7 @@ import { ModelPicker } from "./model-picker.ts";
 import { type ModelDefaults, type ModelInfo, type ModelTarget, targetName } from "./models.ts";
 import { provider } from "./prompt.ts";
 import { style } from "./theme.ts";
+import { ThinkingPicker } from "./thinking-picker.ts";
 import { transcript } from "./trajectory.ts";
 
 const RECONNECT_MS = 250;
@@ -72,6 +73,7 @@ type Mode =
   | { readonly kind: "view"; readonly view: View }
   | { readonly kind: "list"; readonly back: View; selected: number | undefined }
   | { readonly kind: "models"; readonly back: View; readonly picker: ModelPicker }
+  | { readonly kind: "thinking"; readonly back: View; readonly picker: ThinkingPicker }
   | { readonly kind: "login"; readonly back: View; readonly picker: LoginPicker }
   | { readonly kind: "login-flow"; readonly back: View; readonly view: LoginView };
 
@@ -227,12 +229,7 @@ export async function open(base: string): Promise<void> {
       show([new Spacer(1), list]);
       tui.setFocus(list);
       footer.clear();
-    } else if (mode.kind === "models") {
-      hidePrompt();
-      show([mode.picker]);
-      tui.setFocus(mode.picker);
-      footer.clear();
-    } else if (mode.kind === "login") {
+    } else if (mode.kind === "models" || mode.kind === "thinking" || mode.kind === "login") {
       hidePrompt();
       show([mode.picker]);
       tui.setFocus(mode.picker);
@@ -323,6 +320,38 @@ export async function open(base: string): Promise<void> {
       );
       mode = { kind: "models", back, picker };
       notice = undefined;
+      render();
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
+  };
+
+  /** Fetch the thinking default and hand the screen to its picker; enter sets the default and
+   * returns to `back`, escape returns without a change. */
+  const showThinking = async (back: View): Promise<void> => {
+    try {
+      const body = await call(() => client.api.thinking.$get());
+      const { level } = JSON.parse(body) as { readonly level: ModelThinkingLevel };
+      const picker = new ThinkingPicker(
+        level,
+        (chosen) => void setThinking(back, chosen),
+        () => swap(back),
+      );
+      mode = { kind: "thinking", back, picker };
+      notice = undefined;
+      render();
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
+  };
+
+  const setThinking = async (back: View, level: ModelThinkingLevel): Promise<void> => {
+    try {
+      await call(() => client.api.thinking.$post({ json: { level } }));
+      swap(back);
+      notice = `default thinking: ${level}`;
       render();
     } catch (error) {
       notice = String(error);
@@ -481,6 +510,11 @@ export async function open(base: string): Promise<void> {
       void showModels("conversation", place());
       return;
     }
+    if (text.trim() === "/thinking") {
+      spend();
+      void showThinking(place());
+      return;
+    }
     if (text.trim() === "/login") {
       spend();
       void showLogin(place());
@@ -514,7 +548,12 @@ export async function open(base: string): Promise<void> {
     // cycle twice and one ctrl+c would quit on its own release.
     if (isKeyRelease(data)) return undefined;
     // The picker owns every key while it is open: its filter, its list, its escape.
-    if (mode.kind === "models" || mode.kind === "login" || mode.kind === "login-flow")
+    if (
+      mode.kind === "models" ||
+      mode.kind === "thinking" ||
+      mode.kind === "login" ||
+      mode.kind === "login-flow"
+    )
       return undefined;
     if (matchesKey(data, "ctrl+c")) {
       const now = Date.now();

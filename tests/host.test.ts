@@ -74,7 +74,11 @@ describe("host", () => {
     // The fake provider serves the pair the tests set as both defaults.
     faux = fauxProvider({
       provider: "deepseek",
-      models: [{ id: "deepseek-flash" }, { id: "deepseek-chat" }],
+      models: [
+        { id: "deepseek-flash", reasoning: true },
+        { id: "deepseek-chat", reasoning: true },
+        { id: "deepseek-plain", reasoning: false },
+      ],
     });
     const models = createModels();
     models.setProvider(faux.provider);
@@ -85,7 +89,6 @@ describe("host", () => {
       extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
-      thinkingLevel: () => "high",
     });
     await host.open();
     await host.setModelDefault("conversation", {
@@ -137,6 +140,18 @@ describe("host", () => {
     expect(body.models.map(({ provider, id }) => `${provider}/${id}`)).toEqual(
       expect.arrayContaining(["deepseek/deepseek-flash", "deepseek/deepseek-chat"]),
     );
+  });
+
+  test("the host answers the thinking default, high until /thinking sets one", async () => {
+    expect(await (await app.request("/api/thinking")).json()).toEqual({ level: "high" });
+    expect((await setThinking("low")).status).toBe(202);
+    expect(await (await app.request("/api/thinking")).json()).toEqual({ level: "low" });
+  });
+
+  test("an unknown thinking level is rejected", async () => {
+    const response = await setThinking("loud");
+    expect(response.status).toBe(500);
+    expect(await response.text()).toContain("/level");
   });
 
   test("the host lists the providers and the methods /login can start", async () => {
@@ -194,6 +209,7 @@ describe("host", () => {
       });
     expect((await set("conversation", "deepseek-chat")).status).toBe(202);
     expect((await set("child", "deepseek-flash")).status).toBe(202);
+    expect((await setThinking("low")).status).toBe(202);
 
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
@@ -202,22 +218,27 @@ describe("host", () => {
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
     await list.close();
 
-    const statsOf = async (id: number) => {
-      const watch = await host.watch(id);
-      if (watch === undefined) throw new Error(`no conversation #${id}`);
-      const stats = await host.stats(watch.value);
-      await watch.stop();
-      return stats;
-    };
-    const idOf = (label: string): number => {
-      const summary = listed.find((candidate) => candidate.label === label);
-      if (summary === undefined) throw new Error(`no conversation labelled ${label}`);
-      return summary.id;
-    };
+    expect((await statsOf(idOf(listed, "kick off"))).model).toBe("deepseek-chat");
+    expect((await statsOf(idOf(listed, "task for a"))).model).toBe("deepseek-flash");
+    expect((await statsOf(idOf(listed, "a is on its way"))).model).toBe("deepseek-flash");
+    expect((await statsOf(idOf(listed, "kick off"))).thinkingLevel).toBe("low");
+    expect((await statsOf(idOf(listed, "task for a"))).thinkingLevel).toBe("low");
+  });
 
-    expect((await statsOf(idOf("kick off"))).model).toBe("deepseek-chat");
-    expect((await statsOf(idOf("task for a"))).model).toBe("deepseek-flash");
-    expect((await statsOf(idOf("a is on its way"))).model).toBe("deepseek-flash");
+  test("the thinking default is clamped to each conversation's model", async () => {
+    expect((await setThinking("xhigh")).status).toBe(202);
+    await host.setModelDefault("child", { provider: "deepseek", modelId: "deepseek-plain" });
+
+    const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
+    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    const list = await openList();
+    await run("kick off");
+    const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
+    await list.close();
+
+    // The fake reasoning model supports high but not xhigh; the plain one supports only off.
+    expect((await statsOf(idOf(listed, "kick off"))).thinkingLevel).toBe("high");
+    expect((await statsOf(idOf(listed, "task for a"))).thinkingLevel).toBe("off");
   });
 
   test("without a conversation default a run fails loudly instead of falling back", async () => {
@@ -229,7 +250,6 @@ describe("host", () => {
       extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
-      thinkingLevel: () => "high",
     });
     await local.open();
     const settings = (await (await local.app.request("/api/models")).json()) as {
@@ -495,6 +515,31 @@ describe("host", () => {
     faux.setResponses([fauxAssistantMessage("hello")]);
     const { conversation } = (await (await run(prompt)).json()) as { conversation: number };
     return conversation;
+  }
+
+  /** Set the level new conversations run at, as `/thinking` does. */
+  async function setThinking(level: string): Promise<Response> {
+    return await app.request("/api/thinking", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ level }),
+    });
+  }
+
+  /** What the footer needs of one conversation, read the way the transcript stream reads it. */
+  async function statsOf(id: number): Promise<Stats> {
+    const watch = await host.watch(id);
+    if (watch === undefined) throw new Error(`no conversation #${id}`);
+    const stats = await host.stats(watch.value);
+    await watch.stop();
+    return stats;
+  }
+
+  /** The ID of the conversation a summary labels. */
+  function idOf(listed: readonly Summary[], label: string): number {
+    const summary = listed.find((candidate) => candidate.label === label);
+    if (summary === undefined) throw new Error(`no conversation labelled ${label}`);
+    return summary.id;
   }
 
   /** One answer: the forks it calls, then the text its turn ends with. */

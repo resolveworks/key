@@ -30,6 +30,11 @@ export function provider(
       description: "set the conversation and child defaults",
     },
     {
+      value: "thinking",
+      label: "thinking",
+      description: "set the thinking level new conversations run at",
+    },
+    {
       value: "login",
       label: "login",
       description: "configure a provider",
