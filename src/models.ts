@@ -11,7 +11,7 @@ export type ModelDefaults = {
   child?: ModelRef;
 };
 
-/** One catalog model, as the picker lists it. */
+/** One model from a configured provider, as the picker lists it. */
 export type ModelInfo = {
   readonly provider: string;
   readonly id: string;

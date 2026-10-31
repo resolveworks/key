@@ -128,7 +128,7 @@ describe("host", () => {
     expect(await response.text()).toBe("no such conversation");
   });
 
-  test("the host lists the model catalog and the two stored defaults", async () => {
+  test("the host lists the configured providers' models and the two stored defaults", async () => {
     const body = (await (await app.request("/api/models")).json()) as {
       readonly defaults: unknown;
       readonly models: readonly { readonly provider: string; readonly id: string }[];
@@ -137,9 +137,12 @@ describe("host", () => {
       conversation: { provider: "deepseek", modelId: "deepseek-flash" },
       child: { provider: "deepseek", modelId: "deepseek-flash" },
     });
-    expect(body.models.map(({ provider, id }) => `${provider}/${id}`)).toEqual(
-      expect.arrayContaining(["deepseek/deepseek-flash", "deepseek/deepseek-chat"]),
-    );
+    // groq is registered but unconfigured, so none of its catalog is offered.
+    expect(body.models.map(({ provider, id }) => `${provider}/${id}`)).toEqual([
+      "deepseek/deepseek-flash",
+      "deepseek/deepseek-chat",
+      "deepseek/deepseek-plain",
+    ]);
   });
 
   test("the host answers the thinking default, high until /thinking sets one", async () => {
@@ -198,6 +201,14 @@ describe("host", () => {
       type: "api_key",
       source: "stored credential",
     });
+
+    // Configuring the provider adds its models to `/model`.
+    const { models } = (await (await app.request("/api/models")).json()) as {
+      readonly models: readonly { readonly provider: string; readonly id: string }[];
+    };
+    expect(models.map(({ provider, id }) => `${provider}/${id}`)).toContain(
+      "groq/llama-3.1-8b-instant",
+    );
   });
 
   test("the two defaults steer new conversations and their children", async () => {

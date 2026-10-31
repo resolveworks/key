@@ -138,14 +138,17 @@ export class Host {
     return conversation?.watch(context);
   }
 
-  /** The catalog and the two defaults `/model` edits. */
+  /** The models of configured providers, and the two defaults `/model` edits. */
   async modelSettings(): Promise<{
     readonly defaults: ModelDefaults;
     readonly models: readonly ModelInfo[];
   }> {
-    const models = this.#options.models().getModels();
+    const [models, defaults] = await Promise.all([
+      this.#options.models().getAvailable(),
+      this.#defaults(),
+    ]);
     return {
-      defaults: await this.#defaults(),
+      defaults,
       models: models.map(({ provider, id, name, contextWindow }) => ({
         provider,
         id,

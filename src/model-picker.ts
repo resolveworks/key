@@ -151,7 +151,17 @@ export class ModelPicker extends Container implements Focusable {
     this.#selectedKey = filtered.length === 0 ? undefined : keyOf(filtered[Math.max(0, selected)]);
     this.#listContainer.clear();
     this.#listContainer.addChild(
-      filtered.length === 0 ? new Text(style.dim("  no matching models"), 0, 0) : this.#list,
+      filtered.length === 0
+        ? new Text(
+            style.dim(
+              query === ""
+                ? "  no models from configured providers · /login adds one"
+                : "  no matching models",
+            ),
+            0,
+            0,
+          )
+        : this.#list,
     );
     this.#updateHeader();
     this.#tui.requestRender();
@@ -182,7 +192,7 @@ export class ModelPicker extends Container implements Focusable {
       `${style.muted("defaults")}  ${style.muted("conversations")} ${style.accent(ref(this.#defaults.conversation))}  ${style.muted("children")} ${style.accent(ref(this.#defaults.child))}`,
     );
     this.#hintText.setText(
-      `${style.accent(`→ ${targetName(this.#target)}`)} ${style.muted("· tab switches · enter sets · esc closes")}`,
+      `${style.accent(`→ ${targetName(this.#target)}`)} ${style.muted("· configured providers only · tab switches · enter sets · esc closes")}`,
     );
   }
 }
