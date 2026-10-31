@@ -1,7 +1,7 @@
 // The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
-import { mkdirSync } from "node:fs";
+import { type Stats as FsStats, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   type AuthType,
@@ -571,11 +571,49 @@ function forest(conversations: readonly ContextConversation[]): readonly Placed[
     .flat();
 }
 
-/** A working directory's branch, when it is a repository: the footer shows it beside the path. */
-async function branchOf(cwd: string | undefined): Promise<string | undefined> {
+/** A working directory's branch, when it is a repository: the footer shows it beside the path.
+ * Read from the filesystem — stats flow every ~100ms, so no forking git per frame. */
+export async function branchOf(cwd: string | undefined): Promise<string | undefined> {
   if (cwd === undefined) return undefined;
-  const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd)
-    .then((stdout) => stdout.trim())
-    .catch(() => "");
-  return branch === "" ? undefined : branch;
+
+  const headPath = await findHead(cwd);
+  if (headPath === undefined) return undefined;
+
+  let head: string;
+  try {
+    head = readFileSync(headPath, "utf8").trim();
+  } catch {
+    return undefined;
+  }
+
+  // A reftable-backed repo keeps the real HEAD inside its tables; only there, ask git.
+  if (head === "ref: refs/heads/.invalid")
+    return git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd)
+      .then((stdout) => stdout.trim())
+      .catch(() => "")
+      .then((branch) => (branch === "" ? undefined : branch));
+
+  return head.startsWith("ref: refs/heads/") ? head.slice("ref: refs/heads/".length) : undefined;
+}
+
+/** Walk up from a directory to its repository's HEAD file — a `.git` dir's, or the gitdir a
+ * linked worktree's `.git` file points at. undefined past the filesystem root. */
+function findHead(cwd: string): string | undefined {
+  let dir = cwd;
+  for (;;) {
+    const gitPath = join(dir, ".git");
+    let stat: FsStats;
+    try {
+      stat = statSync(gitPath);
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) return undefined;
+      dir = parent;
+      continue;
+    }
+    if (stat.isDirectory()) return join(gitPath, "HEAD");
+    // A linked worktree's `.git` is a file: `gitdir: <path>`
+    const gitdir = readFileSync(gitPath, "utf8").trim().slice("gitdir: ".length);
+    return join(resolve(dir, gitdir), "HEAD");
+  }
 }
