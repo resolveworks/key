@@ -24,6 +24,11 @@ export function provider(
   // Built per ask: the default moves with the place `/new` would leave.
   const commands = (): AutocompleteItem[] => [
     { value: "list", label: "list", description: "list past conversations" },
+    {
+      value: "model",
+      label: "model",
+      description: "set the conversation and child defaults",
+    },
     { value: `new ${freshDefault()}`, label: `new ${freshDefault()}`, description: "start fresh" },
   ];
   // The library's provider kept for its text grammar alone: an unforced line that starts with "/"

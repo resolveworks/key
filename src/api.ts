@@ -28,6 +28,13 @@ const CompleteInput = Type.Object({
   force: Type.Optional(Type.Boolean()),
 });
 
+/** What `POST /api/models/defaults` takes: which default, and the model it points at. */
+const ModelDefaultInput = Type.Object({
+  target: Type.Union([Type.Literal("conversation"), Type.Literal("child")]),
+  provider: Type.String({ minLength: 1 }),
+  modelId: Type.String({ minLength: 1 }),
+});
+
 const index = `key host
 
   GET  /api/conversations              transcripts, then changes (SSE)
@@ -36,6 +43,8 @@ const index = `key host
   POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a conversation
   POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
+  GET  /api/models                     catalog and the two defaults
+  POST /api/models/defaults            {target, provider, modelId}: set a default
 `;
 
 /** What one thrown error answers: the error as text — but a parse failure keeps its details on
@@ -98,6 +107,16 @@ export function api(host: Host) {
           const { prompt, cwd } = c.req.valid("json");
           const conversation = await host.run(cwd, prompt);
           return c.json({ conversation }, 202);
+        },
+      )
+      .get("/api/models", async (c) => c.json(await host.modelSettings()))
+      .post(
+        "/api/models/defaults",
+        validator("json", (body) => Parse(ModelDefaultInput, body)),
+        async (c) => {
+          const { target, provider, modelId } = c.req.valid("json");
+          await host.setModelDefault(target, { provider, modelId });
+          return c.body(null, 202);
         },
       )
       .post(

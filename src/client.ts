@@ -29,6 +29,8 @@ import { hc } from "hono/client";
 import type { api } from "./api.ts";
 import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
+import { ModelPicker } from "./model-picker.ts";
+import { type ModelDefaults, type ModelInfo, type ModelTarget, targetName } from "./models.ts";
 import { provider } from "./prompt.ts";
 import { style } from "./theme.ts";
 import { transcript } from "./trajectory.ts";
@@ -65,7 +67,8 @@ type View =
  * returns there, draft intact. */
 type Mode =
   | { readonly kind: "view"; readonly view: View }
-  | { readonly kind: "list"; readonly back: View; selected: number | undefined };
+  | { readonly kind: "list"; readonly back: View; selected: number | undefined }
+  | { readonly kind: "models"; readonly back: View; readonly picker: ModelPicker };
 
 /** A view's name: "new" for the composer, its number for a conversation — its key in the drafts,
  * and its place in the ring when it is a live one. */
@@ -217,6 +220,11 @@ export async function open(base: string): Promise<void> {
       show([new Spacer(1), list]);
       tui.setFocus(list);
       footer.clear();
+    } else if (mode.kind === "models") {
+      hidePrompt();
+      show([mode.picker]);
+      tui.setFocus(mode.picker);
+      footer.clear();
     } else if (mode.view.kind === "new") {
       showPrompt();
       show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
@@ -255,6 +263,52 @@ export async function open(base: string): Promise<void> {
     mode = { kind: "list", back: place(), selected: undefined };
     notice = undefined;
     render();
+  };
+
+  /** Fetch the two defaults and the catalog, then hand the screen to the picker. The
+   * picker's enter sets the default its header names and stays open, so one `/model` can set both;
+   * escape returns to `back`. */
+  const showModels = async (target: ModelTarget, back: View): Promise<void> => {
+    let picker: ModelPicker | undefined;
+    const set = async (chosen: ModelTarget, model: ModelInfo): Promise<void> => {
+      try {
+        await call(() =>
+          client.api.models.defaults.$post({
+            json: { target: chosen, provider: model.provider, modelId: model.id },
+          }),
+        );
+        if (picker !== undefined && mode.kind === "models" && mode.picker === picker)
+          picker.setDefault(chosen, model);
+        notice = `default ${targetName(chosen)}: ${model.provider}/${model.id}`;
+        render();
+      } catch (error) {
+        notice = String(error);
+        render();
+      }
+    };
+    try {
+      const body = await call(() => client.api.models.$get());
+      const { models, defaults } = JSON.parse(body) as {
+        readonly models: readonly ModelInfo[];
+        readonly defaults: ModelDefaults;
+      };
+      picker = new ModelPicker(
+        tui,
+        models,
+        defaults,
+        target,
+        (chosen, model) => {
+          void set(chosen, model);
+        },
+        () => swap(back),
+      );
+      mode = { kind: "models", back, picker };
+      notice = undefined;
+      render();
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
   };
 
   /** Spend the open view's draft: whatever took the text — a command that ran, a clear, a send
@@ -325,6 +379,11 @@ export async function open(base: string): Promise<void> {
       showList();
       return;
     }
+    if (text.trim() === "/model") {
+      spend();
+      void showModels("conversation", place());
+      return;
+    }
     const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());
     if (fresh !== null) {
       // A path names where the fresh trajectory runs; unnamed it keeps the directory of the
@@ -352,6 +411,8 @@ export async function open(base: string): Promise<void> {
     // the focused component — listeners hear them too. Unheard-of here, one ctrl+y would
     // cycle twice and one ctrl+c would quit on its own release.
     if (isKeyRelease(data)) return undefined;
+    // The picker owns every key while it is open: its filter, its list, its escape.
+    if (mode.kind === "models") return undefined;
     if (matchesKey(data, "ctrl+c")) {
       const now = Date.now();
       if (now - lastCtrlC < 500) quit();

@@ -69,13 +69,15 @@ describe("host", () => {
   let app: ReturnType<typeof api>;
 
   beforeEach(async () => {
-    // The host configures deepseek/deepseek-flash, so the faux provider serves that pair.
-    faux = fauxProvider({ provider: "deepseek", models: [{ id: "deepseek-flash" }] });
+    // The fake provider serves the pair the tests set as both defaults.
+    faux = fauxProvider({
+      provider: "deepseek",
+      models: [{ id: "deepseek-flash" }, { id: "deepseek-chat" }],
+    });
     const models = createModels();
     models.setProvider(faux.provider);
     host = new Host({
       models: () => models,
-      model: () => ({ provider: "deepseek", modelId: "deepseek-flash" }),
       storage: () => new MemoryStorage(),
       extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
       port: 0,
@@ -83,6 +85,14 @@ describe("host", () => {
       thinkingLevel: () => "high",
     });
     await host.open();
+    await host.setModelDefault("conversation", {
+      provider: "deepseek",
+      modelId: "deepseek-flash",
+    });
+    await host.setModelDefault("child", {
+      provider: "deepseek",
+      modelId: "deepseek-flash",
+    });
     host.resume();
     // In-process: `app.request()` answers without a port, exactly as `hono request` drives it.
     app = host.app;
@@ -110,6 +120,77 @@ describe("host", () => {
     const response = await app.request("/api/conversations/999999");
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("no such conversation");
+  });
+
+  test("the host lists the model catalog and the two stored defaults", async () => {
+    const body = (await (await app.request("/api/models")).json()) as {
+      readonly defaults: unknown;
+      readonly models: readonly { readonly provider: string; readonly id: string }[];
+    };
+    expect(body.defaults).toEqual({
+      conversation: { provider: "deepseek", modelId: "deepseek-flash" },
+      child: { provider: "deepseek", modelId: "deepseek-flash" },
+    });
+    expect(body.models.map(({ provider, id }) => `${provider}/${id}`)).toEqual(
+      expect.arrayContaining(["deepseek/deepseek-flash", "deepseek/deepseek-chat"]),
+    );
+  });
+
+  test("the two defaults steer new conversations and their children", async () => {
+    const set = (target: string, modelId: string) =>
+      app.request("/api/models/defaults", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target, provider: "deepseek", modelId }),
+      });
+    expect((await set("conversation", "deepseek-chat")).status).toBe(202);
+    expect((await set("child", "deepseek-flash")).status).toBe(202);
+
+    const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
+    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    const list = await openList();
+    await run("kick off");
+    const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
+    await list.close();
+
+    const statsOf = async (id: number) => {
+      const watch = await host.watch(id);
+      if (watch === undefined) throw new Error(`no conversation #${id}`);
+      const stats = await host.stats(watch.value);
+      await watch.stop();
+      return stats;
+    };
+    const idOf = (label: string): number => {
+      const summary = listed.find((candidate) => candidate.label === label);
+      if (summary === undefined) throw new Error(`no conversation labelled ${label}`);
+      return summary.id;
+    };
+
+    expect((await statsOf(idOf("kick off"))).model).toBe("deepseek-chat");
+    expect((await statsOf(idOf("task for a"))).model).toBe("deepseek-flash");
+    expect((await statsOf(idOf("a is on its way"))).model).toBe("deepseek-flash");
+  });
+
+  test("without a conversation default a run fails loudly instead of falling back", async () => {
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const local = new Host({
+      models: () => models,
+      storage: () => new MemoryStorage(),
+      extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
+      port: 0,
+      hostname: "127.0.0.1",
+      thinkingLevel: () => "high",
+    });
+    await local.open();
+    const settings = (await (await local.app.request("/api/models")).json()) as {
+      readonly defaults: unknown;
+    };
+    expect(settings.defaults).toEqual({});
+    await expect(local.run(REPO, "say hello")).rejects.toThrow(
+      "no conversation model default: set one with /model",
+    );
+    await local.close();
   });
 
   test("an empty prompt is rejected", async () => {

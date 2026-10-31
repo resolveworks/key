@@ -9,8 +9,8 @@ Key is a host and a terminal client. One process — the host — owns every
 cascade on a durable session and serves it over HTTP; the client is a dumb
 terminal chat that starts trajectories, streams them, and browses past ones.
 The agents are coding agents: each conversation runs in a project directory
-you point it at, on the model `KEY_MODEL` picks (`deepseek/deepseek-flash`
-by default).
+you point it at, on the models `/model` sets: one for conversations, one for
+the children they spawn.
 
 The implementation may change. The idea below does not.
 
@@ -25,12 +25,18 @@ pnpm serve      # own the session and serve the graph on 127.0.0.1:7317
 pnpm client     # chat with a running host
 ```
 
-Put `DEEPSEEK_API_KEY=...` in `~/.key/.env`; the host loads it on start.
-`KEY_MODEL=provider/model` in the same file picks what every conversation
-runs on — any provider in pi's catalog, keyed by that provider's own env var
-(`ZAI_CODING_CN_API_KEY` for `zai-coding-cn`, say). `KEY_THINKING_LEVEL` in
-the same file sets the level every conversation runs at (a model without
-thinking runs at `off`; the default is `high`). `KEY_BIND` in the same file
+Put provider API keys in `~/.key/.env`; the host loads them on start. `/model`
+in the client sets the two defaults, stored on the session: the model a new
+conversation starts on, and the model the children it spawns run on. Tab
+switches between conversations and children; enter sets the one the header
+names. The picker lists pi's whole catalog, whether or not a provider key is
+present; when a conversation runs on a provider, that provider's own env var
+(`ZAI_CODING_CN_API_KEY` for `zai-coding-cn`, say) is what the request uses.
+There is no model-default fallback: until both defaults are set, a new
+conversation or a child fails loudly. Existing conversations keep the model
+they started on. `KEY_THINKING_LEVEL` in the same file sets the level every
+conversation runs at (a model without thinking runs at `off`; the default is
+`high`). `KEY_BIND` in the same file
 sets the interface the server listens on (`127.0.0.1` by default;
 `0.0.0.0` to accept connections from off the box). `BRAVE_API_KEY` in the
 same file gives every conversation `web_search`, the tool that searches the web.
@@ -53,6 +59,8 @@ POST /api/run                         {prompt, cwd} → {conversation}: start a 
 POST /api/complete                    {cwd, text, force}: the host's completion of one prompt line
 POST /api/conversations/:id/messages  {prompt}: message a conversation
 POST /api/conversations/:id/abort     interrupt a conversation: abort its current work
+GET  /api/models                      the catalog and the two defaults
+POST /api/models/defaults             {target, provider, modelId}: set a default
 ```
 
 ## Core idea

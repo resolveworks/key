@@ -11,6 +11,7 @@ import {
   type ConversationId,
   type ConversationView,
   type Cursor,
+  configure,
   createRegistry,
   type Extension,
   Harness,
@@ -29,6 +30,12 @@ import { api } from "./api.ts";
 import { Fetch } from "./fetch.ts";
 import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
+import {
+  type ModelDefaults,
+  ModelDefaultsDoc,
+  type ModelInfo,
+  type ModelTarget,
+} from "./models.ts";
 import { Search } from "./search.ts";
 import { KeyTask, type KeyTaskInput, keySystem } from "./system.ts";
 
@@ -42,22 +49,10 @@ const SCAN_PAGE_SIZE = 256;
 export const PORT = 7317;
 /** Everything the host owns lives here, outside every project: store, env. */
 const dataDirectory = join(homedir(), ".key");
-/** What the host runs on: `KEY_MODEL` as `provider/model`, split at the first slash — the id may carry
- * its own (openrouter). */
-function parseModel(text: string): ModelRef {
-  const slash = text.indexOf("/");
-  const provider = text.slice(0, slash);
-  const modelId = text.slice(slash + 1);
-  if (slash < 0 || provider === "" || modelId === "")
-    throw new Error(`KEY_MODEL must be "provider/model": "${text}"`);
-  return { provider, modelId };
-}
 
-/** What the host runs on. `new Host()` is one box: `KEY_MODEL` on SQLite at `PORT`. */
+/** What the host runs on. `new Host()` is one box: defaults on the session at `PORT`. */
 export type HostOptions = {
   readonly models: () => Models;
-  /** The model a new conversation runs: the host's env, or its own. */
-  readonly model: () => ModelRef;
   readonly storage: () => Storage | Promise<Storage>;
   readonly extensions: readonly Extension[];
   readonly port: number;
@@ -69,7 +64,6 @@ export type HostOptions = {
 
 const production = (): HostOptions => ({
   models: () => builtinModels(),
-  model: () => parseModel(process.env.KEY_MODEL ?? "deepseek/deepseek-flash"),
   storage: async () => {
     mkdirSync(dataDirectory, { recursive: true });
     return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
@@ -133,10 +127,37 @@ export class Host {
     return conversation?.watch(context);
   }
 
+  /** The catalog and the two defaults `/model` edits. */
+  async modelSettings(): Promise<{
+    readonly defaults: ModelDefaults;
+    readonly models: readonly ModelInfo[];
+  }> {
+    const models = this.#options.models().getModels();
+    return {
+      defaults: await this.#defaults(),
+      models: models.map(({ provider, id, name, contextWindow }) => ({
+        provider,
+        id,
+        name,
+        contextWindow,
+      })),
+    };
+  }
+
+  /** Point one default at a catalog model; a request fails later if its provider has no key. */
+  async setModelDefault(target: ModelTarget, ref: ModelRef): Promise<void> {
+    if (this.#options.models().getModel(ref.provider, ref.modelId) === undefined)
+      throw new Error(`unknown model: ${ref.provider}/${ref.modelId}`);
+    await this.#harness.commit(async (tx) => {
+      (await tx.doc(ModelDefaultsDoc))[target] = { ...ref };
+    }, context);
+  }
+
   /** What a view cannot say: the branch, the context window, the model and its level. */
   async stats(view: ConversationView): Promise<Stats> {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
-    const ref = agent?.model ?? this.#options.model();
+    const ref = agent?.model;
+    if (ref === undefined) throw new Error(`conversation ${view.conversation.id} has no model`);
     const model = this.#options.models().getModel(ref.provider, ref.modelId);
     const branch = await branchOf(agent?.cwd);
     return {
@@ -172,6 +193,13 @@ export class Host {
             throw new Error(`conversation ${target.conversationId} has no cwd`);
           return new NodeExecutionEnv({ cwd: target.cwd });
         },
+        // A task-owned conversation starts on the child default, not on a copy of its owner.
+        conversationCreated: async (tx, conversation) => {
+          if (conversation.owner === undefined) return;
+          const child = (await tx.doc(ModelDefaultsDoc)).child;
+          if (child === undefined) throw new Error("no child model default: set one with /model");
+          await configure(tx, conversation.id, { model: child });
+        },
         onReport: (report) => console.error("key:", report),
       },
       context,
@@ -206,6 +234,11 @@ export class Host {
     });
   }
 
+  /** The two stored defaults, exactly as `/model` left them. */
+  async #defaults(): Promise<ModelDefaults> {
+    return (await this.#harness.snapshot(ModelDefaultsDoc, context)) ?? {};
+  }
+
   /** The prompt's path completions, answered from the host's own filesystem: the line as it stands
    * before the cursor, and whether the tab key forced the asking. */
   complete(
@@ -222,11 +255,13 @@ export class Host {
 
   /** Start a cascade in a directory: an ownerless conversation and its first prompt. */
   async run(cwd: string, prompt: string): Promise<number> {
+    const { conversation: model } = await this.#defaults();
+    if (model === undefined) throw new Error("no conversation model default: set one with /model");
     const conversation = await this.#harness.createConversation(
       {
         ownership: { kind: "ownerless" },
         agent: {
-          model: this.#options.model(),
+          model,
           cwd,
           thinkingLevel: this.#options.thinkingLevel(),
         },
