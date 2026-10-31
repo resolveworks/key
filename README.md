@@ -93,7 +93,8 @@ forking run does not wait for it and never receives its result.
 
 When a run that forked answers, it starts a successor task in another fresh
 conversation. The successor waits for all that run's children to settle. Its
-prompt names the conversations before it by id; it contains none of their words.
+prompt carries only what it can gather from: each fork's branch, and the ids of
+the conversations `ask` reaches. It contains none of their words.
 
 The `ask` tool reads a settled conversation's own context and answers one
 question over it. The conversation is never appended to. Askers can query their
@@ -104,8 +105,8 @@ next successor. That is the loop. The loop ends when a run forks nothing.
 
 A **cascade** is a kickoff conversation followed by a chain of fresh successor
 conversations, with forked child conversations branching off each step. Only
-conversation ids cross into a successor; its questions cross back through `ask`
-without changing the conversations they ask.
+branch names and conversation ids cross into a successor; its questions cross
+back through `ask` without changing the conversations they ask.
 
 An **interrupt** aborts one conversation's current run. Background work in other
 conversations keeps going. Interrupting a fork or successor's conversation ends

@@ -19,7 +19,7 @@ import {
   type Tx,
 } from "@earendil-works/pi-durable";
 import type { Git } from "./git.ts";
-import { CHILD_NAME, ensureWorktree } from "./worktree.ts";
+import { branchFor, CHILD_NAME, ensureWorktree } from "./worktree.ts";
 
 /** A fork or the successor of a run: a task in a fresh conversation. */
 export type KeyTaskInput =
@@ -79,7 +79,7 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
       const text =
         record.input.kind === "fork"
           ? record.input.prompt
-          : await successorPrompt(record.input, record.id, record.conversationId, runtime, context);
+          : await successorPrompt(record.input, record.conversationId, runtime, context);
       const submission = await handle.submit(
         { type: "input", content: text, requestId: `key.run:${record.id}`, whenBusy: "steer" },
         context,
@@ -120,31 +120,29 @@ function answerOf(entry: EntryRecord | undefined): string {
   return contentText(message.content, "");
 }
 
-/** The successor's opening: only the conversations before it, named by id. Their words stay
- * behind ask. */
+/** The successor's opening: only what it can gather from — each fork's branch, and the
+ * conversations behind ask. Their words stay behind ask. */
 async function successorPrompt(
   input: Extract<KeyTaskInput, { readonly kind: "successor" }>,
-  taskId: number,
   predecessor: ConversationId,
   runtime: Parameters<typeof KeyTask.definition.phases.run>[1],
   context: Parameters<typeof KeyTask.definition.phases.run>[2],
 ): Promise<string> {
-  const children: { readonly task: TaskId<string>; readonly conversation: ConversationId }[] = [];
+  const forks: { readonly branch: string; readonly conversation: ConversationId }[] = [];
   await runtime.commit(async (tx) => {
+    // `on` holds only forks the predecessor's own run minted, task and conversation in one commit.
     for (const task of input.on) {
+      const fork = (await tx.task(task))?.input as Extract<KeyTaskInput, { kind: "fork" }>;
       const conversation = (await tx.scanConversations({ ownerTaskId: task }, 1)).items[0];
-      if (conversation === undefined)
-        throw new Error(`key.run ${taskId}: task #${task} owns no conversation`);
-      children.push({ task, conversation: conversation.id });
+      forks.push({ branch: branchFor(fork.name), conversation: conversation.id });
     }
     return undefined;
   }, context);
   return [
     `Successor of conversation #${predecessor}.`,
     "",
-    "Before you:",
-    `- conversation #${predecessor}`,
-    ...children.map(({ task, conversation }) => `- task #${task}: conversation #${conversation}`),
+    "Forks before you, their work on their branches — ask any conversation above:",
+    ...forks.map(({ branch, conversation }) => `- ${branch}: conversation #${conversation}`),
   ].join("\n");
 }
 
@@ -192,7 +190,7 @@ const forkTool = (git: Git) => {
   const Fork = defineTool({
     name: "fork",
     description:
-      "Start one child task immediately in its own git worktree and conversation. You do not wait for it. Call fork once per child; calling it several times forks several children. When your run answers, a fresh successor starts once all its children settle, with their conversation ids. It queries them through ask. A child does not fork.",
+      "Start one child task immediately in its own git worktree and conversation. You do not wait for it. Call fork once per child; calling it several times forks several children. When your run answers, a fresh successor starts once all its children settle, with each child's branch and conversation. It queries them through ask. A child does not fork.",
     parameters: Type.Object({
       name: Type.String({
         pattern: CHILD_NAME.source,

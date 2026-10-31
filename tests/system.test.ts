@@ -361,7 +361,7 @@ describe("an interruption", () => {
     });
     const transcript = await entries(harness, await conversationOf(harness, next.id));
     expect(JSON.stringify(transcript)).toContain(
-      `task #${child.id}: conversation #${await conversationOf(harness, child.id)}`,
+      `agent/a: conversation #${await conversationOf(harness, child.id)}`,
     );
   });
 
