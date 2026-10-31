@@ -2,9 +2,14 @@
 // spent — tokens, cache hits, cost — against the model's context window, with the model on the right.
 
 import { homedir } from "node:os";
-import type { ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
+import type { Usage } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
-import type { ConversationView, LiveState, UsageState } from "@earendil-works/pi-durable";
+import type {
+  AgentState,
+  ConversationView,
+  LiveState,
+  UsageState,
+} from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { style } from "./theme.ts";
 
@@ -14,10 +19,6 @@ export type Stats = {
   readonly branch?: string;
   /** The context window of the model the conversation runs. */
   readonly contextWindow: number;
-  /** That model's id: what the right of the stats line names. */
-  readonly model: string;
-  /** The level the next request runs at. */
-  readonly thinkingLevel: ModelThinkingLevel;
 };
 
 /** Compact token counts: 812, 6.4k, 21k, 1.3M. */
@@ -128,12 +129,14 @@ export class Footer implements Component {
 
   /** Draw one transcript: where it runs, what it has spent, and whether it streams. */
   watch(view: ConversationView, stats: Stats): void {
+    const agent = view.docs["pi.agent"] as AgentState | undefined;
     this.#view = view;
-    this.#cwd = (view.docs["pi.agent"] as { readonly cwd?: string } | undefined)?.cwd ?? "";
+    this.#cwd = agent?.cwd ?? "";
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
-    this.#model = stats.model;
-    this.#thinking = stats.thinkingLevel === "off" ? "thinking off" : stats.thinkingLevel;
+    this.#model = agent?.model?.modelId ?? "";
+    const level = agent?.thinkingLevel ?? "off";
+    this.#thinking = level === "off" ? "thinking off" : level;
   }
 
   render(width: number): string[] {

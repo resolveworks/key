@@ -247,7 +247,7 @@ export class Host {
     }, context);
   }
 
-  /** What a view cannot say: the branch, the context window, the model and its level. */
+  /** What a view cannot say: the branch and the context window. */
   async stats(view: ConversationView): Promise<Stats> {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
     const ref = agent?.model;
@@ -257,8 +257,6 @@ export class Host {
     return {
       ...(branch === undefined ? {} : { branch }),
       contextWindow: model?.contextWindow ?? 0,
-      model: ref.modelId,
-      thinkingLevel: agent?.thinkingLevel ?? "off",
     };
   }
 
