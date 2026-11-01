@@ -1,4 +1,10 @@
-import { type AssistantMessage, contentText, Type } from "@earendil-works/pi-ai";
+import {
+  type AssistantMessage,
+  clampThinkingLevel,
+  contentText,
+  type Models,
+  Type,
+} from "@earendil-works/pi-ai";
 import {
   AgentDoc,
   type ConversationId,
@@ -19,6 +25,8 @@ import {
   type Tx,
 } from "@earendil-works/pi-durable";
 import type { Git } from "./git.ts";
+import { ModelDefaultsDoc } from "./models.ts";
+import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
 import { branchFor, CHILD_NAME, ensureWorktree } from "./worktree.ts";
 
 /** A fork or the successor of a run: a task in a fresh conversation. */
@@ -186,7 +194,7 @@ const ForkCreation = defineDoc<{ taskId?: TaskId<string> }>({
   checkpointWhen: () => false,
 });
 
-const forkTool = (git: Git) => {
+const forkTool = (git: Git, models: () => Models) => {
   const Fork = defineTool({
     name: "fork",
     description:
@@ -210,8 +218,19 @@ const forkTool = (git: Git) => {
         const conversation = await tx.createConversation({
           ownership: { kind: "task", taskId: task },
         });
+        // The fork starts on the child default, clamped to it; a successor keeps the agent copy
+        // its creation took of the conversation it continues.
+        const child = (await tx.doc(ModelDefaultsDoc)).child;
+        if (child === undefined)
+          throw new Error("fork: no child model default: set one with /model");
+        const model = models().getModel(child.provider, child.modelId);
+        if (model === undefined)
+          throw new Error(`fork: unknown model ${child.provider}/${child.modelId}`);
+        const level = (await tx.doc(ThinkingDefaultsDoc)).child ?? DEFAULT_THINKING_LEVEL;
         await configure(tx, conversation.id, {
           cwd: worktree.path,
+          model: child,
+          thinkingLevel: clampThinkingLevel(model, level),
           tools: { remove: [Fork, Ask] },
         });
         creation.taskId = task;
@@ -330,8 +349,8 @@ const Ask = defineTool({
 });
 
 /** The host's system: direct conversation runs, with tasks only at cascade boundaries. */
-export const keySystem = (git: Git) => {
-  const Fork = forkTool(git);
+export const keySystem = (git: Git, models: () => Models) => {
+  const Fork = forkTool(git, models);
   return {
     extension: defineExtension({
       name: "key",

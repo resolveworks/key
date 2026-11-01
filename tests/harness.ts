@@ -23,14 +23,12 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
 import { Fetch } from "../src/fetch.ts";
+import { ModelDefaultsDoc } from "../src/models.ts";
 import { Search } from "../src/search.ts";
-import { type KeyTaskInput, keySystem } from "../src/system.ts";
+import { KeyTask, type KeyTaskInput, keySystem } from "../src/system.ts";
 import { FakeEnv, fakeGit } from "./git.ts";
 
 const context = BACKGROUND_CONTEXT;
-
-/** The key of the fake git: one definition of its task, installed by every setup here. */
-const key = keySystem(fakeGit);
 
 /** The faux provider's default model, the one every conversation here runs. */
 export const MODEL = { provider: "faux", modelId: "faux-1" } as const;
@@ -49,7 +47,7 @@ export function keySetup(): KeySetup {
   models.setProvider(faux.provider);
   const registry = createRegistry();
   registry.install(CodingTools);
-  registry.install(key.extension);
+  registry.install(keySystem(fakeGit, () => models).extension);
   registry.install(Search);
   registry.install(Fetch);
   registry.install(Agents);
@@ -57,15 +55,15 @@ export function keySetup(): KeySetup {
 }
 
 /** The key.run of the fake git: the kind fork and successor records use. */
-export const KeyTask = key.task;
+export { KeyTask };
 
 /** Open one host process's Harness over `storage`; closing it and opening another on the same setup is a restart. */
-export function openKey(
+export async function openKey(
   storage: Storage,
   setup: KeySetup,
   env: FakeEnv = new FakeEnv(),
 ): Promise<Harness> {
-  return Harness.open(
+  const harness = await Harness.open(
     storage,
     {
       models: setup.models,
@@ -75,6 +73,11 @@ export function openKey(
     },
     context,
   );
+  // Every cascade child runs the faux model, as a host whose defaults are set does.
+  await harness.commit(async (tx) => {
+    (await tx.doc(ModelDefaultsDoc)).child = { ...MODEL };
+  }, context);
+  return harness;
 }
 
 export type KeyRecord = TaskRecord<KeyTaskInput, unknown, string>;

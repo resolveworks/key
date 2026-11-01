@@ -86,10 +86,9 @@ describe("host", () => {
     host = new Host({
       models: () => models,
       storage: () => new MemoryStorage(),
-      extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
+      extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
-      cacheDirs: [],
     });
     await host.open();
     await host.setModelDefault("conversation", {
@@ -244,10 +243,11 @@ describe("host", () => {
     expect((await statsOf(idOf(listed, "task for a"))).agent?.model?.modelId).toBe(
       "deepseek-flash",
     );
-    expect((await statsOf(idOf(listed, heir))).agent?.model?.modelId).toBe("deepseek-flash");
+    // The fork starts on the child default; the successor continues on the conversation's.
+    expect((await statsOf(idOf(listed, heir))).agent?.model?.modelId).toBe("deepseek-chat");
     expect((await statsOf(idOf(listed, "kick off"))).agent?.thinkingLevel).toBe("low");
     expect((await statsOf(idOf(listed, "task for a"))).agent?.thinkingLevel).toBe("minimal");
-    expect((await statsOf(idOf(listed, heir))).agent?.thinkingLevel).toBe("minimal");
+    expect((await statsOf(idOf(listed, heir))).agent?.thinkingLevel).toBe("low");
   });
 
   test("the thinking defaults are clamped to each conversation's model", async () => {
@@ -273,10 +273,9 @@ describe("host", () => {
     const local = new Host({
       models: () => models,
       storage: () => new MemoryStorage(),
-      extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
+      extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
-      cacheDirs: [],
     });
     await local.open();
     const settings = (await (await local.app.request("/api/models")).json()) as {
