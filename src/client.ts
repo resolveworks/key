@@ -548,9 +548,10 @@ export async function open(base: string): Promise<void> {
       return { consume: true };
     }
     // Ctrl+l covers the screen with the list, minus `/list`'s spend: nothing was typed, so the
-    // covered view keeps its draft.
+    // covered view keeps its draft. Pressed again, it puts that view back.
     if (matchesKey(data, "ctrl+l")) {
-      showList();
+      if (mode.kind === "list") swap(mode.back);
+      else showList();
       return { consume: true };
     }
     // In the list the home row steps it: n and e one line, y and o one cascade block — the plain
