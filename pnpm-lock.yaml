@@ -17,6 +17,9 @@ importers:
       '@earendil-works/pi-durable':
         specifier: link:../pi/packages/durable
         version: link:../pi/packages/durable
+      '@earendil-works/pi-env':
+        specifier: link:../pi/packages/env
+        version: link:../pi/packages/env
       '@earendil-works/pi-tui':
         specifier: 1.4.0
         version: 1.4.0
