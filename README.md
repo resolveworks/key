@@ -1,43 +1,72 @@
 # Key
 
-Key is my personal harness for coding agents: a durable host with clients for
-starting, steering, and observing work. It is a serious playground—something
-that evolves with me as I learn how I want to direct agents.
+Key is my personal harness for coding agents: a durable host and a terminal
+client for starting, steering, and observing work. It is a serious playground,
+built to evolve with me as I learn how I want to direct agents.
 
-## Information flows forward
+## The idea
 
-Work happens in conversations. A conversation can `fork` named children, each
-starting immediately in a fresh context and its own git worktree. The forking
-run does not wait for them and never receives their results through a return
-value. There is no call/return.
+Key organizes work as cascades of fresh contexts. A conversation can branch
+into independent pieces of work, each running in its own git worktree. When the
+conversation finishes, a fresh successor takes over, waits for those branches
+to settle, and decides what happens next. The cascade continues for as long as
+it keeps branching.
 
-When a run that forked children finishes, a fresh successor takes over. It
-waits for those children to settle, receives their branch names and
-conversation ids, and may fork again. This continues until a run forks nothing.
+Information flows forward rather than accumulating in one ever-growing
+conversation. A successor starts with references to the work before it, not a
+copy of every transcript.
 
-The resulting cascade is a chain of fresh contexts with branches of work coming
-off each step. Information enters new contexts instead of accumulating in one
-ever-growing conversation.
+The past remains available without becoming baggage. Earlier conversations
+stay frozen and can be questioned when their knowledge is needed. Their answers
+inform the present without rewriting or extending the past.
 
-## Questioning the past
+These are two sides of the same idea: fresh contexts carry work forward, and
+the past remains something they can consult.
 
-Fresh contexts do not make the past inaccessible. Every context can use `ask`
-to question a settled conversation that came before it.
+## Host and clients
 
-`ask` reads that conversation's own frozen context and answers without
-appending to it. A successor can therefore query its predecessor and the
-children it joins, asking one question or many, without carrying their entire
-transcripts forward.
-
-These are two sides of the same idea: information falls forward through fresh
-contexts, and every context can question the past.
-
-## One host, many clients
-
-The host owns the durable sessions and the work. Clients are interchangeable
-ways into it. The terminal client is the one I use now; the same architecture
-leaves room for an Android client and automated clients that observe work or
-propose new work.
+The host owns durable sessions and the work running through them. Clients are
+ways into that host, not owners of the work themselves. The terminal is the
+client I use now; the same architecture leaves room for mobile and automated
+clients, including clients that propose new work.
 
 The implementation will keep changing. The direction is a harness that remains
 mine to optimize and direct.
+
+## Usage
+
+Key needs Node, pnpm, bubblewrap, and a built checkout of
+[pi](../pi) beside this repository.
+
+```sh
+pnpm install
+pnpm build:env
+pnpm serve
+```
+
+In another terminal, connect the client:
+
+```sh
+pnpm client
+```
+
+Use `/login` to configure a model provider and `/model` to choose models for
+conversations and their children. `/new` starts work in a project directory;
+`/list` browses existing conversations. `/thinking` controls thinking levels,
+and `ctrl+c` interrupts the current run.
+
+The host keeps its state in `~/.key`. Conversations run in bubblewrap
+sandboxes, with their project worktrees writable.
+
+## Development
+
+```sh
+pnpm check
+pnpm test
+```
+
+Behavior tests live under `tests/`. Git hooks live in `.githooks`:
+
+```sh
+git config core.hooksPath .githooks
+```
