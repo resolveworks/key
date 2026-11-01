@@ -89,6 +89,7 @@ describe("host", () => {
       extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
+      cacheDirs: [],
     });
     await host.open();
     await host.setModelDefault("conversation", {
@@ -275,6 +276,7 @@ describe("host", () => {
       extensions: [CodingTools, keySystem(fakeGit).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
+      cacheDirs: [],
     });
     await local.open();
     const settings = (await (await local.app.request("/api/models")).json()) as {

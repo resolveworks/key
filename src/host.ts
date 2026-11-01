@@ -39,6 +39,7 @@ import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
+import { loadHostConfig } from "./config.ts";
 import type { Target } from "./defaults.ts";
 import { Fetch } from "./fetch.ts";
 import type { Stats } from "./footer.ts";
@@ -70,6 +71,8 @@ export type HostOptions = {
   readonly port: number;
   /** The interface the server listens on: `KEY_BIND`, loopback by default. */
   readonly hostname: string;
+  /** Writable cache dirs the sandboxes bind over the read-only host. */
+  readonly cacheDirs: readonly string[];
 };
 
 const production = (): HostOptions => {
@@ -85,6 +88,7 @@ const production = (): HostOptions => {
     extensions: [CodingTools, KeySystem, Search, Fetch, Agents],
     port: PORT,
     hostname: process.env.KEY_BIND ?? "127.0.0.1",
+    cacheDirs: loadHostConfig().cacheDirs,
   };
 };
 
@@ -327,7 +331,7 @@ export class Host {
   #sandbox(conversationId: ConversationId, cwd: string): Sandbox {
     let sandbox = this.#sandboxes.get(conversationId);
     if (sandbox === undefined) {
-      sandbox = openSandbox(conversationId, cwd, localDaemon());
+      sandbox = openSandbox(conversationId, cwd, localDaemon(), this.#options.cacheDirs);
       this.#sandboxes.set(conversationId, sandbox);
     }
     return sandbox;
