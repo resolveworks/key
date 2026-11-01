@@ -16,14 +16,21 @@ The implementation may change. The idea below does not.
 
 ## Usage
 
-Needs Node 26 and pnpm. Durable and pi-ai are linked from `../pi/packages`;
-build that checkout before running Key.
+Needs Node 26, pnpm, and bubblewrap. Durable and pi-env are linked from
+`../pi/packages`; build that checkout before running Key. `pnpm build:env`
+builds pi-env and its daemon and puts the daemon where the host finds it.
 
 ```
 pnpm install
+pnpm build:env
 pnpm serve      # own the session and serve the graph on 127.0.0.1:7317
 pnpm client     # chat with a running host
 ```
+
+Every conversation runs under bubblewrap: the host filesystem is read-only, its
+home is a fresh private tmpfs, its worktree (and git common dir) is writable,
+and the pnpm, uv and cargo caches are shared. Network is available; commits are
+unsigned because `~/.ssh` stays hidden.
 
 Configure providers from the client with `/login`: it lists pi's providers and
 their account or API-key methods, asks what the provider asks, and stores the

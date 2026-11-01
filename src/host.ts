@@ -30,9 +30,9 @@ import {
   type TaskGraph,
   type TaskRecord,
 } from "@earendil-works/pi-durable";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { localDaemon } from "@earendil-works/pi-env";
 import { type AutocompleteSuggestions, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { type ServerType, serve } from "@hono/node-server";
 import type { Hono } from "hono";
@@ -45,6 +45,7 @@ import type { Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { LoginSession, type ProviderInfo } from "./login.ts";
 import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.ts";
+import { openSandbox, type Sandbox } from "./sandbox.ts";
 import { Search } from "./search.ts";
 import { SeenDoc } from "./seen.ts";
 import { KeyTask, type KeyTaskInput, keySystem } from "./system.ts";
@@ -113,6 +114,7 @@ export class Host {
   /** Conversations a client currently has open, by id: a stop that lands under a watch is seen. */
   #watchers = new Map<number, number>();
   #login?: LoginSession;
+  #sandboxes = new Map<ConversationId, Sandbox>();
   #options: HostOptions;
 
   constructor(options: HostOptions = production()) {
@@ -293,7 +295,7 @@ export class Host {
           // A conversation without a root is a bug to surface, not to paper over.
           if (target.cwd === undefined)
             throw new Error(`conversation ${target.conversationId} has no cwd`);
-          return new NodeExecutionEnv({ cwd: target.cwd });
+          return this.#sandbox(target.conversationId, target.cwd).env;
         },
         // A task-owned conversation starts on the child default, not on a copy of its owner.
         conversationCreated: async (tx, conversation) => {
@@ -319,6 +321,16 @@ export class Host {
       this.#graph = call.value;
       await this.#publish();
     });
+  }
+
+  /** One conversation's sandbox, created lazily and reused for every call it makes. */
+  #sandbox(conversationId: ConversationId, cwd: string): Sandbox {
+    let sandbox = this.#sandboxes.get(conversationId);
+    if (sandbox === undefined) {
+      sandbox = openSandbox(conversationId, cwd, localDaemon());
+      this.#sandboxes.set(conversationId, sandbox);
+    }
+    return sandbox;
   }
 
   /** One catalog model, or the loud failure of a default that names none. */
@@ -548,6 +560,8 @@ export class Host {
     this.#login?.abort();
     const closed = this.#server?.close() ?? Promise.resolve();
     await this.#harness.close(context);
+    for (const sandbox of this.#sandboxes.values()) sandbox.connection.close();
+    this.#sandboxes.clear();
     await closed;
   }
 }
