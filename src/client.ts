@@ -175,7 +175,7 @@ export async function open(base: string): Promise<void> {
     watching = {
       stop: follow<Frame>(url, (frame) => {
         view = frame.view;
-        stats = frame.stats;
+        stats = frame.stats ?? stats;
         notice = undefined;
         render();
       }),
@@ -699,7 +699,7 @@ export function stepList(
   return summaries[kickoffs[(block + direction + kickoffs.length) % kickoffs.length]].id;
 }
 
-type Frame = { readonly view: ConversationView; readonly stats: Stats };
+type Frame = { readonly view: ConversationView; readonly stats?: Stats };
 
 /** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts; `pnpm
  * client` runs EventSource behind --experimental-eventsource. */

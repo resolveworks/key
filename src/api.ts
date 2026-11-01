@@ -1,7 +1,7 @@
 // hono routes over the host: TypeBox-validated bodies, SSE for the two streams.
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { ConversationView } from "@earendil-works/pi-durable";
+import type { AgentState, ConversationView } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
@@ -98,14 +98,24 @@ export function api(host: Host) {
         const watch = await host.watch(id);
         if (watch === undefined) return c.text("no such conversation", 404);
         return streamSSE(c, async (stream) => {
-          const send = async (view: ConversationView) =>
-            stream.writeSSE({ data: JSON.stringify({ view, stats: await host.stats(view) }) });
+          stream.onAbort(() => void watch.stop());
+          // The stats answer what only the host knows, and change only when the place or model
+          // does: send them then, never once per transcript frame.
+          let statsFor: string | undefined;
+          const send = async (view: ConversationView) => {
+            const agent = view.docs["pi.agent"] as AgentState | undefined;
+            const key = JSON.stringify([agent?.cwd, agent?.model]);
+            const stats = key === statsFor ? undefined : await host.stats(view);
+            statsFor = key;
+            await stream.writeSSE({ data: JSON.stringify({ view, stats }) });
+          };
           await send(watch.value);
+          // The looker may leave before the first frame lands: the abort already stopped the watch.
+          if (stream.aborted) return;
           watch.start(async (call) => {
             if (call.kind === "value") await send(call.value);
           });
-          stream.onAbort(() => void watch.stop());
-          while (!stream.aborted) await stream.sleep(1000);
+          while (!stream.aborted) await stream.sleep(1000); // keepalive, and the exit on disconnect
         });
       })
       .post(

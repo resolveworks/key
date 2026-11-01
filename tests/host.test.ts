@@ -24,7 +24,7 @@ import { fakeGit, REPO } from "./git.ts";
 import { requestText, route } from "./harness.ts";
 
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
-type Transcript = { readonly view: ConversationView; readonly stats: Stats };
+type Transcript = { readonly view: ConversationView; readonly stats?: Stats };
 
 /** A host's SSE stream, read frame by frame with data lines joined the way the client joins them. */
 class Frames {
@@ -445,6 +445,31 @@ describe("host", () => {
     expect(retired.find((item) => item.id === id)?.attention).toBe(false);
   });
 
+  test("a stop that lands while its transcript is open is already seen", async () => {
+    const answer = held("hello");
+    faux.setResponses([answer.step]);
+    const list = await openList();
+    const id = await runId("say hello");
+    await answer.asked;
+
+    // The human is looking when the run ends, so no flag ever lands.
+    const transcript = new Frames(
+      (await app.request(`/api/conversations/${id}`)).body as ReadableStream<Uint8Array>,
+    );
+    await transcript.until<Transcript>(({ view }) => view.conversation.id === id);
+    answer.release();
+    const stopped = await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.id === id && !item.streaming),
+    );
+    await transcript.close();
+    await list.close();
+
+    expect(stopped.find((item) => item.id === id)).toMatchObject({
+      streaming: false,
+      attention: false,
+    });
+  });
+
   test("a continued conversation flags again when its new run ends", async () => {
     const list = await openList();
     const id = await startRun("say hello");
@@ -574,9 +599,10 @@ describe("host", () => {
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     const frames = new Frames(response.body as ReadableStream<Uint8Array>);
 
-    // The first frame is a whole view, and later frames carry each revision the run commits:
+    // The opening frame carries the stats; later frames carry each revision the run commits:
     // the verdict is the completed one, not the user entry the run starts from.
-    const { view: snapshot, stats } = await frames.until<Transcript>(
+    const { stats } = await frames.until<Transcript>((frame) => frame.stats !== undefined);
+    const { view: snapshot } = await frames.until<Transcript>(
       ({ view }: Transcript) =>
         view.conversation.id === id && view.entries.some((entry) => entry.kind === "pi.assistant"),
     );
@@ -591,7 +617,7 @@ describe("host", () => {
       model: { modelId: "deepseek-flash" },
       thinkingLevel: "high",
     });
-    expect(stats.contextWindow).toBeGreaterThan(0);
+    expect(stats?.contextWindow).toBeGreaterThan(0);
     await frames.close();
   });
 

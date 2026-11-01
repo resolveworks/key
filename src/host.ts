@@ -1,7 +1,7 @@
 // The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
-import { type Stats as FsStats, mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   type AuthType,
@@ -110,6 +110,8 @@ export class Host {
   #port!: number;
   #app?: Hono;
   #listeners = new Set<(summaries: readonly Summary[]) => void>();
+  /** Conversations a client currently has open, by id: a stop that lands under a watch is seen. */
+  #watchers = new Map<number, number>();
   #login?: LoginSession;
   #options: HostOptions;
 
@@ -138,12 +140,20 @@ export class Host {
   }
 
   /** One conversation's live view, when the conversation exists. Attaching one is a human
-   * looking: the conversation's stop counts as seen, its mark retired. */
+   * looking: the conversation's stop counts as seen, its mark retired. Stays counted while the
+   * view is open, so a stop that lands meanwhile is seen too. */
   async watch(id: number) {
     const conversation = await this.#harness.conversation(id as ConversationId, context);
     if (conversation === undefined) return undefined;
     await this.#see(id);
-    return conversation.watch(context);
+    const watch = await conversation.watch(context);
+    this.#watchers.set(id, (this.#watchers.get(id) ?? 0) + 1);
+    void watch.closed.then(() => {
+      const remaining = (this.#watchers.get(id) ?? 1) - 1;
+      if (remaining === 0) this.#watchers.delete(id);
+      else this.#watchers.set(id, remaining);
+    });
+    return watch;
   }
 
   /** The models of configured providers, and the two defaults `/model` edits. */
@@ -449,10 +459,16 @@ export class Host {
     const seen = new Set((await this.#stored(SeenDoc)).seen);
     /** A mark whose stop ended: the cascade moved on, so the next stop flags anew. */
     const retired = new Set<number>();
+    /** A stop that landed while someone had its transcript open: not a call for attention. */
+    const attended = new Set<number>();
     const summaries = forest(conversations).map(({ id, depth }) => {
       const live = states.get(id);
       const stoppedHere = stopped(id, live, owners.get(id));
       if (!stoppedHere && seen.has(id)) retired.add(id);
+      if (stoppedHere && this.#watchers.has(id) && !seen.has(id)) {
+        seen.add(id);
+        attended.add(id);
+      }
       return {
         id,
         label: prompts.get(id)?.split("\n", 1)[0]?.trim() ?? "",
@@ -462,12 +478,13 @@ export class Host {
         attention: stoppedHere && !seen.has(id),
       };
     });
-    // Retire the marks whose stops ended, in the pass that saw them end: the doc keeps only
-    // the stops that stand.
-    if (retired.size > 0) {
+    // Retire the marks whose stops ended, and keep the ones a looker just witnessed: the doc
+    // holds only the stops that stand.
+    if (retired.size > 0 || attended.size > 0) {
       await this.#harness.commit(async (tx) => {
         const doc = await tx.doc(SeenDoc);
         doc.seen = doc.seen.filter((id) => !retired.has(id));
+        for (const id of attended) if (!doc.seen.includes(id)) doc.seen.push(id);
       }, context);
     }
     return summaries;
@@ -570,48 +587,11 @@ function forest(conversations: readonly ContextConversation[]): readonly Placed[
 }
 
 /** A working directory's branch, when it is a repository: the footer shows it beside the path.
- * Read from the filesystem — stats flow every ~100ms, so no forking git per frame. */
-export async function branchOf(cwd: string | undefined): Promise<string | undefined> {
+ * Git answers — symbols, worktrees, reftables, and the environment are its business, not ours. */
+async function branchOf(cwd: string | undefined): Promise<string | undefined> {
   if (cwd === undefined) return undefined;
-
-  const headPath = await findHead(cwd);
-  if (headPath === undefined) return undefined;
-
-  let head: string;
-  try {
-    head = readFileSync(headPath, "utf8").trim();
-  } catch {
-    return undefined;
-  }
-
-  // A reftable-backed repo keeps the real HEAD inside its tables; only there, ask git.
-  if (head === "ref: refs/heads/.invalid")
-    return git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd)
-      .then((stdout) => stdout.trim())
-      .catch(() => "")
-      .then((branch) => (branch === "" ? undefined : branch));
-
-  return head.startsWith("ref: refs/heads/") ? head.slice("ref: refs/heads/".length) : undefined;
-}
-
-/** Walk up from a directory to its repository's HEAD file — a `.git` dir's, or the gitdir a
- * linked worktree's `.git` file points at. undefined past the filesystem root. */
-function findHead(cwd: string): string | undefined {
-  let dir = cwd;
-  for (;;) {
-    const gitPath = join(dir, ".git");
-    let stat: FsStats;
-    try {
-      stat = statSync(gitPath);
-    } catch {
-      const parent = dirname(dir);
-      if (parent === dir) return undefined;
-      dir = parent;
-      continue;
-    }
-    if (stat.isDirectory()) return join(gitPath, "HEAD");
-    // A linked worktree's `.git` is a file: `gitdir: <path>`
-    const gitdir = readFileSync(gitPath, "utf8").trim().slice("gitdir: ".length);
-    return join(resolve(dir, gitdir), "HEAD");
-  }
+  const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd)
+    .then((stdout) => stdout.trim())
+    .catch(() => "");
+  return branch === "" ? undefined : branch;
 }
