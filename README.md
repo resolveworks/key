@@ -27,10 +27,9 @@ pnpm serve      # own the session and serve the graph on 127.0.0.1:7317
 pnpm client     # chat with a running host
 ```
 
-Every conversation runs under bubblewrap: the host filesystem is read-only, its
-home is a fresh private tmpfs, its worktree (and git common dir) is writable,
-and the pnpm, uv and cargo caches are shared. Network is available; commits are
-unsigned because `~/.ssh` stays hidden.
+Every conversation runs under bubblewrap: the host filesystem is read-only, the
+worktree (and git common dir) and the pnpm, uv and cargo caches are writable,
+and the host home is readable. Network is available.
 
 Configure providers from the client with `/login`: it lists pi's providers and
 their account or API-key methods, asks what the provider asks, and stores the

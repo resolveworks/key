@@ -1,4 +1,4 @@
-// One real bwrap sandbox per test: its writable surface is the worktree, the caches and /tmp; home is private.
+// One real bwrap sandbox per test: its writable surface is the worktree, the caches and /tmp; home is read-only.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -47,12 +47,12 @@ function indexOf(command: readonly string[], ...tokens: string[]): number {
 }
 
 describe("sandboxCommand", () => {
-  test("mounts the private home before everything home-relative", () => {
+  test("binds the writable paths over the read-only host and changes directory last", () => {
     const cwd = atHome(".key-sandbox-order-");
     const command = sandboxCommand(cwd, daemon);
-    const tmpfs = indexOf(command, "--tmpfs", homedir());
+    const root = indexOf(command, "--ro-bind", "/", "/");
 
-    expect(tmpfs).toBeGreaterThanOrEqual(0);
+    expect(root).toBeGreaterThanOrEqual(0);
     for (const path of [
       cwd,
       join(homedir(), ".local/share/pnpm"),
@@ -60,25 +60,17 @@ describe("sandboxCommand", () => {
       join(homedir(), ".local/share/uv"),
       join(homedir(), ".cargo"),
     ]) {
-      expect(indexOf(command, "--bind", path, path)).toBeGreaterThan(tmpfs);
+      expect(indexOf(command, "--bind", path, path)).toBeGreaterThan(root);
     }
-  });
-
-  test("binds the daemon after the home and changes directory last", () => {
-    const cwd = temp("key-sandbox-command-");
-    const command = sandboxCommand(cwd, daemon);
-    const tmpfs = indexOf(command, "--tmpfs", homedir());
-    const daemonBind = indexOf(command, "--ro-bind", daemon, daemon);
-    const chdir = indexOf(command, "--chdir", cwd);
-
-    expect(daemonBind).toBeGreaterThan(tmpfs);
-    expect(chdir).toBeGreaterThan(daemonBind);
-    expect(chdir).toBeGreaterThan(indexOf(command, "--bind", "/tmp", "/tmp"));
+    expect(indexOf(command, "--chdir", cwd)).toBeGreaterThan(
+      indexOf(command, "--bind", "/tmp", "/tmp"),
+    );
+    expect(command).not.toContain("--tmpfs");
   });
 });
 
 describe("a sandbox", () => {
-  test("writes through the shell and filesystem reach the host, while home stays hidden", async () => {
+  test("writes reach the host and the host home is readable but not writable", async () => {
     const cwd = temp("key-sandbox-write-");
     const marker = atHome(".key-sandbox-marker-");
     writeFileSync(join(marker, "host-only"), "host");
@@ -93,17 +85,13 @@ describe("a sandbox", () => {
       expect(written.ok).toBe(true);
       expect(readFileSync(join(cwd, "fs.txt"), "utf8")).toBe("from the daemon");
 
-      const shellSees = await env.exec(
-        ["test", "-e", join(marker, "host-only")],
-        undefined,
-        context,
-      );
-      expect(shellSees.ok).toBe(true);
-      if (shellSees.ok) expect(shellSees.value.exitCode).not.toBe(0);
+      const visible = await env.exists(join(marker, "host-only"), context);
+      expect(visible.ok).toBe(true);
+      if (visible.ok) expect(visible.value).toBe(true);
 
-      const fsSees = await env.exists(join(marker, "host-only"), context);
-      expect(fsSees.ok).toBe(true);
-      if (fsSees.ok) expect(fsSees.value).toBe(false);
+      const denied = await env.writeFile(join(marker, "new"), "no", context);
+      expect(denied.ok).toBe(false);
+      expect(existsSync(join(marker, "new"))).toBe(false);
     } finally {
       connection.close();
     }
@@ -137,6 +125,8 @@ describe("a sandbox", () => {
         stdio: ["ignore", "pipe", "pipe"],
       });
     git(["init", "--quiet"], repository);
+    git(["config", "commit.gpgsign", "false"], repository);
+    git(["config", "tag.gpgsign", "false"], repository);
     git(["config", "user.email", "sandbox@example.com"], repository);
     git(["config", "user.name", "Sandbox"], repository);
     writeFileSync(join(repository, "first"), "first\n");
@@ -144,10 +134,6 @@ describe("a sandbox", () => {
     git(["commit", "--quiet", "-m", "first"], repository);
     git(["worktree", "add", "--quiet", "-b", "sandbox", worktree, "HEAD"], repository);
 
-    const inherited = Object.fromEntries(
-      Object.entries(process.env).filter(([name]) => name.startsWith("GIT_")),
-    );
-    for (const name of Object.keys(inherited)) delete process.env[name];
     const { connection, env } = openSandbox(3 as ConversationId, worktree, daemon);
     try {
       const status = await env.exec(["git", "status", "--porcelain"], undefined, context);
@@ -165,7 +151,6 @@ describe("a sandbox", () => {
       expect(git(["log", "-1", "--format=%s"], worktree).trim()).toBe("second");
     } finally {
       connection.close();
-      Object.assign(process.env, inherited);
     }
   });
 
