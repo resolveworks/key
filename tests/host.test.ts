@@ -232,7 +232,7 @@ describe("host", () => {
     expect((await setThinking("child", "minimal")).status).toBe(202);
 
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     const kickoff = await runId("kick off");
     const heir = `successor of #${kickoff}`;
@@ -243,7 +243,7 @@ describe("host", () => {
     expect((await statsOf(idOf(listed, "task for a"))).agent?.model?.modelId).toBe(
       "deepseek-flash",
     );
-    // The fork starts on the child default; the successor continues on the conversation's.
+    // The child starts on the child default; the successor continues on the conversation's.
     expect((await statsOf(idOf(listed, heir))).agent?.model?.modelId).toBe("deepseek-chat");
     expect((await statsOf(idOf(listed, "kick off"))).agent?.thinkingLevel).toBe("low");
     expect((await statsOf(idOf(listed, "task for a"))).agent?.thinkingLevel).toBe("minimal");
@@ -256,7 +256,7 @@ describe("host", () => {
     await host.setModelDefault("child", { provider: "deepseek", modelId: "deepseek-plain" });
 
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     await run("kick off");
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
@@ -371,9 +371,9 @@ describe("host", () => {
     expect(listed[0]).toMatchObject({ id, label: "say hello" });
   });
 
-  test("a forking kickoff lists its child beneath it", async () => {
+  test("a delegating kickoff lists its child beneath it", async () => {
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     const id = await runId("kick off");
     const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
@@ -391,7 +391,7 @@ describe("host", () => {
 
   test("a settled cascade leaves attention on its final heir alone", async () => {
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     const id = await runId("kick off");
     const heir = `successor of #${id}`;
@@ -511,7 +511,7 @@ describe("host", () => {
         return turn("the second summed");
       return request.messages.at(-1)?.role === "toolResult"
         ? turn("the second heir")
-        : turn("the second forks b.", ["b"]);
+        : turn("the second delegates b.", ["b"]);
     };
     const first: FauxResponseStep = (request) =>
       requestText(request.messages).includes("Successor of conversation")
@@ -523,7 +523,7 @@ describe("host", () => {
       "the second": second,
     });
     faux.setResponses([
-      turn("the first forks a.", ["a"]),
+      turn("the first delegates a.", ["a"]),
       answer,
       answer,
       answer,
@@ -564,14 +564,14 @@ describe("host", () => {
     expect(listed[2].id).toBeGreaterThan(listed[5].id);
   });
 
-  test("a successor lists after its run's forks, with its own forks beneath it", async () => {
+  test("a successor lists after its run's children, with its own children beneath it", async () => {
     const firstAnswer = route(turn("the first heir"), { "task for a": turn("a answers") });
     const secondAnswer = route(turn("the second heir"), { "task for b": turn("b answers") });
     faux.setResponses([
-      turn("I fork a.", ["a"]),
+      turn("I delegate a.", ["a"]),
       firstAnswer,
       firstAnswer,
-      turn("the heir forks b.", ["b"]),
+      turn("the successor delegates b.", ["b"]),
       secondAnswer,
       secondAnswer,
       turn("summed"),
@@ -704,14 +704,14 @@ describe("host", () => {
     return summary.id;
   }
 
-  /** One answer: the forks it calls, then the text its turn ends with. */
-  function turn(text: string, forks: readonly string[] = []) {
+  /** One answer: the children it calls, then the text its turn ends with. */
+  function turn(text: string, children: readonly string[] = []) {
     return fauxAssistantMessage(
       [
-        ...forks.map((name) => fauxToolCall("fork", { name, prompt: `task for ${name}` })),
+        ...children.map((name) => fauxToolCall("delegate", { name, prompt: `task for ${name}` })),
         fauxText(text),
       ],
-      { stopReason: forks.length === 0 ? "stop" : "toolUse" },
+      { stopReason: children.length === 0 ? "stop" : "toolUse" },
     );
   }
 

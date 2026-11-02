@@ -16,7 +16,7 @@ const summary = (id: number, attention: boolean, depth = 0, streaming = false): 
   attention,
 });
 
-/** A forked child's conversation, as the host lists it: depth 1 under its kickoff, its cwd the
+/** A delegated child's conversation, as the host lists it: depth 1 under its kickoff, its cwd the
  * worktree its name minted — elsewhere than the checkout it was cut from. */
 const child = (id: number, name: string, attention = false): Summary => ({
   ...summary(id, attention, 1),
@@ -45,7 +45,7 @@ describe("cycle", () => {
   });
 
   test("the ring follows the tree, crossing cascade blocks whole", () => {
-    // Two cascades, newest block first: each kickoff with an attention fork beneath it.
+    // Two cascades, newest block first: each kickoff with an attention child beneath it.
     const tree = [summary(2, true), summary(5, true, 1), summary(1, true), summary(3, true, 1)];
     expect(cycle(tree, 5, 1, draft)).toBe(1); // off the top cascade into the older one
     expect(cycle(tree, 3, 1, draft)).toBe("new"); // off the oldest, onto the composer

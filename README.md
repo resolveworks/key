@@ -6,14 +6,14 @@ built to evolve with me as I learn how I want to direct agents.
 
 ## The idea
 
-Key organizes work as cascades of fresh contexts. A conversation can branch
-into independent pieces of work, each running in its own git worktree. When the
-conversation finishes, a fresh successor takes over, waits for those branches
-to settle, and decides what happens next. The cascade continues for as long as
-it keeps branching.
+Key organizes work as cascades of fresh contexts. A conversation can delegate
+independent implementation to workers or start researchers to investigate
+questions. When the conversation finishes, a fresh successor takes over, waits
+for those children to settle, receives their results, and decides what happens
+next. The cascade continues for as long as it keeps starting children.
 
 Information flows forward rather than accumulating in one ever-growing
-conversation. A successor starts with references to the work before it, not a
+conversation. A successor starts with the work and findings before it, not a
 copy of every transcript.
 
 The past remains available without becoming baggage. Earlier conversations

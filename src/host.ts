@@ -47,7 +47,12 @@ import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.t
 import { openSandbox, type Sandbox } from "./sandbox.ts";
 import { Search } from "./search.ts";
 import { SeenDoc } from "./seen.ts";
-import { KeyTask, type KeyTaskInput, keySystem } from "./system.ts";
+import {
+  CONVERSATION_INSTRUCTIONS,
+  CONVERSATION_TASK,
+  type ConversationTaskInput,
+  keySystem,
+} from "./system.ts";
 import { DEFAULT_THINKING_LEVEL, type ThinkingDefaults, ThinkingDefaultsDoc } from "./thinking.ts";
 
 /** The host's key, its git bound to the real one. */
@@ -357,6 +362,7 @@ export class Host {
           model: ref,
           cwd,
           thinkingLevel: clampThinkingLevel(this.#model(ref), level),
+          instructions: CONVERSATION_INSTRUCTIONS,
         },
       },
       context,
@@ -412,18 +418,18 @@ export class Host {
       if (node.conversations.length === 0) blocked.add(node.conversationId);
       else for (const owned of node.conversations) blocked.add(owned);
     }
-    // The runs' stored records, live or ended: each one's label, which are forks, and which
+    // The runs' stored records, live or ended: each one's label, which are children, and which
     // conversations answered into a successor.
     const labels = new Map<number, string>();
-    const forks = new Set<number>();
+    const children = new Set<number>();
     const ended = new Set<number>();
     const succeeded = new Set<number>();
     for (const run of runs) {
       labels.set(
         run.id,
-        run.input.kind === "fork" ? run.input.prompt : `successor of #${run.conversationId}`,
+        run.input.kind === "successor" ? `successor of #${run.conversationId}` : run.input.prompt,
       );
-      if (run.input.kind === "fork") forks.add(run.id);
+      if (run.input.kind !== "successor") children.add(run.id);
       else succeeded.add(run.conversationId);
       if (run.state.status === "completing" || run.state.status === "terminal") ended.add(run.id);
     }
@@ -438,10 +444,9 @@ export class Host {
       const prompt = owner === undefined ? await this.#kickoffPrompt(id) : labels.get(owner.taskId);
       if (prompt !== undefined) prompts.set(id, prompt);
     }
-    /** A conversation whose story continues elsewhere: a forking run's successor, or a fork
-     * child that has ended. Its own stopping is not the human's turn. */
+    /** A conversation whose story continues elsewhere: a successor, or a child that has ended. */
     const closed = (id: number, owner: number | undefined): boolean =>
-      succeeded.has(id) || (owner !== undefined && forks.has(owner) && ended.has(owner));
+      succeeded.has(id) || (owner !== undefined && children.has(owner) && ended.has(owner));
     /** Whether the cascade stopped here with the next move the human's: an open frontier, or a
      * task that cannot move on its own. A closed branch's failure crosses upstream as its result. */
     const stopped = (
@@ -488,7 +493,7 @@ export class Host {
     return summaries;
   }
 
-  /** The conversations and their key.run tasks, as one commit sees them: the graph holds live
+  /** The conversations and their key.conversation tasks, as one commit sees them: the graph holds live
    * tasks only, so the list reads the stored records, live or ended. */
   async #scan(): Promise<{
     readonly conversations: readonly ContextConversation[];
@@ -512,7 +517,7 @@ export class Host {
           await all((cursor) => tx.scanConversations({}, SCAN_PAGE_SIZE, cursor))
         ).map(({ id, owner }) => ({ id, owner })),
         runs: (await all((cursor) =>
-          tx.scanTasks({ kind: KeyTask.definition.name }, SCAN_PAGE_SIZE, cursor),
+          tx.scanTasks({ kind: CONVERSATION_TASK }, SCAN_PAGE_SIZE, cursor),
         )) as RunRecord[],
       };
     }, context);
@@ -552,14 +557,14 @@ export class Host {
   }
 }
 
-/** A task-owned conversation's creator edge, placing it beneath the conversation that forked it. */
+/** A task-owned conversation's creator edge, placing it beneath the conversation that started it. */
 type Creator = { readonly taskId: number; readonly conversationId: number };
 
 /** A conversation the list shows, with the task edge that names and places it. */
 type ContextConversation = { readonly id: number; readonly owner?: Creator };
 
-/** A key.run's stored record: its input names the conversation it mints. */
-type RunRecord = TaskRecord<KeyTaskInput, unknown, string>;
+/** A key.conversation's stored record: its input names the conversation it mints. */
+type RunRecord = TaskRecord<ConversationTaskInput, unknown, string>;
 
 /** A listed conversation placed for display: `depth` hops under its cascade's kickoff. */
 type Placed = ContextConversation & { depth: number };
@@ -567,7 +572,7 @@ type Placed = ContextConversation & { depth: number };
 /** The listed conversations in display order: one contiguous block per cascade — the tree rooted
  * at the ownerless kickoff conversation — the newest cascade's block first, and within a block a
  * conversation ahead of its children, siblings ascending by id, so a run's successor follows
- * its forks on their level. */
+ * its children on their level. */
 function forest(conversations: readonly ContextConversation[]): readonly Placed[] {
   const block = (root: ContextConversation, depth: number): readonly Placed[] => [
     { ...root, depth },

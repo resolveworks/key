@@ -1,4 +1,4 @@
-// A child runs in a worktree under the key home, outside the repo, on its own branch.
+// A worker runs in a worktree under the key home, outside the repo, on its own branch.
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -12,49 +12,55 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { branchFor, ensureWorktree } from "../src/worktree.ts";
+import { WORKER_INSTRUCTIONS } from "../src/system.ts";
+import { ensureWorker, workerBranch } from "../src/worker.ts";
 import { fakeGit, gitCalls, REPO, resetGit } from "./git.ts";
-import { conversationOf, KeyTask, keySetup, MODEL, openKey, requestText } from "./harness.ts";
+import {
+  CONVERSATION_TASK,
+  conversationOf,
+  keySetup,
+  MODEL,
+  openKey,
+  requestText,
+} from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
 
-describe("ensureWorktree", () => {
+describe("ensureWorker", () => {
   beforeEach(resetGit);
 
-  it("asks git for a worktree under .key, on branch agent/<name>", async () => {
-    const tree = await ensureWorktree("fix-the-bug", fakeGit, REPO);
-    expect(tree).toEqual({
+  it("creates a worktree under .key on branch worker/<name>", async () => {
+    const worker = await ensureWorker("fix-the-bug", fakeGit, REPO);
+    expect(worker).toEqual({
       path: join(homedir(), ".key", "worktrees", "fix-the-bug"),
-      branch: branchFor("fix-the-bug"),
+      branch: workerBranch("fix-the-bug"),
+      base: "base-commit",
     });
     expect(gitCalls()).toContainEqual([
       "worktree",
       "add",
       "--quiet",
       "-b",
-      "agent/fix-the-bug",
-      tree.path,
-      "HEAD",
+      "worker/fix-the-bug",
+      worker.path,
+      "base-commit",
     ]);
   });
 
-  it("a name that is not kebab-case fails loudly", async () => {
-    await expect(ensureWorktree("Not Kebab", fakeGit, REPO)).rejects.toThrow(
-      /lowercase kebab-case/,
-    );
+  it("rejects a name that is not kebab-case", async () => {
+    await expect(ensureWorker("Not Kebab", fakeGit, REPO)).rejects.toThrow(/lowercase kebab-case/);
     expect(gitCalls()).toEqual([]);
   });
 });
 
-describe("a child's run", () => {
+describe("a worker's run", () => {
   const harnesses: Harness[] = [];
 
   afterEach(async () => {
     for (const harness of harnesses.splice(0)) await harness.close(context);
   });
 
-  /** Fork one child through the model, then return its task and conversation. */
-  async function runChild(name: string): Promise<{
+  async function runWorker(name: string): Promise<{
     readonly harness: Harness;
     readonly task: TaskId;
     readonly conversation: ConversationRecord;
@@ -62,11 +68,11 @@ describe("a child's run", () => {
     const setup = keySetup();
     const answer: FauxResponseStep = (request) => {
       const text = requestText(request.messages);
-      if (text.includes("Successor of conversation") || text.includes("ask the child"))
+      if (text.includes("Successor of conversation") || text.includes("ask the worker"))
         return fauxAssistantMessage("done");
       if (request.messages.at(-1)?.role === "toolResult")
         return fauxAssistantMessage("parent done");
-      return fauxAssistantMessage(fauxToolCall("fork", { name, prompt: "ask the child" }), {
+      return fauxAssistantMessage(fauxToolCall("delegate", { name, prompt: "ask the worker" }), {
         stopReason: "toolUse",
       });
     };
@@ -74,15 +80,15 @@ describe("a child's run", () => {
     const harness = await openKey(new MemoryStorage(), setup);
     harnesses.push(harness);
     const root = await harness.root(context, { agent: { model: MODEL, cwd: REPO } });
-    const submission = await root.submit({ type: "input", content: "start the child" }, context);
+    const submission = await root.submit({ type: "input", content: "start the worker" }, context);
     expect((await submission.wait(context)).status).toBe("done");
     const task = await harness.commit(async (tx) => {
-      const records = await tx.scanTasks({ kind: KeyTask.definition.name }, 100);
+      const records = await tx.scanTasks({ kind: CONVERSATION_TASK }, 100);
       const child = records.items.find((record) => {
         const input = record.input as { readonly kind?: string; readonly name?: string };
-        return input.kind === "fork" && input.name === name;
+        return input.kind === "worker" && input.name === name;
       });
-      if (child === undefined) throw new Error(`no child ${name}`);
+      if (child === undefined) throw new Error(`no worker ${name}`);
       return child.id;
     }, context);
     await harness.waitForTask(task, context);
@@ -100,9 +106,10 @@ describe("a child's run", () => {
     return watch?.value.docs["pi.agent"] as AgentState | undefined;
   }
 
-  it("a child runs inside the worktree its name creates", async () => {
-    const { harness, conversation } = await runChild("fix-the-bug");
+  it("runs inside its worktree", async () => {
+    const { harness, conversation } = await runWorker("fix-the-bug");
     const agent = await agentState(harness, conversation.id);
     expect(agent?.cwd).toBe(join(homedir(), ".key", "worktrees", "fix-the-bug"));
+    expect(agent?.instructions).toBe(WORKER_INSTRUCTIONS);
   });
 });

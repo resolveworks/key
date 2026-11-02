@@ -54,7 +54,7 @@ async function restart(
 
 const nameOf = (record: { readonly input: unknown }) => {
   const input = record.input as { readonly kind?: string; readonly name?: string };
-  return input.kind === "fork" ? input.name : undefined;
+  return input.kind === "worker" ? input.name : undefined;
 };
 
 /** Start one prompt directly in an ownerless conversation. */
@@ -110,7 +110,7 @@ describe("restart", () => {
     ]);
   });
 
-  it("forks and their successor survive a restart exactly once", async () => {
+  it("children and their successor survive a restart exactly once", async () => {
     const setup = keySetup();
     const env = new FakeEnv();
     const storage = new ReopenableStorage();
@@ -118,15 +118,15 @@ describe("restart", () => {
     opened.push(first);
     const childA = unanswered();
     const childB = unanswered();
-    const answering = route(fauxAssistantMessage("forked"), {
+    const answering = route(fauxAssistantMessage("delegated"), {
       "do a": childA.step,
       "do b": childB.step,
     });
     setup.faux.setResponses([
       fauxAssistantMessage(
         [
-          fauxToolCall("fork", { name: "kid-a", prompt: "do a" }, { id: "call-a" }),
-          fauxToolCall("fork", { name: "kid-b", prompt: "do b" }, { id: "call-b" }),
+          fauxToolCall("delegate", { name: "kid-a", prompt: "do a" }, { id: "call-a" }),
+          fauxToolCall("delegate", { name: "kid-b", prompt: "do b" }, { id: "call-b" }),
         ],
         { stopReason: "toolUse" },
       ),

@@ -628,8 +628,8 @@ export function freshCwd(
 }
 
 /** What a conversation hands a fresh trajectory: its own directory at its cascade's head —
- * below the head the head's own, for the only directory below a head is a forked child's
- * worktree, and a `/new` from a child continues the project, not its checkout. */
+ * below the head the head's own, for a distinct directory below a head is a worker's worktree,
+ * and a `/new` from a child continues the project, not its checkout. */
 export function inheritCwd(summaries: readonly Summary[], id: number): string {
   const at = summaries.findIndex((summary) => summary.id === id);
   const open = summaries[at];

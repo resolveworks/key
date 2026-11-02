@@ -25,7 +25,7 @@ import { Agents } from "../src/agents.ts";
 import { Fetch } from "../src/fetch.ts";
 import { ModelDefaultsDoc } from "../src/models.ts";
 import { Search } from "../src/search.ts";
-import { KeyTask, type KeyTaskInput, keySystem } from "../src/system.ts";
+import { CONVERSATION_TASK, type ConversationTaskInput, keySystem } from "../src/system.ts";
 import { FakeEnv, fakeGit } from "./git.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -54,8 +54,7 @@ export function keySetup(): KeySetup {
   return { faux, models, registry, reports: [] };
 }
 
-/** The key.run of the fake git: the kind fork and successor records use. */
-export { KeyTask };
+export { CONVERSATION_TASK };
 
 /** Open one host process's Harness over `storage`; closing it and opening another on the same setup is a restart. */
 export async function openKey(
@@ -80,19 +79,19 @@ export async function openKey(
   return harness;
 }
 
-export type KeyRecord = TaskRecord<KeyTaskInput, unknown, string>;
+export type ConversationTaskRecord = TaskRecord<ConversationTaskInput, unknown, string>;
 
-/** Every key.run committed so far, in ID order: the cascade's forks and successors. */
-export async function cascade(harness: Harness): Promise<readonly KeyRecord[]> {
-  const records: KeyRecord[] = [];
+/** Every conversation task committed so far, in ID order. */
+export async function cascade(harness: Harness): Promise<readonly ConversationTaskRecord[]> {
+  const records: ConversationTaskRecord[] = [];
   await harness.commit(async (tx) => {
-    const page = await tx.scanTasks({ kind: KeyTask.definition.name }, 256);
-    records.push(...(page.items as unknown as KeyRecord[]));
+    const page = await tx.scanTasks({ kind: CONVERSATION_TASK }, 256);
+    records.push(...(page.items as unknown as ConversationTaskRecord[]));
   }, context);
   return records;
 }
 
-/** The conversation a fork or successor task owns. */
+/** The conversation a child or successor task owns. */
 export async function conversationOf(harness: Harness, task: TaskId): Promise<ConversationId> {
   let found: ConversationId | undefined;
   await vi.waitFor(

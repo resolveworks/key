@@ -8,13 +8,13 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { REPO } from "./git.ts";
+import { gitCalls, REPO, resetGit, setGitDiff } from "./git.ts";
 import {
+  type ConversationTaskRecord,
   cascade,
   conversationOf,
   entries,
   interrupt,
-  type KeyRecord,
   keySetup,
   MODEL,
   openKey,
@@ -44,28 +44,28 @@ async function fresh(): Promise<{ readonly faux: FauxProviderHandle; readonly ha
   return { faux: setup.faux, harness };
 }
 
-/** One answer: the forks it calls, then the text its turn ends with. */
-function turn(text: string, forks: readonly string[] = []) {
+/** One answer: the children it calls, then the text its turn ends with. */
+function turn(text: string, children: readonly string[] = []) {
   return fauxAssistantMessage(
     [
-      ...forks.map((name) => fauxToolCall("fork", { name, prompt: `task for ${name}` })),
+      ...children.map((name) => fauxToolCall("delegate", { name, prompt: `task for ${name}` })),
       fauxText(text),
     ],
-    { stopReason: forks.length === 0 ? "stop" : "toolUse" },
+    { stopReason: children.length === 0 ? "stop" : "toolUse" },
   );
 }
 
-const children = (records: readonly KeyRecord[]) =>
-  records.filter((record) => record.input.kind === "fork");
-const nameOf = (record: KeyRecord): string | undefined =>
-  record.input.kind === "fork" ? record.input.name : undefined;
-const onOf = (record: KeyRecord): readonly TaskId<string>[] | undefined =>
+const children = (records: readonly ConversationTaskRecord[]) =>
+  records.filter((record) => record.input.kind !== "successor");
+const nameOf = (record: ConversationTaskRecord): string | undefined =>
+  record.input.kind === "worker" ? record.input.name : undefined;
+const onOf = (record: ConversationTaskRecord): readonly TaskId<string>[] | undefined =>
   record.input.kind === "successor" ? record.input.on : undefined;
 
 function successor(
-  records: readonly KeyRecord[],
+  records: readonly ConversationTaskRecord[],
   on?: readonly TaskId<string>[],
-): KeyRecord | undefined {
+): ConversationTaskRecord | undefined {
   return records.find((record) => {
     const waitingOn = onOf(record);
     return (
@@ -104,8 +104,8 @@ async function started(harness: Harness, prompt: string): Promise<ConversationId
 async function waitForSuccessor(
   harness: Harness,
   on?: readonly TaskId<string>[],
-): Promise<KeyRecord> {
-  let next: KeyRecord | undefined;
+): Promise<ConversationTaskRecord> {
+  let next: ConversationTaskRecord | undefined;
   await vi.waitFor(
     async () => {
       next = successor(await cascade(harness), on);
@@ -113,32 +113,37 @@ async function waitForSuccessor(
     },
     { interval: 5 },
   );
-  return next as KeyRecord;
+  return next as ConversationTaskRecord;
 }
 
-describe("the fork cascade", () => {
-  it("one fork call starts one child immediately and then a fresh successor", async () => {
+describe("the child cascade", () => {
+  it("one delegation starts one worker immediately and then a fresh successor", async () => {
     const { faux, harness } = await fresh();
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
 
     await started(harness, "kick off");
     const child = children(await cascade(harness))[0];
     const next = await waitForSuccessor(harness, [child.id]);
 
-    expect(child.input).toEqual({ kind: "fork", prompt: "task for a", name: "a" });
+    expect(child.input).toEqual({
+      kind: "worker",
+      prompt: "task for a",
+      name: "a",
+      base: "base-commit",
+    });
     expect(next.input).toEqual({ kind: "successor", on: [child.id] });
     await harness.waitForTask(next.id, context);
   });
 
-  it("several fork calls start several children", async () => {
+  it("several delegations start several workers", async () => {
     const { faux, harness } = await fresh();
     const answer = route(turn("both are underway"), {
       "task for a": turn("a answers"),
       "task for b": turn("b answers"),
     });
     faux.setResponses([
-      turn("I forked a and b.", ["a", "b"]),
+      turn("I delegated a and b.", ["a", "b"]),
       answer,
       answer,
       answer,
@@ -146,11 +151,11 @@ describe("the fork cascade", () => {
     ]);
 
     await started(harness, "kick off");
-    const forked = children(await cascade(harness)).sort((left, right) => left.id - right.id);
+    const delegated = children(await cascade(harness)).sort((left, right) => left.id - right.id);
     const next = await waitForSuccessor(harness);
 
-    expect(forked.map(nameOf)).toEqual(["a", "b"]);
-    expect([...(onOf(next) ?? [])].sort()).toEqual(forked.map((record) => record.id).sort());
+    expect(delegated.map(nameOf)).toEqual(["a", "b"]);
+    expect([...(onOf(next) ?? [])].sort()).toEqual(delegated.map((record) => record.id).sort());
     await harness.waitForTask(next.id, context);
   });
 
@@ -167,20 +172,65 @@ describe("the fork cascade", () => {
 
     const transcript = await entries(harness, parent);
     expect(JSON.stringify(transcript)).not.toContain("CHILD-ANSWER-BENEATH-THE-SURFACE");
-    // The successor gets only the lineage, never the words that crossed before it.
     const successorTranscript = await entries(harness, await conversationOf(harness, next.id));
     const text = JSON.stringify(successorTranscript);
     expect(text).not.toContain("the parent ends here");
-    expect(text).not.toContain("CHILD-ANSWER-BENEATH-THE-SURFACE");
+    expect(text).toContain("CHILD-ANSWER-BENEATH-THE-SURFACE");
     expect(text).toContain(`conversation #${parent}`);
-    expect(text).toContain(`conversation #${await conversationOf(harness, child.id)}`);
+    expect(text).toContain(`conversation=\\"${await conversationOf(harness, child.id)}\\"`);
+    await harness.waitForTask(next.id, context);
+  });
+
+  it("gives a successor a worker's diff instead of its final message", async () => {
+    const { faux, harness } = await fresh();
+    resetGit();
+    setGitDiff("diff --git a/auth.ts b/auth.ts\n+fixed");
+    const answer = route(turn("a is on its way"), { "task for a": turn("worker summary") });
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
+
+    await started(harness, "kick off");
+    const next = await waitForSuccessor(harness);
+    const transcript = JSON.stringify(
+      await entries(harness, await conversationOf(harness, next.id)),
+    );
+
+    expect(transcript).toContain("diff --git a/auth.ts b/auth.ts");
+    expect(transcript).not.toContain("worker summary");
+    expect(gitCalls()).toContainEqual(["diff", "base-commit...worker/a"]);
+    await harness.waitForTask(next.id, context);
+  });
+
+  it("starts a researcher without a worktree and gives its answer to the successor", async () => {
+    const { faux, harness } = await fresh();
+    resetGit();
+    const step: FauxResponseStep = (request) => {
+      const text = requestText(request.messages);
+      if (text.includes("investigate auth")) return turn("RESEARCH-FINDINGS");
+      if (text.includes("Successor of conversation")) return turn("summed");
+      if (request.messages.at(-1)?.role === "toolResult") return turn("research started");
+      return fauxAssistantMessage(fauxToolCall("research", { prompt: "investigate auth" }), {
+        stopReason: "toolUse",
+      });
+    };
+    faux.setResponses([step, step, step, step]);
+
+    await started(harness, "kick off");
+    const child = children(await cascade(harness))[0];
+    const next = await waitForSuccessor(harness, [child.id]);
+    const transcript = JSON.stringify(
+      await entries(harness, await conversationOf(harness, next.id)),
+    );
+
+    expect(child.input).toEqual({ kind: "researcher", prompt: "investigate auth" });
+    expect(transcript).toContain("RESEARCH-FINDINGS");
+    expect(gitCalls()).toEqual([]);
     await harness.waitForTask(next.id, context);
   });
 
   it("a successor is a new conversation, not the parent resumed", async () => {
     const { faux, harness } = await fresh();
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
 
     const parent = await started(harness, "kick off");
     const next = await waitForSuccessor(harness);
@@ -192,7 +242,7 @@ describe("the fork cascade", () => {
     expect(author.filter((role) => role === "user")).toHaveLength(1);
   });
 
-  it("a run that forks nothing ends the cascade", async () => {
+  it("a run that starts no children ends the cascade", async () => {
     const { faux, harness } = await fresh();
     faux.setResponses([turn("just an answer")]);
 
@@ -201,14 +251,14 @@ describe("the fork cascade", () => {
     expect(await cascade(harness)).toEqual([]);
   });
 
-  it("a child cannot fork", async () => {
+  it("a child cannot start children", async () => {
     const { faux, harness } = await fresh();
     const childAnswer: FauxResponseStep = (request) =>
       request.messages.at(-1)?.role === "toolResult"
-        ? turn("a cannot fork")
-        : turn("a forks b", ["b"]);
+        ? turn("a cannot delegate")
+        : turn("a delegates b", ["b"]);
     const answer = route(turn("a is on its way"), { "task for a": childAnswer });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, answer, turn("summed")]);
 
     await started(harness, "kick off");
     const next = await waitForSuccessor(harness);
@@ -218,11 +268,11 @@ describe("the fork cascade", () => {
   });
 });
 
-describe("fork results", () => {
-  it("a fork call whose result is an error starts nothing", async () => {
+describe("child results", () => {
+  it("a delegation whose result is an error starts nothing", async () => {
     const { faux, harness } = await fresh();
     faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("fork", { name: "Not Kebab", prompt: "no" }), {
+      fauxAssistantMessage(fauxToolCall("delegate", { name: "Not Kebab", prompt: "no" }), {
         stopReason: "toolUse",
       }),
       turn("no"),
@@ -288,10 +338,10 @@ describe("ask", () => {
 });
 
 describe("a continuation", () => {
-  it("messages a conversation in place and joins only that run's forks", async () => {
+  it("messages a conversation in place and joins only that run's children", async () => {
     const { faux, harness } = await fresh();
     const firstAnswer = route(turn("a is on its way"), { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), firstAnswer, firstAnswer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), firstAnswer, firstAnswer, turn("summed")]);
 
     const kickoff = await started(harness, "kick off");
     await harness.waitForTask((await waitForSuccessor(harness)).id, context);
@@ -306,7 +356,7 @@ describe("a continuation", () => {
     );
     expect((await submission.wait(context)).status).toBe("done");
     const b = children(await cascade(harness)).find((record) => nameOf(record) === "b");
-    if (b === undefined) throw new Error("no fork b");
+    if (b === undefined) throw new Error("no child b");
     const next = await waitForSuccessor(harness, [b.id]);
     await harness.waitForTask(next.id, context);
 
@@ -318,16 +368,21 @@ describe("a continuation", () => {
 });
 
 describe("an interruption", () => {
-  it("does not cancel a fork that already started or create a successor", async () => {
+  it("does not cancel a child that already started or create a successor", async () => {
     const { faux, harness } = await fresh();
     const stuck = unanswered();
     const answer = route(stuck.step, { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer]);
 
     const kickoff = await run(harness, "kick off");
     await stuck.reached;
     const child = children(await cascade(harness))[0];
-    expect(child.input).toEqual({ kind: "fork", prompt: "task for a", name: "a" });
+    expect(child.input).toEqual({
+      kind: "worker",
+      prompt: "task for a",
+      name: "a",
+      base: "base-commit",
+    });
     await harness.waitForTask(child.id, context);
 
     const handle = await harness.conversation(kickoff, context);
@@ -346,7 +401,7 @@ describe("an interruption", () => {
     const { faux, harness } = await fresh();
     const stuck = unanswered();
     const answer = route(turn("a is on its way"), { "task for a": stuck.step });
-    faux.setResponses([turn("I forked a.", ["a"]), answer, answer, turn("summed")]);
+    faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
 
     await started(harness, "kick off");
     const next = await waitForSuccessor(harness);
@@ -361,15 +416,15 @@ describe("an interruption", () => {
     });
     const transcript = await entries(harness, await conversationOf(harness, next.id));
     expect(JSON.stringify(transcript)).toContain(
-      `agent/a: conversation #${await conversationOf(harness, child.id)}`,
+      `<worker name=\\"a\\" branch=\\"worker/a\\" conversation=\\"${await conversationOf(harness, child.id)}\\">`,
     );
   });
 
-  it("a message after an interrupt joins only its own forks", async () => {
+  it("a message after an interrupt joins only its own children", async () => {
     const { faux, harness } = await fresh();
     const stuck = unanswered();
     const firstAnswer = route(stuck.step, { "task for a": turn("a answers") });
-    faux.setResponses([turn("I forked a.", ["a"]), firstAnswer, firstAnswer]);
+    faux.setResponses([turn("I delegated a.", ["a"]), firstAnswer, firstAnswer]);
 
     const kickoff = await run(harness, "kick off");
     await stuck.reached;
@@ -380,7 +435,7 @@ describe("an interruption", () => {
     await harness.waitForTask(a.id, context);
 
     const secondAnswer = route(turn("wrapped up"), { "task for b": turn("b answers") });
-    faux.setResponses([turn("I forked b.", ["b"]), secondAnswer, secondAnswer, turn("summed")]);
+    faux.setResponses([turn("I delegated b.", ["b"]), secondAnswer, secondAnswer, turn("summed")]);
     const submission = await handle.submit(
       { type: "input", content: "wrap it up", whenBusy: "steer" },
       context,
@@ -388,7 +443,7 @@ describe("an interruption", () => {
     expect((await submission.wait(context)).status).toBe("done");
     const records = await cascade(harness);
     const b = children(records).find((record) => nameOf(record) === "b");
-    if (b === undefined) throw new Error("no fork b");
+    if (b === undefined) throw new Error("no child b");
     const next = await waitForSuccessor(harness, [b.id]);
     await harness.waitForTask(next.id, context);
 
