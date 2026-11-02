@@ -1,12 +1,6 @@
+import { clampThinkingLevel, contentText, type Models, Type } from "@earendil-works/pi-ai";
 import {
-  type AssistantMessage,
-  clampThinkingLevel,
-  contentText,
-  type Models,
-  Type,
-} from "@earendil-works/pi-ai";
-import {
-  AgentDoc,
+  type ConversationHandle,
   type ConversationId,
   type Cursor,
   configure,
@@ -17,10 +11,10 @@ import {
   type EntryRecord,
   GenerationTask,
   hook,
-  ProviderDoc,
   runEndTask,
   section,
   type TaskId,
+  type TaskRuntime,
   ToolResultEntry,
   type Tx,
 } from "@earendil-works/pi-durable";
@@ -88,29 +82,14 @@ export const KeyTask = defineTask<KeyTaskInput, KeyTaskState, string>({
         record.input.kind === "fork"
           ? record.input.prompt
           : await successorPrompt(record.input, record.conversationId, runtime, context);
-      const submission = await handle.submit(
-        { type: "input", content: text, requestId: `key.run:${record.id}`, whenBusy: "steer" },
-        context,
-      );
-      const settled = await submission.wait(context);
-      if (settled.status === "unanswered" && settled.reason === "aborted") {
+      const result = await answerOfRun(handle, runtime, context, `key.run:${record.id}`, text);
+      if (result === undefined) {
         await runtime.commit(
           () => ({ status: "terminal", outcome: { status: "aborted" } }),
           context,
         );
         return;
       }
-      if (settled.status !== "done" || settled.type !== "input") {
-        throw new Error(
-          `key.run ${record.id}: run ended ${settled.status}` +
-            (settled.status === "unanswered" ? `: ${settled.reason}` : ""),
-        );
-      }
-      const result = answerOf(
-        (await runtime.context(conversationId, context)).entries.find(
-          (entry) => entry.id === settled.answer,
-        ),
-      );
       await runtime.commit(
         () => ({ status: "terminal", outcome: { status: "completed", result } }),
         context,
@@ -126,6 +105,33 @@ function answerOf(entry: EntryRecord | undefined): string {
   const message = entry?.model?.[0];
   if (message?.role !== "assistant") throw new Error("answer has no assistant message");
   return contentText(message.content, "");
+}
+
+/** Submit one prompt to a conversation and return its answer; `undefined` when the run aborted. */
+async function answerOfRun<I, S extends { phase: string }, R, H extends object>(
+  handle: ConversationHandle,
+  runtime: TaskRuntime<I, S, R, H>,
+  context: Parameters<TaskRuntime<I, S, R, H>["context"]>[1],
+  key: string,
+  text: string,
+): Promise<string | undefined> {
+  const submission = await handle.submit(
+    { type: "input", content: text, requestId: key, whenBusy: "steer" },
+    context,
+  );
+  const settled = await submission.wait(context);
+  if (settled.status === "unanswered" && settled.reason === "aborted") return undefined;
+  if (settled.status !== "done" || settled.type !== "input") {
+    throw new Error(
+      `${key}: run ended ${settled.status}` +
+        (settled.status === "unanswered" ? `: ${settled.reason}` : ""),
+    );
+  }
+  return answerOf(
+    (await runtime.context(handle.id, context)).entries.find(
+      (entry) => entry.id === settled.answer,
+    ),
+  );
 }
 
 /** The successor's opening: only what it can gather from — each fork's branch, and the
@@ -245,60 +251,52 @@ const forkTool = (git: Git, models: () => Models) => {
   return Fork;
 };
 
-/** One question answered from a conversation's frozen context; the target is never appended to. */
+/** One question answered in a fork of a settled conversation; the original is never touched. */
 type AskInput = {
   readonly conversation: ConversationId;
   readonly question: string;
 };
 
-type AskResult = {
-  readonly text: string;
-  readonly usage: AssistantMessage["usage"];
-};
+type AskTaskState = { readonly phase: "ask"; readonly conversationId?: ConversationId };
 
-const AskTask = defineTask<AskInput, { readonly phase: "ask" }, AskResult>({
+const AskTask = defineTask<AskInput, AskTaskState, string>({
   name: "key.ask",
   version: 1,
   initial: () => ({ phase: "ask" }),
   phases: {
     ask: async (record, runtime, context) => {
       const { conversation, question } = record.input;
-      const agent = await runtime.snapshot(AgentDoc, conversation, context);
-      if (agent?.model === undefined)
-        throw new Error(`key.ask ${record.id}: conversation #${conversation} has no model`);
-      const ref = agent.model;
-      const model = runtime.models.getModel(ref.provider, ref.modelId);
-      if (model === undefined)
-        throw new Error(`key.ask ${record.id}: unknown model ${ref.provider}/${ref.modelId}`);
+      let forkId = record.state.checkpoint.conversationId;
+      if (forkId === undefined) {
+        await runtime.commit(async (tx) => {
+          // Replay-safe: a rerun after a crash reattaches to the fork its task owns.
+          forkId = (await tx.scanConversations({ ownerTaskId: record.id }, 1)).items[0]?.id;
+          if (forkId === undefined) {
+            const at = await tx.latestEntryId(conversation);
+            if (at === undefined)
+              throw new Error(`key.ask ${record.id}: conversation #${conversation} is empty`);
+            forkId = (
+              await tx.forkConversation(conversation, at, {
+                ownership: { kind: "task", taskId: record.id },
+              })
+            ).id;
+          }
+          return { status: "running", checkpoint: { phase: "ask", conversationId: forkId } };
+        }, context);
+      }
+      if (forkId === undefined) throw new Error(`key.ask ${record.id}: no fork conversation`);
+      const handle = await runtime.conversation(forkId, context);
+      if (handle === undefined)
+        throw new Error(`key.ask ${record.id}: fork conversation ${forkId} is gone`);
 
-      const view = await runtime.context(conversation, context);
-      const provider = await runtime.snapshot(ProviderDoc, conversation, context);
-      const answer = await runtime.models.completeSimple(
-        model,
-        {
-          messages: [
-            ...view.messages,
-            { role: "user", content: question, timestamp: runtime.now() },
-          ],
-        },
-        {
-          signal: runtime.signal,
-          telemetry: context.telemetry,
-          ...(provider === undefined ? {} : { sessionId: provider.sessionId }),
-          ...(agent.thinkingLevel === "off" ? {} : { reasoning: agent.thinkingLevel }),
-        },
-      );
-      runtime.signal.throwIfAborted();
-      if (answer.stopReason === "error")
-        throw new Error(`key.ask ${record.id}: ${answer.errorMessage ?? "model error"}`);
-
+      // The fork carries the child's agent as of its last entry: same model, same tools, same
+      // worktree — the request prefix is byte-identical, so the provider cache still hits.
+      const answer = await answerOfRun(handle, runtime, context, `key.ask:${record.id}`, question);
       await runtime.commit(
         () => ({
           status: "terminal",
-          outcome: {
-            status: "completed",
-            result: { text: contentText(answer.content, ""), usage: answer.usage },
-          },
+          outcome:
+            answer === undefined ? { status: "aborted" } : { status: "completed", result: answer },
         }),
         context,
       );
@@ -310,7 +308,7 @@ const AskTask = defineTask<AskInput, { readonly phase: "ask" }, AskResult>({
 });
 
 /** A replay of one ask tool call reattaches to the question its first attempt started. */
-const AskCall = defineDoc<{ taskId?: TaskId<AskResult> }>({
+const AskCall = defineDoc<{ taskId?: TaskId<string> }>({
   kind: "key.ask-call",
   version: 1,
   scope: "task",
@@ -321,7 +319,7 @@ const AskCall = defineDoc<{ taskId?: TaskId<AskResult> }>({
 const Ask = defineTool({
   name: "ask",
   description:
-    "Ask a settled conversation a question. The answer comes from that conversation's own frozen context; the conversation is never modified. Batch compound questions into one ask; several asks may run in parallel.",
+    "Ask a settled conversation a question. It answers in a private fork of its own context, with its tools; the conversation itself is never modified. Batch compound questions into one ask; several asks may run in parallel.",
   parameters: Type.Object({
     conversation: Type.Number({ description: "The conversation id from the framing." }),
     question: Type.String({ description: "The question to answer from that conversation." }),
@@ -341,10 +339,7 @@ const Ask = defineTool({
     const settled = await api.waitForTask(task, context);
     if (settled.state.outcome.status !== "completed")
       throw new Error(`ask failed: ${settled.state.outcome.status}`);
-    return {
-      output: [{ type: "text", text: settled.state.outcome.result.text }],
-      usage: settled.state.outcome.result.usage,
-    };
+    return { output: [{ type: "text", text: settled.state.outcome.result }] };
   },
 });
 
