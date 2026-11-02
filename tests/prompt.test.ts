@@ -17,6 +17,17 @@ describe("provider", () => {
     expect(suggestions?.items.map((item) => item.value)).toContain("list");
   });
 
+  test("/tree completes to the transcript fork picker", async () => {
+    const complete = vi.fn();
+    const suggestions = await provider(complete, freshDefault).getSuggestions(["/tr"], 0, 3, {
+      signal,
+    });
+    expect(complete).not.toHaveBeenCalled();
+    expect(suggestions?.items).toEqual([
+      { value: "tree", label: "tree", description: "fork from a transcript entry" },
+    ]);
+  });
+
   test("/new's completion is the command and the path it would run, one item", async () => {
     const complete = vi.fn();
     const suggestions = await provider(complete, freshDefault).getSuggestions(["/ne"], 0, 3, {

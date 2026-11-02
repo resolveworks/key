@@ -35,6 +35,7 @@ import {
 import { hc } from "hono/client";
 import type { api } from "./api.ts";
 import type { Target } from "./defaults.ts";
+import type { FilterList } from "./filter-list.ts";
 import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
 import type { LoginEvent, ProviderInfo } from "./login.ts";
@@ -46,6 +47,7 @@ import { selectTheme, style } from "./theme.ts";
 import type { ThinkingDefaults } from "./thinking.ts";
 import { ThinkingPicker } from "./thinking-picker.ts";
 import { transcript } from "./trajectory.ts";
+import { treePicker } from "./tree.ts";
 
 const RECONNECT_MS = 250;
 /** Where a client restart picks up: the transcript that was open, if any. */
@@ -71,7 +73,7 @@ type Mode =
   | { readonly kind: "list"; readonly back: View; selected: number | undefined }
   | { readonly kind: "overlay"; readonly back: View; readonly picker: Overlay };
 
-type Overlay = ModelPicker | ThinkingPicker | LoginPicker | LoginView;
+type Overlay = ModelPicker | ThinkingPicker | LoginPicker | LoginView | FilterList<EntryRecord>;
 
 /** A view's key in the drafts, and its place in the ring. */
 type Name = "new" | number;
@@ -358,6 +360,32 @@ export async function open(base: string): Promise<void> {
     });
   };
 
+  /** Fork from an entry in the open transcript. The picker owns the source's entries while it
+   * is open; escape returns to the source, enter opens the independent fork. */
+  const showTree = (back: View): void => {
+    if (back.kind !== "transcript" || view === undefined) {
+      notice = "open a transcript and wait for it to load before using /tree";
+      render();
+      return;
+    }
+    const entries = view.items.flatMap((item) => (item.kind === "entry" ? [item.entry] : []));
+    if (entries.length === 0) {
+      notice = "this transcript has no entries to fork from";
+      render();
+      return;
+    }
+    const source = back.id;
+    const picker = treePicker(
+      tui,
+      entries,
+      (entry) => void fork(source, entry.id),
+      () => swap(back),
+    );
+    mode = { kind: "overlay", back, picker };
+    notice = undefined;
+    render();
+  };
+
   const showLogin = async (back: View): Promise<void> =>
     overlay(back, async () => {
       const body = await call(() => client.api.providers.$get());
@@ -471,6 +499,21 @@ export async function open(base: string): Promise<void> {
     }
   };
 
+  const fork = async (source: number, at: EntryRecord["id"]): Promise<void> => {
+    try {
+      const body = await call(() =>
+        client.api.conversations[":id"].fork.$post({
+          param: { id: String(source) },
+          json: { at: Number(at) },
+        }),
+      );
+      const { conversation } = JSON.parse(body) as { conversation: number };
+      swap({ kind: "transcript", id: conversation });
+    } catch (error) {
+      fail(error);
+    }
+  };
+
   const interrupt = async (id: number): Promise<void> => {
     try {
       await call(() => client.api.conversations[":id"].abort.$post({ param: { id: String(id) } }));
@@ -498,6 +541,11 @@ export async function open(base: string): Promise<void> {
     if (text.trim() === "/login") {
       spend();
       void showLogin(place());
+      return;
+    }
+    if (text.trim() === "/tree") {
+      spend();
+      showTree(place());
       return;
     }
     const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());

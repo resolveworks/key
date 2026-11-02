@@ -20,6 +20,7 @@ export function provider(
   // The directory a bare `/new` would run, fixed where the provider was built.
   const commands = (): AutocompleteItem[] => [
     { value: "list", label: "list", description: "list past conversations" },
+    { value: "tree", label: "tree", description: "fork from a transcript entry" },
     {
       value: "model",
       label: "model",
