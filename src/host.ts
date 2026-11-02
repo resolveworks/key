@@ -512,13 +512,18 @@ export class Host {
           cursor = page.next;
         }
       };
+      const runs = (await all((cursor) =>
+        tx.scanTasks({ kind: CONVERSATION_TASK }, SCAN_PAGE_SIZE, cursor),
+      )) as RunRecord[];
+      // The list is the conversations that own a story: a cascade's kickoff and its
+      // key.conversation children. Tool-private continuations (key.ask forks) stay durable
+      // but never list.
+      const listed = new Set(runs.map(({ id }) => Number(id)));
       return {
-        conversations: (
-          await all((cursor) => tx.scanConversations({}, SCAN_PAGE_SIZE, cursor))
-        ).map(({ id, owner }) => ({ id, owner })),
-        runs: (await all((cursor) =>
-          tx.scanTasks({ kind: CONVERSATION_TASK }, SCAN_PAGE_SIZE, cursor),
-        )) as RunRecord[],
+        conversations: (await all((cursor) => tx.scanConversations({}, SCAN_PAGE_SIZE, cursor)))
+          .map(({ id, owner }) => ({ id, owner }))
+          .filter(({ owner }) => owner === undefined || listed.has(Number(owner.taskId))),
+        runs,
       };
     }, context);
   }
