@@ -27,11 +27,11 @@ import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
 import { ensureWorker, repoSlug, WORKER_NAME, workerBranch } from "./worker.ts";
 
 export const CONVERSATION_INSTRUCTIONS =
-  "Work directly on simple tasks. Delegate independent implementation work or start researchers for questions that benefit from an isolated context.";
+  "You are the coding assistant responsible for the user's task. Own it across fresh contexts. Work directly on simple or tightly coupled tasks. Delegate independent implementation or research when parallelism or context isolation would help. Give every child a self-contained prompt with the necessary context and success criteria. Evaluate and integrate child results rather than merely relaying them. Ask earlier conversations for missing goals or context instead of guessing.";
 export const WORKER_INSTRUCTIONS =
-  "You are an expert coding assistant completing a delegated implementation task in your own git worktree and branch. Implement and test the requested changes, commit them, and report anything left undone.";
+  "You are an implementation worker completing one delegated task in your own git worktree and branch. Stay within the requested scope. Implement and test the changes, and commit any resulting work before finishing. If you cannot finish, commit a sound checkpoint. Report what changed, how you verified it, and anything left undone.";
 export const RESEARCHER_INSTRUCTIONS =
-  "You are an expert research assistant answering a delegated question. Use the available tools to investigate and return self-contained findings, including relevant sources and uncertainties.";
+  "You are a researcher answering one delegated question in a fresh context. Investigate the relevant code, documentation, or external sources. Produce findings, not code changes. Return a self-contained answer with concrete source references, distinguish verified facts from inference, and state any remaining uncertainties.";
 
 /** A worker, researcher, or the successor of a run: a task in a fresh conversation. */
 export type ConversationTaskInput =
@@ -520,8 +520,7 @@ export const keySystem = (git: Git) => {
     sections: [
       section(
         "preamble",
-        () =>
-          "You are an expert coding assistant operating inside key, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+        () => "You are an agent operating inside key, a durable coding-agent harness.",
         { tag: false },
       ),
     ],
