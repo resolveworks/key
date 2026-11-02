@@ -1,7 +1,8 @@
 // Web search: Brave's index as one tool, behind BRAVE_API_KEY in ~/.key/.env.
 
-import { StringEnum, Type } from "@earendil-works/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import Type from "typebox";
 
 type SearchResult = {
   readonly title: string;

@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord";
-import { clampThinkingLevel, contentText, type Models, Type } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, contentText, type Models } from "@earendil-works/pi-ai";
 import {
   AgentDoc,
   type ContextView,
@@ -21,6 +21,7 @@ import {
   type ToolExecutionApi,
   type Tx,
 } from "@earendil-works/pi-durable";
+import Type from "typebox";
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";

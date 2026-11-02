@@ -4,11 +4,11 @@ import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type ToolDiagnostic } from "@earendil-works/pi-durable";
 import { Defuddle } from "defuddle/node";
 import { parseHTML } from "linkedom";
 import { type Browser, chromium } from "playwright-core";
+import Type from "typebox";
 
 /** The stealth Chrome server's WebSocket endpoint: `KEY_BROWSER_ENDPOINT`, else mine-browser's default. */
 const browserEndpoint = (): string => process.env.KEY_BROWSER_ENDPOINT ?? "ws://127.0.0.1:9222";

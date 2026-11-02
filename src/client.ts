@@ -5,8 +5,16 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AuthType } from "@earendil-works/pi-ai";
-import type { ConversationView } from "@earendil-works/pi-durable";
+import {
+  ConversationTranscript,
+  type ConversationView,
+  type Cursor,
+  type EntryRecord,
+  type Page,
+  type TranscriptView,
+} from "@earendil-works/pi-durable";
 import {
   type AutocompleteSuggestions,
   type Component,
@@ -82,8 +90,11 @@ export async function open(base: string): Promise<void> {
   /** Every view's unsent text; a swap exchanges them, so a draft never follows its typist. */
   const drafts = new Map<Name, string>();
   let summaries: readonly Summary[] = [];
-  let view: ConversationView | undefined;
+  let view: TranscriptView | undefined;
+  let history: ConversationTranscript | undefined;
+  let incoming: Promise<void> = Promise.resolve();
   let stats: Stats | undefined;
+  let contextTokens = 0;
   /** A failed action, shown once until the next state replaces it. */
   let notice: string | undefined;
   let starting = false;
@@ -174,15 +185,43 @@ export async function open(base: string): Promise<void> {
     watching = undefined;
     watchedId = id;
     view = undefined;
+    history = undefined;
+    incoming = Promise.resolve();
     stats = undefined;
+    contextTokens = 0;
     if (id === undefined) return;
+    const current = new ConversationTranscript(async (query, limit) => {
+      const body = await call(() =>
+        client.api.conversations[":id"].entries.$get({
+          param: { id: String(id) },
+          query: {
+            limit: String(limit),
+            ...(query.minEntryId === undefined ? {} : { minEntryId: query.minEntryId }),
+            ...(query.maxEntryId === undefined ? {} : { maxEntryId: query.maxEntryId }),
+            ...(query.order === undefined ? {} : { order: query.order }),
+          },
+        }),
+      );
+      return JSON.parse(body) as Page<EntryRecord, Cursor>;
+    });
+    history = current;
     const url = client.api.conversations[":id"].$url({ param: { id: String(id) } });
     watching = {
       stop: follow<Frame>(url, (frame) => {
-        view = frame.view;
-        stats = frame.stats ?? stats;
-        notice = undefined;
-        render();
+        incoming = incoming
+          .then(async () => {
+            if (history !== current) return;
+            view = current.merge(frame.view);
+            stats = frame.stats ?? stats;
+            contextTokens = frame.contextTokens;
+            notice = undefined;
+            render();
+            const loaded = await loadMissing(current, view);
+            if (history !== current) return;
+            view = loaded;
+            render();
+          })
+          .catch(fail);
       }),
     };
   };
@@ -222,7 +261,7 @@ export async function open(base: string): Promise<void> {
         footer.show(summary?.cwd ?? process.cwd());
       } else {
         show(transcript(view));
-        if (stats !== undefined) footer.watch(view, stats);
+        if (stats !== undefined) footer.watch(view, stats, contextTokens);
       }
     }
     if (notice !== undefined) document.addChild(new Text(style.error(notice), 0, 0));
@@ -673,7 +712,25 @@ export function stepList(
   return summaries[kickoffs[(block + direction + kickoffs.length) % kickoffs.length]].id;
 }
 
-type Frame = { readonly view: ConversationView; readonly stats?: Stats };
+/** Fill the transcript's earlier and gap markers without throwing away its window-aware shape. */
+async function loadMissing(
+  history: ConversationTranscript,
+  initial: TranscriptView,
+): Promise<TranscriptView> {
+  let view = initial;
+  while (view.items[0]?.kind === "earlier") view = await history.loadEarlier(BACKGROUND_CONTEXT);
+  for (;;) {
+    const gap = view.items.find((item) => item.kind === "gap");
+    if (gap === undefined) return view;
+    view = await history.fillGap(gap, BACKGROUND_CONTEXT);
+  }
+}
+
+type Frame = {
+  readonly view: ConversationView;
+  readonly stats?: Stats;
+  readonly contextTokens: number;
+};
 
 /** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts; `pnpm
  * client` runs EventSource behind --experimental-eventsource. */

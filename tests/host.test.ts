@@ -10,7 +10,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { groqProvider } from "@earendil-works/pi-ai/providers/groq";
-import type { AgentState, ConversationView } from "@earendil-works/pi-durable";
+import type { AgentState, ConversationView, EntryRecord } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -33,7 +33,11 @@ class ReopenableStorage extends MemoryStorage {
 }
 
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
-type Transcript = { readonly view: ConversationView; readonly stats?: Stats };
+type Transcript = {
+  readonly view: ConversationView;
+  readonly stats?: Stats;
+  readonly contextTokens: number;
+};
 
 const allNamed = (frame: readonly Summary[], count: number): boolean =>
   frame.length === count && frame.every(({ label }) => label !== "");
@@ -660,7 +664,9 @@ describe("host", () => {
 
     // The opening frame carries the stats; later frames carry each revision the run commits:
     // the verdict is the completed one, not the user entry the run starts from.
-    const { stats } = await frames.until<Transcript>((frame) => frame.stats !== undefined);
+    const { stats, contextTokens } = await frames.until<Transcript>(
+      (frame) => frame.stats !== undefined,
+    );
     const { view: snapshot } = await frames.until<Transcript>(
       ({ view }: Transcript) =>
         view.conversation.id === id && view.entries.some((entry) => entry.kind === "pi.assistant"),
@@ -677,6 +683,42 @@ describe("host", () => {
       thinkingLevel: "high",
     });
     expect(stats?.contextWindow).toBeGreaterThan(0);
+    expect(contextTokens).toBeGreaterThan(0);
+    await frames.close();
+  });
+
+  test("entry pages reach the history behind Durable's bounded view window", async () => {
+    const id = await startRun("first");
+    await settled(host, id);
+    faux.setResponses(
+      Array.from({ length: 51 }, (_, index) => fauxAssistantMessage(`answer ${index}`)),
+    );
+    for (let index = 0; index < 51; index++) await host.continue(id, `question ${index}`);
+    await settled(host, id);
+
+    const response = await app.request(`/api/conversations/${id}`);
+    const frames = new Frames(response.body as ReadableStream<Uint8Array>);
+    const { view } = await frames.until<Transcript>(
+      (frame) => frame.view.conversation.id === id && frame.view.entries.length === 50,
+    );
+    expect(view.entries.at(-1)?.model?.[0]).toMatchObject({
+      role: "assistant",
+      content: [{ text: "answer 50" }],
+    });
+    const page = async (maxEntryId: number): Promise<readonly EntryRecord[]> => {
+      const response = await app.request(
+        `/api/conversations/${id}/entries?maxEntryId=${maxEntryId}&order=descending&limit=50`,
+      );
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { readonly items: readonly EntryRecord[] }).items;
+    };
+    const earlier = await page(Number(view.before));
+    const oldest = earlier.at(-1);
+    if (oldest === undefined) throw new Error("no entries before the window");
+    const beginning = await page(Number(oldest.id) - 1);
+    expect(earlier).toHaveLength(50);
+    expect(beginning).toHaveLength(5);
+    expect(beginning.at(-1)?.model?.[0]).toMatchObject({ role: "user", content: "first" });
     await frames.close();
   });
 

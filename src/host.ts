@@ -18,6 +18,8 @@ import {
   type ConversationView,
   type Cursor,
   createRegistry,
+  type EntryQuery,
+  type EntryRecord,
   type Extension,
   Harness,
   type JsonObject,
@@ -41,7 +43,7 @@ import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
 import type { Target } from "./defaults.ts";
 import { Fetch } from "./fetch.ts";
-import type { Stats } from "./footer.ts";
+import { contextTokens as activeContextTokens, type Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { LoginSession, type ProviderInfo } from "./login.ts";
 import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.ts";
@@ -160,6 +162,24 @@ export class Host {
       else this.#watchers.set(id, remaining);
     });
     return watch;
+  }
+
+  /** Page the raw history behind a view's bounded window. */
+  async entries(
+    id: number,
+    query: Omit<EntryQuery, "conversationId">,
+    limit: number,
+  ): Promise<Page<EntryRecord, Cursor>> {
+    const conversation = await this.#harness.conversation(id as ConversationId, context);
+    if (conversation === undefined) throw new Error(`no conversation #${id}`);
+    return conversation.entries(query, limit, undefined, context);
+  }
+
+  /** The next request's context size, from its active messages rather than the rendered window. */
+  async contextTokens(id: number): Promise<number> {
+    const conversation = await this.#harness.conversation(id as ConversationId, context);
+    if (conversation === undefined) throw new Error(`no conversation #${id}`);
+    return activeContextTokens(await conversation.context(context));
   }
 
   /** The models of configured providers, and the two defaults `/model` edits. */

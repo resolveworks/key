@@ -2,17 +2,17 @@
 // lines back with color stripped, so a rule is pinned as text rather than as ANSI.
 
 import type { AssistantMessage, JsonObject, Message, Usage } from "@earendil-works/pi-ai";
-import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
+import type { EntryRecord, LiveState, TranscriptView } from "@earendil-works/pi-durable";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import { transcript } from "../src/trajectory.ts";
 
 const WIDTH = 80;
 
-function view(entries: readonly EntryRecord[], live?: LiveState): ConversationView {
+function view(entries: readonly EntryRecord[], live?: LiveState): TranscriptView {
   return {
-    conversation: {} as ConversationView["conversation"],
-    entries,
+    conversation: {} as TranscriptView["conversation"],
+    items: entries.map((entry) => ({ kind: "entry", entry })),
     docs: live ? { "pi.live": live } : {},
   };
 }
@@ -84,13 +84,13 @@ function result(
 }
 
 /** Every line the reader sees, each with its trailing padding removed. */
-function lines(conversation: ConversationView): string[] {
+function lines(conversation: TranscriptView): string[] {
   return transcript(conversation)
     .flatMap((block) => block.render(WIDTH))
     .map((line) => stripTerminalSequences(line).trimEnd());
 }
 
-function text(conversation: ConversationView): string {
+function text(conversation: TranscriptView): string {
   return lines(conversation).join("\n");
 }
 

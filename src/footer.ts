@@ -6,8 +6,9 @@ import type { Usage } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type {
   AgentState,
-  ConversationView,
+  ContextView,
   LiveState,
+  TranscriptView,
   UsageState,
 } from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
@@ -68,15 +69,15 @@ function add(total: Usage, usage: Usage): void {
   total.cost.total += usage.cost.total;
 }
 
-/** The context the next request carries: pi-ai's estimate over the messages the entries project. */
-export function contextTokens(view: ConversationView): number {
-  return estimateContextTokens(view.entries.flatMap((entry) => entry.model ?? [])).tokens;
+/** The context the next request carries: pi-ai's estimate over Durable's active model context. */
+export function contextTokens(view: ContextView): number {
+  return estimateContextTokens(view.messages).tokens;
 }
 
 /** The newest cache hit rate: the share of the last answered turn's prompt that it read from cache. */
-function cacheHitRate(view: ConversationView): number | undefined {
-  const usage = view.entries
-    .flatMap((entry) => entry.model ?? [])
+function cacheHitRate(view: TranscriptView): number | undefined {
+  const usage = view.items
+    .flatMap((item) => (item.kind === "entry" ? (item.entry.model ?? []) : []))
     .findLast((message) => message.role === "assistant")?.usage;
   if (usage === undefined) return undefined;
   const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
@@ -97,10 +98,11 @@ export function dot(streaming: boolean): string {
  * selector owns the whole screen — and `render` draws whichever.
  */
 export class Footer implements Component {
-  #view: ConversationView | undefined;
+  #view: TranscriptView | undefined;
   #cwd: string | undefined;
   #branch: string | undefined;
   #window = 0;
+  #contextTokens = 0;
   #model = "";
   #thinking = "";
 
@@ -111,6 +113,7 @@ export class Footer implements Component {
     this.#view = undefined;
     this.#branch = undefined;
     this.#window = 0;
+    this.#contextTokens = 0;
     this.#model = "";
     this.#thinking = "";
   }
@@ -128,12 +131,13 @@ export class Footer implements Component {
   }
 
   /** Draw one transcript: where it runs, what it has spent, and whether it streams. */
-  watch(view: ConversationView, stats: Stats): void {
+  watch(view: TranscriptView, stats: Stats, contextTokens: number): void {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
     this.#view = view;
     this.#cwd = agent?.cwd ?? "";
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
+    this.#contextTokens = contextTokens;
     this.#model = agent?.model?.modelId ?? "";
     const level = agent?.thinkingLevel ?? "off";
     this.#thinking = level === "off" ? "thinking off" : level;
@@ -156,7 +160,7 @@ export class Footer implements Component {
     if (usage.cacheWrite) spent.push(`W${tokens(usage.cacheWrite)}`);
     if (rate !== undefined) spent.push(`CH${rate.toFixed(1)}%`);
     if (usage.cost.total) spent.push(`$${usage.cost.total.toFixed(3)}`);
-    spent.push(this.#context(contextTokens(this.#view)));
+    spent.push(this.#context(this.#contextTokens));
 
     const live = this.#view.docs["pi.live"] as LiveState | undefined;
     const left = `${dot(live?.run !== undefined)} ${spent.join(" ")}`;

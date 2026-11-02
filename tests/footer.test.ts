@@ -1,4 +1,9 @@
-import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
+import type {
+  ContextView,
+  EntryRecord,
+  LiveState,
+  TranscriptView,
+} from "@earendil-works/pi-durable";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
 import { contextTokens, Footer, shortenHome, tokens, totals } from "../src/footer.ts";
@@ -14,10 +19,10 @@ const view = (
     modelId: "deepseek-flash",
     thinkingLevel: "high",
   },
-): ConversationView =>
+): TranscriptView =>
   ({
-    conversation: {} as ConversationView["conversation"],
-    entries,
+    conversation: {} as TranscriptView["conversation"],
+    items: entries.map((entry) => ({ kind: "entry", entry })),
     docs: {
       "pi.agent": {
         cwd,
@@ -29,7 +34,7 @@ const view = (
       "pi.live": live ? liveRun : undefined,
       "pi.usage": usage,
     },
-  }) as unknown as ConversationView;
+  }) as unknown as TranscriptView;
 
 const usage = {
   models: {
@@ -67,6 +72,13 @@ const answered = (input: number, cacheRead: number, timestamp = 0): EntryRecord 
     ],
   }) as unknown as EntryRecord;
 
+const context = (entries: readonly EntryRecord[]): ContextView => ({
+  head: undefined,
+  entries,
+  contributions: entries.map((entry) => entry.model ?? []),
+  messages: entries.flatMap((entry) => entry.model ?? []),
+});
+
 /** A human turn, as durable records it: a `pi.user` entry carrying one user message. */
 const asked = (prompt: string): EntryRecord =>
   ({
@@ -100,7 +112,7 @@ describe("footer", () => {
   });
 
   test("the context is pi-ai's estimate over the messages the entries project", () => {
-    expect(contextTokens(view([answered(400, 9600)]))).toBe(10_005);
+    expect(contextTokens(context([answered(400, 9600)]))).toBe(10_005);
   });
 
   test("a compaction summary invalidates the usage from before it", () => {
@@ -116,20 +128,25 @@ describe("footer", () => {
         },
       ],
     } as unknown as EntryRecord;
-    expect(contextTokens(view([compaction, answered(400, 9600)]))).toBeLessThan(200);
+    expect(contextTokens(context([compaction, answered(400, 9600)]))).toBeLessThan(200);
   });
 
   test("with nothing answered yet the context is an estimate of what was sent", () => {
     const user = { id: 1, kind: "pi.user", model: [{ role: "user", content: "x".repeat(400) }] };
-    expect(contextTokens(view([user as unknown as EntryRecord]))).toBeGreaterThan(100);
+    expect(contextTokens(context([user as unknown as EntryRecord]))).toBeGreaterThan(100);
   });
 
   test("two dim lines: where it runs, and what it spent against the window", () => {
     const footer = new Footer();
-    footer.watch(view([asked("fix the footer"), answered(1200, 8600)], "/key/repo"), {
-      branch: "main",
-      contextWindow: 128_000,
-    });
+    const entries = [asked("fix the footer"), answered(1200, 8600)];
+    footer.watch(
+      view(entries, "/key/repo"),
+      {
+        branch: "main",
+        contextWindow: 128_000,
+      },
+      contextTokens(context(entries)),
+    );
     const [place, spent] = footer.render(100);
     expect(place).toContain("/key/repo");
     expect(place).toContain("(main)");
@@ -141,9 +158,13 @@ describe("footer", () => {
 
   test("the place line carries the place alone", () => {
     const footer = new Footer();
-    footer.watch(view([asked("fix the footer test flake\n\nthen the rest")]), {
-      contextWindow: 128_000,
-    });
+    footer.watch(
+      view([asked("fix the footer test flake\n\nthen the rest")]),
+      {
+        contextWindow: 128_000,
+      },
+      0,
+    );
     const [place] = footer.render(100);
     expect(stripTerminalSequences(place)).toBe("/key/repo");
   });
@@ -163,19 +184,23 @@ describe("footer", () => {
 
   test("a transcript draws exactly where it runs and what it spent", () => {
     const footer = new Footer();
-    footer.watch(view([answered(1200, 8600)]), {
-      contextWindow: 128_000,
-    });
+    footer.watch(
+      view([answered(1200, 8600)]),
+      {
+        contextWindow: 128_000,
+      },
+      0,
+    );
     expect(footer.render(100)).toHaveLength(2);
   });
 
   test("the stats line opens with a dot: filled while the conversation streams, hollow once it settles", () => {
     const stats = { contextWindow: 128_000 };
     const footer = new Footer();
-    footer.watch(view([answered(1200, 8600)], "/key/repo", true), stats);
+    footer.watch(view([answered(1200, 8600)], "/key/repo", true), stats, 0);
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^● ↑1\.2k/);
 
-    footer.watch(view([answered(1200, 8600)]), stats);
+    footer.watch(view([answered(1200, 8600)]), stats, 0);
     expect(stripTerminalSequences(footer.render(100)[1] ?? "")).toMatch(/^○ ↑1\.2k/);
   });
 });

@@ -1,12 +1,12 @@
 // hono routes over the host: TypeBox-validated bodies, SSE for the two streams.
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { AgentState, ConversationView } from "@earendil-works/pi-durable";
+import type { AgentState, ConversationView, EntryId } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
-import Type from "typebox";
-import { Parse, ParseError } from "typebox/value";
+import Type, { type Static } from "typebox";
+import { Parse, ParseError, Parser } from "typebox/value";
 import { TARGETS, type Target } from "./defaults.ts";
 import type { Host, Summary } from "./host.ts";
 import { THINKING_LEVELS } from "./thinking.ts";
@@ -50,10 +50,18 @@ const LoginAnswerInput = Type.Object({
   value: Type.String(),
 });
 
+const EntriesQuery = Type.Object({
+  minEntryId: Type.Optional(Type.Number()),
+  maxEntryId: Type.Optional(Type.Number()),
+  order: Type.Optional(Type.Union([Type.Literal("ascending"), Type.Literal("descending")])),
+  limit: Type.Number(),
+});
+
 const index = `key host
 
   GET  /api/conversations              transcripts, then changes (SSE)
-  GET  /api/conversations/:id          one transcript, then changes (SSE)
+  GET  /api/conversations/:id          one transcript window, then changes (SSE)
+  GET  /api/conversations/:id/entries  page entries behind or between the windows
   POST /api/run                        {prompt, cwd} → {conversation}: start a conversation in that directory
   POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a conversation
@@ -93,6 +101,24 @@ export function api(host: Host) {
           while (!stream.aborted) await stream.sleep(1000); // keepalive, and the exit on disconnect
         }),
       )
+      .get(
+        "/api/conversations/:id/entries",
+        validator("query", (query) => Parser(EntriesQuery, query) as Static<typeof EntriesQuery>),
+        async (c) => {
+          const { limit, minEntryId, maxEntryId, order } = c.req.valid("query");
+          return c.json(
+            await host.entries(
+              Number(c.req.param("id")),
+              {
+                ...(minEntryId === undefined ? {} : { minEntryId: minEntryId as EntryId }),
+                ...(maxEntryId === undefined ? {} : { maxEntryId: maxEntryId as EntryId }),
+                ...(order === undefined ? {} : { order }),
+              },
+              limit,
+            ),
+          );
+        },
+      )
       .get("/api/conversations/:id", async (c) => {
         const id = Number(c.req.param("id"));
         const watch = await host.watch(id);
@@ -100,14 +126,15 @@ export function api(host: Host) {
         return streamSSE(c, async (stream) => {
           stream.onAbort(() => void watch.stop());
           // The stats answer what only the host knows, and change only when the place or model
-          // does: send them then, never once per transcript frame.
+          // does: send them then, never once per transcript frame. Context size changes each frame.
           let statsFor: string | undefined;
           const send = async (view: ConversationView) => {
             const agent = view.docs["pi.agent"] as AgentState | undefined;
             const key = JSON.stringify([agent?.cwd, agent?.model]);
             const stats = key === statsFor ? undefined : await host.stats(view);
             statsFor = key;
-            await stream.writeSSE({ data: JSON.stringify({ view, stats }) });
+            const contextTokens = await host.contextTokens(id);
+            await stream.writeSSE({ data: JSON.stringify({ view, stats, contextTokens }) });
           };
           await send(watch.value);
           // The looker may leave before the first frame lands: the abort already stopped the watch.

@@ -7,7 +7,7 @@ import {
   type Message,
   type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
+import type { EntryRecord, LiveState, TranscriptView } from "@earendil-works/pi-durable";
 import { Box, type Component, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { shortenHome } from "./footer.ts";
 import { diff, markdown, style } from "./theme.ts";
@@ -16,10 +16,17 @@ import { diff, markdown, style } from "./theme.ts";
 const PREVIEW_LINES = 5;
 
 /** A view as components: settled entries, then the live generation still being written. */
-export function transcript(view: ConversationView): readonly Component[] {
+export function transcript(view: TranscriptView): readonly Component[] {
   const blocks: Component[] = [];
   const calls = callIndex(view);
-  for (const entry of view.entries) blocks.push(...entryBlocks(entry, calls));
+  for (const item of view.items) {
+    if (item.kind === "entry") blocks.push(...entryBlocks(item.entry, calls));
+    else {
+      blocks.push(
+        note(item.kind === "earlier" ? "── loading earlier ──" : "── loading missed entries ──"),
+      );
+    }
+  }
   const live = view.docs["pi.live"] as LiveState | undefined;
   // A running call is an entry already: durable commits the tool-calling answer before its round
   // starts. Only a generation still being written lives in the document.
@@ -37,7 +44,7 @@ type Calls = {
   readonly answered: ReadonlySet<string>;
 };
 
-function callIndex(view: ConversationView): Calls {
+function callIndex(view: TranscriptView): Calls {
   const args = new Map<string, unknown>();
   const answered = new Set<string>();
   for (const message of messagesOf(view)) {
@@ -52,10 +59,12 @@ function callIndex(view: ConversationView): Calls {
   return { arguments: args, answered };
 }
 
-function messagesOf(view: ConversationView): readonly Message[] {
-  return view.entries.flatMap((entry) =>
-    entry.kind === "pi.reset" || entry.kind === "pi.compaction" ? [] : (entry.model ?? []),
-  );
+function messagesOf(view: TranscriptView): readonly Message[] {
+  return view.items.flatMap((item) => {
+    if (item.kind !== "entry") return [];
+    const entry = item.entry;
+    return entry.kind === "pi.reset" || entry.kind === "pi.compaction" ? [] : (entry.model ?? []);
+  });
 }
 
 /** Turns separate with a blank line; each component supplies its own gutter, so nothing is inset. */
