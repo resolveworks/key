@@ -5,7 +5,7 @@ const signal = new AbortController().signal;
 // The host's stand-in: one answer, handed back to the editor untouched.
 const answer = { items: [{ value: "src/", label: "src/" }], prefix: "sr" };
 // The default's stand-in: the path /new's completion carries.
-const freshDefault = () => "~/somewhere";
+const freshDefault = "~/somewhere";
 
 describe("provider", () => {
   test("an unforced slash line completes the client's own commands, never asking the host", async () => {

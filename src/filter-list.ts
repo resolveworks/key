@@ -17,6 +17,12 @@ import { selectTheme, style } from "./theme.ts";
 
 const MAX_VISIBLE = 12;
 
+/** The shared column shape of the client's pickers. */
+export const LAYOUT: SelectListLayoutOptions = {
+  minPrimaryColumnWidth: 56,
+  maxPrimaryColumnWidth: 56,
+};
+
 export type FilterListOptions<T> = {
   keyOf: (item: T) => string;
   item: (item: T) => { label: string; description?: string };

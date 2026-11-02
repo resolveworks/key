@@ -11,11 +11,9 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 import type { Target } from "./defaults.ts";
-import { FilterList } from "./filter-list.ts";
+import { FilterList, LAYOUT } from "./filter-list.ts";
 import type { ModelDefaults, ModelInfo } from "./models.ts";
 import { Targets } from "./targets.ts";
-
-const LAYOUT = { minPrimaryColumnWidth: 56, maxPrimaryColumnWidth: 56 };
 
 const key = (provider: string, id: string): string => `${provider}\u0000${id}`;
 

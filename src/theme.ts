@@ -79,9 +79,6 @@ export const style = {
   },
 } as const;
 
-export const bold = (color: Color | undefined, value: string): string =>
-  style.bold(on(color)(value));
-
 export const selectTheme: SelectListTheme = {
   selectedPrefix: (text) => style.accent(text),
   selectedText: (text) => style.bold(text),
@@ -91,7 +88,7 @@ export const selectTheme: SelectListTheme = {
 };
 
 export const markdown: MarkdownTheme = {
-  heading: (value) => bold(fg.mdHeading, value),
+  heading: (value) => style.bold(on(fg.mdHeading)(value)),
   link: (value) => style.underline(on(fg.mdLink)(value)),
   linkUrl: (value) => style.muted(value),
   code: (value) => on(fg.mdCode)(value),

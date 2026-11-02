@@ -7,12 +7,7 @@ import {
   type Message,
   type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type {
-  ConversationView,
-  EntryRecord,
-  LiveState,
-  ToolSlot,
-} from "@earendil-works/pi-durable";
+import type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 import { Box, type Component, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { shortenHome } from "./footer.ts";
 import { diff, markdown, style } from "./theme.ts";
@@ -174,7 +169,7 @@ function toolResultBox(message: ToolResultMessage, calls: Calls): Component {
 /** `details` stays `unknown`: the live slot and the settled message come from different copies of
  * the JSON types. */
 type Call = {
-  readonly status: ToolSlot["status"];
+  readonly status: "done" | "running";
   readonly name: string;
   readonly args?: unknown;
   readonly output?: string;

@@ -159,7 +159,6 @@ describe("transcript", () => {
     const running = text(
       view([call("c1", "bash", { command: "pnpm test" })], {
         generation: { attempt: 1 },
-        tools: [{ callId: "c1", name: "bash", status: "running" }],
       }),
     );
     expect(running).toContain("bash pnpm test");
