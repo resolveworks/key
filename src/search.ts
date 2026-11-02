@@ -1,7 +1,8 @@
 // Web search: Brave's index as one tool, behind BRAVE_API_KEY in ~/.key/.env.
 
+import { StringEnum } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 
 type SearchResult = {
   readonly title: string;
@@ -29,7 +30,7 @@ export const Search = defineExtension({
       parameters: obj({
         query: str({ description: "Search query" }),
         freshness: opt(
-          oneOf(["pd", "pw", "pm", "py"] as const, {
+          StringEnum(["pd", "pw", "pm", "py"] as const, {
             description:
               "Filter by recency: pd (last 24h), pw (last 7 days), pm (last 31 days), py (last year)",
           }),
