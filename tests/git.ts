@@ -25,6 +25,7 @@ export class FakeEnv extends NodeExecutionEnv {
 
 let calls: readonly (readonly string[])[] = [];
 let diff = "";
+let toplevel = REPO;
 
 /** Every git invocation, as its argument vector, in order. */
 export function gitCalls(): readonly (readonly string[])[] {
@@ -35,6 +36,12 @@ export function gitCalls(): readonly (readonly string[])[] {
 export function resetGit(): void {
   calls = [];
   diff = "";
+  toplevel = REPO;
+}
+
+/** The checkout root the fake answers `rev-parse --show-toplevel` with. */
+export function setGitToplevel(path: string): void {
+  toplevel = path;
 }
 
 export function setGitDiff(value: string): void {
@@ -44,7 +51,7 @@ export function setGitDiff(value: string): void {
 /** The fake git port: records every call and answers the small surface Key consumes. */
 export const fakeGit: Git = async (args, _cwd) => {
   calls = [...calls, args];
-  if (args[0] === "rev-parse") return "base-commit\n";
+  if (args[0] === "rev-parse") return args[1] === "HEAD" ? "base-commit\n" : `${toplevel}\n`;
   if (args[0] === "diff") return diff;
   return "";
 };
