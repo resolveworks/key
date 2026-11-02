@@ -1,14 +1,16 @@
+import type { Context } from "@earendil-works/chord";
 import { clampThinkingLevel, contentText, type Models, Type } from "@earendil-works/pi-ai";
 import {
   AgentDoc,
+  type ContextView,
   type ConversationHandle,
   type ConversationId,
-  type Cursor,
   configure,
   defineDoc,
   defineExtension,
   defineTask,
   defineTool,
+  type EntryId,
   type EntryRecord,
   GenerationTask,
   hook,
@@ -16,8 +18,7 @@ import {
   section,
   type TaskId,
   type TaskRecord,
-  type TaskRuntime,
-  ToolResultEntry,
+  type ToolExecutionApi,
   type Tx,
 } from "@earendil-works/pi-durable";
 import type { Git } from "./git.ts";
@@ -134,11 +135,16 @@ function answerOf(entry: EntryRecord | undefined): string {
   return contentText(message.content, "");
 }
 
+/** What answerOfRun needs of a task runtime: one committed context read. */
+type Contexts = {
+  context(conversationId: ConversationId, context: Context): Promise<ContextView>;
+};
+
 /** Submit one prompt to a conversation and return its answer; `undefined` when the run aborted. */
-async function answerOfRun<I, S extends { phase: string }, R, H extends object>(
+async function answerOfRun(
   handle: ConversationHandle,
-  runtime: TaskRuntime<I, S, R, H>,
-  context: Parameters<TaskRuntime<I, S, R, H>["context"]>[1],
+  runtime: Contexts,
+  context: Context,
   key: string,
   text: string,
 ): Promise<string | undefined> {
@@ -168,16 +174,19 @@ type Child = {
   readonly status: string;
 };
 
+/** What successorPrompt needs of a task runtime: one commit. */
+type Commits = {
+  commit(change: (tx: Tx) => unknown, context: Context): Promise<void>;
+};
+
 /** The successor's opening: each child's diff, or its answer when it made no diff. */
 async function successorPrompt(
   input: Extract<ConversationTaskInput, { kind: "successor" }>,
   predecessor: ConversationId,
   successor: ConversationHandle,
   git: Git,
-  runtime: TaskRuntime<ConversationTaskInput, ConversationTaskState, string, object>,
-  context: Parameters<
-    TaskRuntime<ConversationTaskInput, ConversationTaskState, string, object>["context"]
-  >[1],
+  runtime: Commits,
+  context: Context,
 ): Promise<string> {
   const children: Child[] = [];
   let cwd: string | undefined;
@@ -247,7 +256,17 @@ async function createConversationTask(
   });
 }
 
-/** The successor's task, without keeping the completed run busy with it. */
+/**
+ * The successor's task, without keeping the completed run busy with it.
+ *
+ * It cannot be created directly in `afterRun`: a hook's api is read-only (a
+ * `DocumentReader` with memos), so the only way to start work there is a
+ * `runEndTask()`, which the generation creates as its own child and waits for
+ * until it is terminal — and it takes no ownership or background options. A
+ * ConversationTask successor would hold the run, and the conversation, open
+ * until it finished answering. This task commits the conversation-owned,
+ * background successor and terminates at once, so the run ends immediately.
+ */
 type SuccessorInput = { readonly on: TaskId<string>[] };
 
 const successorTask = (taskDefinition: ConversationTaskDefinition) =>
@@ -262,6 +281,10 @@ const successorTask = (taskDefinition: ConversationTaskDefinition) =>
             kind: "successor",
             on: record.input.on,
           });
+          // The joined children are settled now; drop their records so the doc stays small.
+          const children = await tx.doc(RunChildren, record.conversationId);
+          for (const [call, started] of Object.entries(children))
+            if (record.input.on.includes(started.child)) delete children[call];
           return { status: "terminal", outcome: { status: "completed", result: null } };
         }, context);
       },
@@ -271,14 +294,48 @@ const successorTask = (taskDefinition: ConversationTaskDefinition) =>
     },
   });
 
-/** A replay of one child tool call reattaches to the child its first attempt created. */
-const ChildCreation = defineDoc<{ taskId?: TaskId<string> }>({
-  kind: "key.child",
+/**
+ * Each child a conversation's calls started, keyed by the starting tool-call
+ * task (so a replay reattaches) with the entry that was current when it did
+ * (so afterRun takes only the ones its run covers). A run's generation tasks
+ * come and go; its entry range does not.
+ */
+const RunChildren = defineDoc<
+  Record<string, { readonly entry: EntryId; readonly child: TaskId<string> }>
+>({
+  kind: "key.run-children",
   version: 1,
-  scope: "task",
+  scope: "conversation",
+  history: "latest",
+  fork: "current",
   initial: () => ({}),
   checkpointWhen: () => false,
 });
+
+/** Start one child in a fresh conversation, reattaching on replay; `configure` gives it its shape. */
+async function startChild(
+  api: ToolExecutionApi,
+  context: Context,
+  taskDefinition: ConversationTaskDefinition,
+  input: Extract<ConversationTaskInput, { kind: "worker" | "researcher" }>,
+  configure: (tx: Tx, conversation: ConversationId) => Promise<void>,
+): Promise<TaskId<string>> {
+  return api.commit(async (tx) => {
+    const children = await tx.doc(RunChildren, api.conversationId);
+    const existing = children[api.taskId];
+    if (existing !== undefined) return existing.child;
+    const entry = await tx.latestEntryId(api.conversationId);
+    if (entry === undefined)
+      throw new Error(`startChild: conversation ${api.conversationId} is empty`);
+    const task = await createConversationTask(tx, taskDefinition, input);
+    const conversation = await tx.createConversation({
+      ownership: { kind: "task", taskId: task },
+    });
+    await configure(tx, conversation.id);
+    children[api.taskId] = { entry, child: task };
+    return task;
+  }, context);
+}
 
 function childTools(git: Git, models: () => Models, taskDefinition: ConversationTaskDefinition) {
   const Delegate = defineTool({
@@ -295,34 +352,23 @@ function childTools(git: Git, models: () => Models, taskDefinition: Conversation
       }),
     }),
     replay: "safe",
-    execute: async ({ prompt, name }, call, context) => {
-      const repo = (await call.agent(context)).cwd;
+    execute: async ({ prompt, name }, api, context) => {
+      const repo = (await api.agent(context)).cwd;
       if (repo === undefined) throw new Error("delegate: no cwd to make a worktree from");
       const worker = await ensureWorker(name, git, repo);
-      const taskId = await call.commit(async (tx) => {
-        const creation = await tx.doc(ChildCreation, call.taskId);
-        if (creation.taskId !== undefined) return creation.taskId;
-        const task = await createConversationTask(tx, taskDefinition, {
-          kind: "worker",
-          prompt,
-          name,
-          base: worker.base,
-        });
-        const conversation = await tx.createConversation({
-          ownership: { kind: "task", taskId: task },
-        });
-        await configureChild(tx, conversation.id, models, {
-          cwd: worker.path,
-          instructions: WORKER_INSTRUCTIONS,
-          remove: [Delegate, Research, Ask],
-        });
-        creation.taskId = task;
-        return task;
-      }, context);
-      return {
-        output: [{ type: "text", text: `Started worker task #${taskId}.` }],
-        details: { taskId },
-      };
+      const taskId = await startChild(
+        api,
+        context,
+        taskDefinition,
+        { kind: "worker", prompt, name, base: worker.base },
+        (tx, conversation) =>
+          configureChild(tx, conversation, models, {
+            cwd: worker.path,
+            instructions: WORKER_INSTRUCTIONS,
+            remove: [Delegate, Research, Ask],
+          }),
+      );
+      return { output: [{ type: "text", text: `Started worker task #${taskId}.` }] };
     },
   });
 
@@ -336,30 +382,21 @@ function childTools(git: Git, models: () => Models, taskDefinition: Conversation
       }),
     }),
     replay: "safe",
-    execute: async ({ prompt }, call, context) => {
-      const cwd = (await call.agent(context)).cwd;
-      const taskId = await call.commit(async (tx) => {
-        const creation = await tx.doc(ChildCreation, call.taskId);
-        if (creation.taskId !== undefined) return creation.taskId;
-        const task = await createConversationTask(tx, taskDefinition, {
-          kind: "researcher",
-          prompt,
-        });
-        const conversation = await tx.createConversation({
-          ownership: { kind: "task", taskId: task },
-        });
-        await configureChild(tx, conversation.id, models, {
-          cwd,
-          instructions: RESEARCHER_INSTRUCTIONS,
-          remove: [Delegate, Research, Ask],
-        });
-        creation.taskId = task;
-        return task;
-      }, context);
-      return {
-        output: [{ type: "text", text: `Started researcher task #${taskId}.` }],
-        details: { taskId },
-      };
+    execute: async ({ prompt }, api, context) => {
+      const cwd = (await api.agent(context)).cwd;
+      const taskId = await startChild(
+        api,
+        context,
+        taskDefinition,
+        { kind: "researcher", prompt },
+        (tx, conversation) =>
+          configureChild(tx, conversation, models, {
+            cwd,
+            instructions: RESEARCHER_INSTRUCTIONS,
+            remove: [Delegate, Research, Ask],
+          }),
+      );
+      return { output: [{ type: "text", text: `Started researcher task #${taskId}.` }] };
     },
   });
   return { Delegate, Research };
@@ -498,36 +535,14 @@ export const keySystem = (git: Git, models: () => Models) => {
       hooks: [
         hook(GenerationTask, {
           afterRun: async (run, api, context) => {
-            const on: TaskId<string>[] = [];
-            let cursor: Cursor | undefined;
-            do {
-              const page = await api.entries(
-                {
-                  minEntryId: run.first,
-                  maxEntryId: run.last,
-                  order: "ascending",
-                },
-                256,
-                cursor,
-                context,
-              );
-              for (const entry of page.items) {
-                if (!ToolResultEntry.is(entry)) continue;
-                const message = entry.model?.[0];
-                if (
-                  message?.role !== "toolResult" ||
-                  (message.toolName !== "delegate" && message.toolName !== "research") ||
-                  message.isError
-                )
-                  continue;
-                const taskId = (message.details as { readonly taskId?: TaskId<string> } | undefined)
-                  ?.taskId;
-                if (taskId === undefined)
-                  throw new Error(`child result ${entry.id} has no task ID`);
-                on.push(taskId);
-              }
-              cursor = page.next;
-            } while (cursor !== undefined);
+            // The children the tools started, already recorded; only this run's range joins.
+            const children = await api.snapshot(RunChildren, api.conversationId, context);
+            const on =
+              children === undefined
+                ? []
+                : Object.values(children)
+                    .filter((started) => started.entry >= run.first && started.entry <= run.last)
+                    .map((started) => started.child);
             if (on.length === 0) return undefined;
             return { tasks: [runEndTask(SuccessorTask, { on })] };
           },
