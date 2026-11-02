@@ -337,7 +337,28 @@ async function startChild(
   }, context);
 }
 
-function childTools(git: Git, models: () => Models, taskDefinition: ConversationTaskDefinition) {
+function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
+  async function configureChild(
+    tx: Tx,
+    conversation: ConversationId,
+    models: Models,
+    options: { readonly cwd: string | undefined; readonly instructions: string },
+  ): Promise<void> {
+    const child = (await tx.doc(ModelDefaultsDoc)).child;
+    if (child === undefined) throw new Error("child: no model default: set one with /model");
+    const model = models.getModel(child.provider, child.modelId);
+    if (model === undefined)
+      throw new Error(`child: unknown model ${child.provider}/${child.modelId}`);
+    const level = (await tx.doc(ThinkingDefaultsDoc)).child ?? DEFAULT_THINKING_LEVEL;
+    await configure(tx, conversation, {
+      cwd: options.cwd,
+      model: child,
+      thinkingLevel: clampThinkingLevel(model, level),
+      instructions: options.instructions,
+      tools: { remove: [Delegate, Research, Ask] },
+    });
+  }
+
   const Delegate = defineTool({
     name: "delegate",
     description:
@@ -362,10 +383,9 @@ function childTools(git: Git, models: () => Models, taskDefinition: Conversation
         taskDefinition,
         { kind: "worker", prompt, name, base: worker.base },
         (tx, conversation) =>
-          configureChild(tx, conversation, models, {
+          configureChild(tx, conversation, api.models, {
             cwd: worker.path,
             instructions: WORKER_INSTRUCTIONS,
-            remove: [Delegate, Research, Ask],
           }),
       );
       return { output: [{ type: "text", text: `Started worker task #${taskId}.` }] };
@@ -390,41 +410,15 @@ function childTools(git: Git, models: () => Models, taskDefinition: Conversation
         taskDefinition,
         { kind: "researcher", prompt },
         (tx, conversation) =>
-          configureChild(tx, conversation, models, {
+          configureChild(tx, conversation, api.models, {
             cwd,
             instructions: RESEARCHER_INSTRUCTIONS,
-            remove: [Delegate, Research, Ask],
           }),
       );
       return { output: [{ type: "text", text: `Started researcher task #${taskId}.` }] };
     },
   });
   return { Delegate, Research };
-}
-
-async function configureChild(
-  tx: Tx,
-  conversation: ConversationId,
-  models: () => Models,
-  options: {
-    readonly cwd: string | undefined;
-    readonly instructions: string;
-    readonly remove: readonly ReturnType<typeof defineTool>[];
-  },
-): Promise<void> {
-  const child = (await tx.doc(ModelDefaultsDoc)).child;
-  if (child === undefined) throw new Error("child: no model default: set one with /model");
-  const model = models().getModel(child.provider, child.modelId);
-  if (model === undefined)
-    throw new Error(`child: unknown model ${child.provider}/${child.modelId}`);
-  const level = (await tx.doc(ThinkingDefaultsDoc)).child ?? DEFAULT_THINKING_LEVEL;
-  await configure(tx, conversation, {
-    cwd: options.cwd,
-    model: child,
-    thinkingLevel: clampThinkingLevel(model, level),
-    instructions: options.instructions,
-    tools: { remove: options.remove },
-  });
 }
 
 /** One question answered in a private copy of a settled conversation; the original is untouched. */
@@ -517,40 +511,37 @@ const Ask = defineTool({
 });
 
 /** The host's system: direct conversation runs, with tasks only at cascade boundaries. */
-export const keySystem = (git: Git, models: () => Models) => {
+export const keySystem = (git: Git) => {
   const ConversationTask = conversationTask(git);
   const SuccessorTask = successorTask(ConversationTask);
-  const { Delegate, Research } = childTools(git, models, ConversationTask);
-  return {
-    extension: defineExtension({
-      name: "key",
-      sections: [
-        section(
-          "preamble",
-          () =>
-            "You are an expert coding assistant operating inside key, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
-          { tag: false },
-        ),
-      ],
-      hooks: [
-        hook(GenerationTask, {
-          afterRun: async (run, api, context) => {
-            // The children the tools started, already recorded; only this run's range joins.
-            const children = await api.snapshot(RunChildren, api.conversationId, context);
-            const on =
-              children === undefined
-                ? []
-                : Object.values(children)
-                    .filter((started) => started.entry >= run.first && started.entry <= run.last)
-                    .map((started) => started.child);
-            if (on.length === 0) return undefined;
-            return { tasks: [runEndTask(SuccessorTask, { on })] };
-          },
-        }),
-      ],
-      tasks: [ConversationTask, SuccessorTask, AskTask],
-      tools: [Delegate, Research, Ask],
-    }),
-    task: ConversationTask,
-  };
+  const { Delegate, Research } = childTools(git, ConversationTask);
+  return defineExtension({
+    name: "key",
+    sections: [
+      section(
+        "preamble",
+        () =>
+          "You are an expert coding assistant operating inside key, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.",
+        { tag: false },
+      ),
+    ],
+    hooks: [
+      hook(GenerationTask, {
+        afterRun: async (run, api, context) => {
+          // The children the tools started, already recorded; only this run's range joins.
+          const children = await api.snapshot(RunChildren, api.conversationId, context);
+          const on =
+            children === undefined
+              ? []
+              : Object.values(children)
+                  .filter((started) => started.entry >= run.first && started.entry <= run.last)
+                  .map((started) => started.child);
+          if (on.length === 0) return undefined;
+          return { tasks: [runEndTask(SuccessorTask, { on })] };
+        },
+      }),
+    ],
+    tasks: [ConversationTask, SuccessorTask, AskTask],
+    tools: [Delegate, Research, Ask],
+  });
 };

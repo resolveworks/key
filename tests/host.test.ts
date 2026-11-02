@@ -95,7 +95,7 @@ describe("host", () => {
     host = new Host({
       models,
       storage: new MemoryStorage(),
-      extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
+      extensions: [CodingTools, keySystem(fakeGit), Agents],
       port: 0,
       hostname: "127.0.0.1",
     });
@@ -282,7 +282,7 @@ describe("host", () => {
     const local = new Host({
       models,
       storage: new MemoryStorage(),
-      extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
+      extensions: [CodingTools, keySystem(fakeGit), Agents],
       port: 0,
       hostname: "127.0.0.1",
     });
@@ -367,7 +367,7 @@ describe("host", () => {
       const reopened = new Host({
         models,
         storage,
-        extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
+        extensions: [CodingTools, keySystem(fakeGit), Agents],
         port: 0,
         hostname: "127.0.0.1",
       });

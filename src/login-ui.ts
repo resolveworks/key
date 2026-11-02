@@ -67,7 +67,6 @@ export class LoginPicker extends Container implements Focusable {
       search: searchText,
       empty: () => "no matching providers",
       placeholder: "provider or method",
-      layout: LAYOUT,
       onSelect: (choice) => onSelect(choice.provider, choice.type),
       onCancel,
     });

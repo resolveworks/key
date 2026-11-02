@@ -98,7 +98,7 @@ const production = (): HostOptions => {
       mkdirSync(dataDirectory, { recursive: true });
       return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
     })(),
-    extensions: [CodingTools, keySystem(git, () => models).extension, Search, Fetch, Agents],
+    extensions: [CodingTools, keySystem(git), Search, Fetch, Agents],
     port: PORT,
     hostname: process.env.KEY_BIND ?? "127.0.0.1",
   };

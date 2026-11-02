@@ -47,7 +47,7 @@ export function keySetup(): KeySetup {
   models.setProvider(faux.provider);
   const registry = createRegistry();
   registry.install(CodingTools);
-  registry.install(keySystem(fakeGit, () => models).extension);
+  registry.install(keySystem(fakeGit));
   registry.install(Search);
   registry.install(Fetch);
   registry.install(Agents);

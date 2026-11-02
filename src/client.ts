@@ -61,10 +61,9 @@ type View =
 type Mode =
   | { readonly kind: "view"; readonly view: View }
   | { readonly kind: "list"; readonly back: View; selected: number | undefined }
-  | { readonly kind: "overlay"; readonly back: View; readonly picker: Picker }
-  | { readonly kind: "login-flow"; readonly back: View; readonly view: LoginView };
+  | { readonly kind: "overlay"; readonly back: View; readonly picker: Overlay };
 
-type Picker = ModelPicker | ThinkingPicker | LoginPicker;
+type Overlay = ModelPicker | ThinkingPicker | LoginPicker | LoginView;
 
 /** A view's key in the drafts, and its place in the ring. */
 type Name = "new" | number;
@@ -210,11 +209,6 @@ export async function open(base: string): Promise<void> {
       show([mode.picker]);
       tui.setFocus(mode.picker);
       footer.clear();
-    } else if (mode.kind === "login-flow") {
-      hidePrompt();
-      show([mode.view]);
-      tui.setFocus(mode.view);
-      footer.clear();
     } else if (mode.view.kind === "new") {
       showPrompt();
       show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
@@ -258,7 +252,7 @@ export async function open(base: string): Promise<void> {
 
   /** Cover the screen with a picker: fetch what it needs and open it, or turn the failure into
    * the notice. */
-  const overlay = async (back: View, open: () => Promise<Picker>): Promise<void> => {
+  const overlay = async (back: View, open: () => Promise<Overlay>): Promise<void> => {
     try {
       const picker = await open();
       mode = { kind: "overlay", back, picker };
@@ -348,7 +342,7 @@ export async function open(base: string): Promise<void> {
         () => void cancelLogin(back),
         (message) => finishLogin(back, provider, type, message),
       );
-      mode = { kind: "login-flow", back, view };
+      mode = { kind: "overlay", back, picker: view };
       notice = undefined;
       render();
       loginWatch = follow<LoginEvent>(client.api.login.$url(), (event) => view.apply(event));
@@ -491,7 +485,7 @@ export async function open(base: string): Promise<void> {
     // quit on its own release.
     if (isKeyRelease(data)) return undefined;
     // The picker owns every key while it is open.
-    if (mode.kind === "overlay" || mode.kind === "login-flow") return undefined;
+    if (mode.kind === "overlay") return undefined;
     if (matchesKey(data, "ctrl+c")) {
       const now = Date.now();
       if (now - lastCtrlC < 500) quit();

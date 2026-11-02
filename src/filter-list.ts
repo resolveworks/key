@@ -29,7 +29,6 @@ export type FilterListOptions<T> = {
   search: (item: T) => string;
   empty: (query: string) => string;
   placeholder: string;
-  layout: SelectListLayoutOptions;
   onSelect: (item: T) => void;
   onCancel: () => void;
 };
@@ -107,7 +106,7 @@ export class FilterList<T> extends Container implements Focusable {
       })),
       MAX_VISIBLE,
       selectTheme,
-      this.#options.layout,
+      LAYOUT,
     );
     const index = Math.max(
       this.#filtered.findIndex((item) => this.#options.keyOf(item) === this.#selectedKey),

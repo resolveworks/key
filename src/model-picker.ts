@@ -11,7 +11,7 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 import type { Target } from "./defaults.ts";
-import { FilterList, LAYOUT } from "./filter-list.ts";
+import { FilterList } from "./filter-list.ts";
 import type { ModelDefaults, ModelInfo } from "./models.ts";
 import { Targets } from "./targets.ts";
 
@@ -59,7 +59,6 @@ export class ModelPicker extends Container implements Focusable {
           ? "no models from configured providers · /login adds one"
           : "no matching models",
       placeholder: "type to narrow",
-      layout: LAYOUT,
       onSelect: (model) => onSelect(this.#targets.target, model),
       onCancel,
     });
