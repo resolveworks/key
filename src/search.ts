@@ -1,8 +1,7 @@
 // Web search: Brave's index as one tool, behind BRAVE_API_KEY in ~/.key/.env.
 
-import { StringEnum } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import Type from "typebox";
+import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 
 type SearchResult = {
   readonly title: string;
@@ -27,10 +26,10 @@ export const Search = defineExtension({
     defineTool({
       name: "web_search",
       description: "Search the web and return the results as markdown.",
-      parameters: Type.Object({
-        query: Type.String({ description: "Search query" }),
-        freshness: Type.Optional(
-          StringEnum(["pd", "pw", "pm", "py"] as const, {
+      parameters: obj({
+        query: str({ description: "Search query" }),
+        freshness: opt(
+          oneOf(["pd", "pw", "pm", "py"] as const, {
             description:
               "Filter by recency: pd (last 24h), pw (last 7 days), pm (last 31 days), py (last year)",
           }),

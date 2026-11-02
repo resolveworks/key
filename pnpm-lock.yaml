@@ -20,6 +20,9 @@ importers:
       '@earendil-works/pi-env':
         specifier: 1.5.0
         version: 1.5.0(@aws-sdk/credential-provider-node@3.972.92)(@smithy/signature-v4@5.7.5)
+      '@earendil-works/pi-schema':
+        specifier: 1.5.0
+        version: 1.5.0
       '@earendil-works/pi-tui':
         specifier: 1.5.0
         version: 1.5.0

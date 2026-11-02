@@ -5,10 +5,10 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineExtension, defineTool, type ToolDiagnostic } from "@earendil-works/pi-durable";
+import { obj, str } from "@earendil-works/pi-schema";
 import { Defuddle } from "defuddle/node";
 import { parseHTML } from "linkedom";
 import { type Browser, chromium } from "playwright-core";
-import Type from "typebox";
 
 /** The stealth Chrome server's WebSocket endpoint: `KEY_BROWSER_ENDPOINT`, else mine-browser's default. */
 const browserEndpoint = (): string => process.env.KEY_BROWSER_ENDPOINT ?? "ws://127.0.0.1:9222";
@@ -57,8 +57,8 @@ export const Fetch = defineExtension({
         `stealth-patched Chrome server to handle JavaScript-rendered pages. Output is truncated to ` +
         `${MAX_LINES} lines or ${MAX_BYTES / 1024}KB (whichever is hit first); when truncated, the full content ` +
         "is saved to a temp file, which read can page through.",
-      parameters: Type.Object({
-        url: Type.String({ description: "URL of the webpage to fetch" }),
+      parameters: obj({
+        url: str({ description: "URL of the webpage to fetch" }),
       }),
       // A read-only render: a rerun after a crash only fetches again.
       replay: "safe",
