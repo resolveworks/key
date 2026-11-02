@@ -18,6 +18,7 @@ import {
   type ConversationView,
   type Cursor,
   createRegistry,
+  type EntryId,
   type EntryQuery,
   type EntryRecord,
   type Extension,
@@ -390,6 +391,17 @@ export class Host {
     );
     await conversation.submit({ type: "input", content: prompt, whenBusy: "steer" }, context);
     return conversation.id;
+  }
+
+  /** Fork a conversation at an entry: an independent cascade that inherits the history up to and
+   * including that entry, with the agent as it stood there. The source keeps running as it was. */
+  async fork(conversationId: number, at: EntryId): Promise<number> {
+    const id = conversationId as ConversationId;
+    const conversation = await this.#harness.conversation(id, context);
+    if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
+    const fork = await conversation.fork(at, { ownership: { kind: "ownerless" } }, context);
+    await this.#publish();
+    return fork.id;
   }
 
   /** Message a conversation directly, steering its current run when it is busy. */

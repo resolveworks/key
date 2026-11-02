@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  contentText,
   createModels,
   type FauxResponseStep,
   fauxAssistantMessage,
@@ -433,6 +434,102 @@ describe("host", () => {
     expect(listed[0]).toMatchObject({ id, label: "say hello" });
   });
 
+  test("a fork inherits the history to its entry and lists as its own cascade", async () => {
+    const list = await openList();
+    faux.setResponses([fauxAssistantMessage("hello"), fauxAssistantMessage("hello again")]);
+    const source = await runId("say hello");
+    await answered(source, "hello");
+    await host.continue(source, "again");
+    const history = await answered(source, "hello again");
+    const at = history.find(({ kind }) => kind === "pi.assistant")?.id;
+    if (at === undefined) throw new Error("the source answered nothing");
+    const calls = faux.state.callCount;
+
+    const forked = await app.request(`/api/conversations/${source}/fork`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ at: Number(at) }),
+    });
+    expect(forked.status).toBe(202);
+    const { conversation: fork } = (await forked.json()) as { conversation: number };
+    expect(fork).toBeGreaterThan(source);
+    // Forking submits nothing: no model request, and the source keeps every entry it had.
+    expect(faux.state.callCount).toBe(calls);
+    expect((await host.entries(source, { order: "ascending" }, 100)).items).toEqual(history);
+
+    // The fork is an independent cascade, listed without a prompt of its own: it is named by the
+    // one it inherited, at the top level rather than beneath its source.
+    const listed = await list.until((frame: readonly Summary[]) =>
+      frame.some(({ id }) => id === fork),
+    );
+    await list.close();
+    expect(listed.find(({ id }) => id === fork)).toMatchObject({
+      label: "say hello",
+      cwd: REPO,
+      depth: 0,
+      streaming: false,
+    });
+    expect(listed.filter(({ depth }) => depth === 0).map(({ id }) => id)).toEqual([fork, source]);
+
+    const watch = await host.watch(fork);
+    if (watch === undefined) throw new Error(`no conversation #${fork}`);
+    expect(watch.value.conversation.parent).toEqual({ conversationId: source, at });
+    // The history is inherited up to and including the chosen entry, and nothing past it.
+    expect(watch.value.entries.map(({ id }) => Number(id))).toEqual(
+      history.filter(({ id }) => Number(id) <= Number(at)).map(({ id }) => Number(id)),
+    );
+    await watch.stop();
+
+    // The fork answers for itself, from the history it inherited: its own run, its own entries,
+    // and the source still exactly as it was.
+    let asked = "";
+    faux.setResponses([
+      (request) => {
+        asked = requestText(request.messages);
+        return fauxAssistantMessage("the fork answers");
+      },
+    ]);
+    const message = await app.request(`/api/conversations/${fork}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "go on" }),
+    });
+    expect(message.status).toBe(202);
+    const grown = await answered(fork, "the fork answers");
+    // Its request carries the history it inherited, up to the entry it forked at and no further.
+    expect(asked).toContain("say hello");
+    expect(asked).not.toContain("again");
+    expect(grown.filter((entry) => entry.conversationId === fork).map(({ kind }) => kind)).toEqual([
+      "pi.user",
+      "pi.assistant",
+    ]);
+    expect(grown.at(-1)?.model?.[0]).toMatchObject({
+      role: "assistant",
+      content: [{ text: "the fork answers" }],
+    });
+    expect((await host.entries(source, { order: "ascending" }, 100)).items).toEqual(history);
+    expect(faux.state.callCount).toBe(calls + 1);
+  });
+
+  test("a fork of an unknown transcript is refused, and the entry id is validated", async () => {
+    const unknown = await app.request("/api/conversations/999999/fork", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ at: 3 }),
+    });
+    expect(unknown.status).toBe(500);
+    expect(await unknown.text()).toBe("Error: no conversation #999999");
+
+    const id = await startRun("say hello");
+    const invalid = await app.request(`/api/conversations/${id}/fork`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ at: "first" }),
+    });
+    expect(invalid.status).toBe(500);
+    expect(await invalid.text()).toContain("/at");
+  });
+
   test("a delegating kickoff lists its child beneath it", async () => {
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
@@ -814,6 +911,18 @@ describe("host", () => {
     const summary = listed.find((candidate) => candidate.label === label);
     if (summary === undefined) throw new Error(`no conversation labelled ${label}`);
     return summary.id;
+  }
+
+  /** Resolve with a conversation's history once its newest answer says `text`: an answer entry
+   * commits just after the run's stop, so the list alone cannot say the run is written. */
+  async function answered(id: number, text: string): Promise<readonly EntryRecord[]> {
+    for (let i = 0; ; i++) {
+      const items = (await host.entries(id, { order: "ascending" }, 100)).items;
+      const answer = items.filter(({ kind }) => kind === "pi.assistant").at(-1)?.model?.[0];
+      if (answer?.role === "assistant" && contentText(answer.content).includes(text)) return items;
+      if (i > 200) throw new Error(`the conversation never answered ${text}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
   }
 
   /** One answer: the children it calls, then the text its turn ends with. */
