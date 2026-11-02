@@ -21,6 +21,8 @@ const RunInput = Type.Object({
 
 const MessageInput = Type.Object({ prompt: Prompt });
 
+const ForkInput = Type.Object({ at: Type.Number() });
+
 const CompleteInput = Type.Object({
   cwd: Type.String({ minLength: 1 }),
   text: Type.String(),
@@ -66,6 +68,7 @@ const index = `key host
   POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a conversation
   POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
+  POST /api/conversations/:id/fork      {at}: fork a conversation after that entry
   GET  /api/models                     the configured models and the two defaults
   POST /api/models/defaults            {target, provider, modelId}: set a default
   GET  /api/thinking                   the levels conversations and children run at
@@ -158,6 +161,15 @@ export function api(host: Host) {
         await host.interrupt(Number(c.req.param("id")));
         return c.body(null, 202);
       })
+      .post(
+        "/api/conversations/:id/fork",
+        validator("json", (body) => Parse(ForkInput, body)),
+        async (c) => {
+          const { at } = c.req.valid("json");
+          const conversation = await host.fork(Number(c.req.param("id")), at as EntryId);
+          return c.json({ conversation }, 202);
+        },
+      )
       .post(
         "/api/run",
         validator("json", (body) => Parse(RunInput, body)),
