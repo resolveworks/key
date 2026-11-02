@@ -216,7 +216,7 @@ function toolTitle(name: string, args: unknown): string {
 }
 
 /** The argument a call is best identified by: a shell command, a path, a pattern, else its first string. */
-function firstString(args: Record<string, unknown>): string | undefined {
+export function firstString(args: Record<string, unknown>): string | undefined {
   for (const key of ["command", "path", "pattern"]) {
     const value = args[key];
     if (typeof value === "string" && value !== "") return value;
