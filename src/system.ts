@@ -21,7 +21,7 @@ import {
   type ToolExecutionApi,
   type Tx,
 } from "@earendil-works/pi-durable";
-import Type from "typebox";
+import { num, obj, str } from "@earendil-works/pi-schema";
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
@@ -355,12 +355,12 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
     name: "delegate",
     description:
       "Start a worker immediately in its own git worktree and conversation. Returns without waiting. When this run ends, a fresh successor starts after all its children settle and receives their results.",
-    parameters: Type.Object({
-      name: Type.String({
+    parameters: obj({
+      name: str({
         pattern: WORKER_NAME.source,
         description: "Lowercase kebab-case worker name; its branch is worker/<repo>/<name>.",
       }),
-      prompt: Type.String({
+      prompt: str({
         description: "A self-contained implementation task and its success criteria.",
       }),
     }),
@@ -388,8 +388,8 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
     name: "research",
     description:
       "Start a researcher immediately in a fresh conversation without a worktree. Returns without waiting. When this run ends, a fresh successor starts after all its children settle and receives their results.",
-    parameters: Type.Object({
-      prompt: Type.String({
+    parameters: obj({
+      prompt: str({
         description: "A self-contained research question and the findings needed.",
       }),
     }),
@@ -418,9 +418,9 @@ const Ask = defineTool({
   name: "ask",
   description:
     "Ask a settled conversation a question. It answers in a private copy of its own context, with its tools; the conversation itself is never modified. Batch compound questions into one ask; several asks may run in parallel.",
-  parameters: Type.Object({
-    conversation: Type.Number({ description: "The conversation id from the framing." }),
-    question: Type.String({ description: "The question to answer from that conversation." }),
+  parameters: obj({
+    conversation: num({ description: "The conversation id from the framing." }),
+    question: str({ description: "The question to answer from that conversation." }),
   }),
   replay: "safe",
   execute: async ({ conversation, question }, api, context) => {
