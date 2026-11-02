@@ -5,7 +5,6 @@ import type { AuthEvent, AuthType } from "@earendil-works/pi-ai";
 import {
   Container,
   type Focusable,
-  fuzzyFilter,
   getKeybindings,
   Input,
   matchesKey,
@@ -14,6 +13,7 @@ import {
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
+import { FilterList } from "./filter-list.ts";
 import type { LoginEvent, LoginPrompt, ProviderInfo } from "./login.ts";
 import { selectTheme, style } from "./theme.ts";
 
@@ -27,9 +27,7 @@ const choices = (providers: readonly ProviderInfo[]): readonly Choice[] =>
     ...(provider.oauth?.login === true ? [{ provider, type: "oauth" as const }] : []),
     ...(provider.apiKey?.login === true ? [{ provider, type: "api_key" as const }] : []),
   ]);
-
 const keyOf = (choice: Choice): string => `${choice.provider.id}\u0000${choice.type}`;
-
 const methodName = (choice: Choice): string =>
   choice.type === "oauth"
     ? (choice.provider.oauth?.label ?? choice.provider.oauth?.name ?? "account")
@@ -55,19 +53,7 @@ const searchText = (choice: Choice): string =>
 export class LoginPicker extends Container implements Focusable {
   readonly capturesViewportInput = true;
 
-  #choices: readonly Choice[];
-  #search = new Input({
-    prompt: "  filter ",
-    placeholder: "provider or method",
-    placeholderStyle: style.dim,
-  });
-  #hint = new Text("", 0, 0);
-  #listContainer = new Container();
-  #list = new SelectList([], MAX_VISIBLE, selectTheme, LAYOUT);
-  #selectedKey: string | undefined;
-  #tui: TUI;
-  #onSelect: (provider: ProviderInfo, type: AuthType) => void;
-  #onCancel: () => void;
+  #list: FilterList<Choice>;
 
   constructor(
     tui: TUI,
@@ -76,72 +62,34 @@ export class LoginPicker extends Container implements Focusable {
     onCancel: () => void,
   ) {
     super();
-    this.#tui = tui;
-    this.#choices = choices(providers);
-    this.#onSelect = onSelect;
-    this.#onCancel = onCancel;
+    this.#list = new FilterList(tui, {
+      keyOf: keyOf,
+      item: (choice) => ({ label: choiceLabel(choice), description: choiceDescription(choice) }),
+      search: searchText,
+      empty: () => "no matching providers",
+      placeholder: "provider or method",
+      layout: LAYOUT,
+      onSelect: (choice) => onSelect(choice.provider, choice.type),
+      onCancel,
+    });
     this.addChild(new Spacer(1));
     this.addChild(new Text(style.muted("login · choose a provider and method"), 0, 0));
-    this.addChild(this.#search);
+    this.addChild(this.#list);
     this.addChild(new Spacer(1));
-    this.addChild(this.#listContainer);
-    this.addChild(new Spacer(1));
-    this.addChild(this.#hint);
-    this.#refresh();
+    this.addChild(new Text(style.muted("enter starts · esc closes"), 0, 0));
+    this.#list.rebuild(choices(providers));
   }
 
   get focused(): boolean {
-    return this.#search.focused;
+    return this.#list.focused;
   }
 
   set focused(value: boolean) {
-    this.#search.focused = value;
+    this.#list.focused = value;
   }
 
   handleInput(data: string): void {
-    const kb = getKeybindings();
-    if (
-      kb.matches(data, "tui.select.up") ||
-      kb.matches(data, "tui.select.down") ||
-      kb.matches(data, "tui.select.pageUp") ||
-      kb.matches(data, "tui.select.pageDown") ||
-      kb.matches(data, "tui.select.confirm") ||
-      kb.matches(data, "tui.select.cancel")
-    ) {
-      this.#list.handleInput(data);
-      return;
-    }
-    this.#search.handleInput(data);
-    this.#refresh();
-  }
-
-  #refresh(): void {
-    const query = this.#search.getValue().trim();
-    const filtered =
-      query === "" ? this.#choices : fuzzyFilter([...this.#choices], query, searchText);
-    const items = filtered.map((choice) => ({
-      value: keyOf(choice),
-      label: choiceLabel(choice),
-      description: choiceDescription(choice),
-    }));
-    const selected = filtered.findIndex((choice) => keyOf(choice) === this.#selectedKey);
-    this.#list = new SelectList(items, MAX_VISIBLE, selectTheme, LAYOUT);
-    this.#list.setSelectedIndex(Math.max(selected, 0));
-    this.#list.onSelectionChange = (item) => {
-      this.#selectedKey = item.value;
-    };
-    this.#list.onSelect = (item) => {
-      const choice = filtered.find((candidate) => keyOf(candidate) === item.value);
-      if (choice !== undefined) this.#onSelect(choice.provider, choice.type);
-    };
-    this.#list.onCancel = () => this.#onCancel();
-    this.#selectedKey = filtered.length === 0 ? undefined : keyOf(filtered[Math.max(0, selected)]);
-    this.#listContainer.clear();
-    this.#listContainer.addChild(
-      filtered.length === 0 ? new Text(style.dim("  no matching providers"), 0, 0) : this.#list,
-    );
-    this.#hint.setText(style.muted("enter starts · esc closes"));
-    this.#tui.requestRender();
+    this.#list.handleInput(data);
   }
 }
 

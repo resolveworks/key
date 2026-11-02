@@ -56,15 +56,15 @@ type View =
   | { readonly kind: "new"; readonly cwd?: string }
   | { readonly kind: "transcript"; readonly id: number };
 
-/** What the screen shows: one view, or the list covering the view it left — escape
+/** What the screen shows: one view, or an overlay covering the view it left — escape
  * returns there, draft intact. */
 type Mode =
   | { readonly kind: "view"; readonly view: View }
   | { readonly kind: "list"; readonly back: View; selected: number | undefined }
-  | { readonly kind: "models"; readonly back: View; readonly picker: ModelPicker }
-  | { readonly kind: "thinking"; readonly back: View; readonly picker: ThinkingPicker }
-  | { readonly kind: "login"; readonly back: View; readonly picker: LoginPicker }
+  | { readonly kind: "overlay"; readonly back: View; readonly picker: Picker }
   | { readonly kind: "login-flow"; readonly back: View; readonly view: LoginView };
+
+type Picker = ModelPicker | ThinkingPicker | LoginPicker;
 
 /** A view's key in the drafts, and its place in the ring. */
 type Name = "new" | number;
@@ -199,7 +199,7 @@ export async function open(base: string): Promise<void> {
       show([new Spacer(1), list]);
       tui.setFocus(list);
       footer.clear();
-    } else if (mode.kind === "models" || mode.kind === "thinking" || mode.kind === "login") {
+    } else if (mode.kind === "overlay") {
       hidePrompt();
       show([mode.picker]);
       tui.setFocus(mode.picker);
@@ -250,6 +250,20 @@ export async function open(base: string): Promise<void> {
     render();
   };
 
+  /** Cover the screen with a picker: fetch what it needs and open it, or turn the failure into
+   * the notice. */
+  const overlay = async (back: View, open: () => Promise<Picker>): Promise<void> => {
+    try {
+      const picker = await open();
+      mode = { kind: "overlay", back, picker };
+      notice = undefined;
+      render();
+    } catch (error) {
+      notice = String(error);
+      render();
+    }
+  };
+
   /** The picker's enter sets the default its header names and stays open, so one `/model` can
    * set both; escape returns to `back`. */
   const showModels = async (target: Target, back: View): Promise<void> => {
@@ -261,20 +275,20 @@ export async function open(base: string): Promise<void> {
             json: { target: chosen, provider: model.provider, modelId: model.id },
           }),
         );
-        if (picker !== undefined && mode.kind === "models" && mode.picker === picker)
+        if (picker !== undefined && mode.kind === "overlay" && mode.picker === picker)
           picker.setDefault(chosen, model);
       } catch (error) {
         notice = String(error);
         render();
       }
     };
-    try {
+    await overlay(back, async () => {
       const body = await call(() => client.api.models.$get());
       const { models, defaults } = JSON.parse(body) as {
         readonly models: readonly ModelInfo[];
         readonly defaults: ModelDefaults;
       };
-      picker = new ModelPicker(
+      const built = new ModelPicker(
         tui,
         models,
         defaults,
@@ -282,13 +296,9 @@ export async function open(base: string): Promise<void> {
         (chosen, model) => void set(chosen, model),
         () => swap(back),
       );
-      mode = { kind: "models", back, picker };
-      notice = undefined;
-      render();
-    } catch (error) {
-      notice = String(error);
-      render();
-    }
+      picker = built;
+      return built;
+    });
   };
 
   /** The picker's enter sets the default its header names and stays open, so one `/thinking`
@@ -298,50 +308,39 @@ export async function open(base: string): Promise<void> {
     const set = async (chosen: Target, level: ModelThinkingLevel): Promise<void> => {
       try {
         await call(() => client.api.thinking.$post({ json: { target: chosen, level } }));
-        if (picker !== undefined && mode.kind === "thinking" && mode.picker === picker)
+        if (picker !== undefined && mode.kind === "overlay" && mode.picker === picker)
           picker.setDefault(chosen, level);
       } catch (error) {
         notice = String(error);
         render();
       }
     };
-    try {
+    await overlay(back, async () => {
       const body = await call(() => client.api.thinking.$get());
       const { defaults } = JSON.parse(body) as { readonly defaults: ThinkingDefaults };
-      picker = new ThinkingPicker(
+      const built = new ThinkingPicker(
         tui,
         defaults,
         target,
         (chosen, level) => void set(chosen, level),
         () => swap(back),
       );
-      mode = { kind: "thinking", back, picker };
-      notice = undefined;
-      render();
-    } catch (error) {
-      notice = String(error);
-      render();
-    }
+      picker = built;
+      return built;
+    });
   };
 
-  const showLogin = async (back: View): Promise<void> => {
-    try {
+  const showLogin = async (back: View): Promise<void> =>
+    overlay(back, async () => {
       const body = await call(() => client.api.providers.$get());
       const providers = JSON.parse(body) as readonly ProviderInfo[];
-      const picker = new LoginPicker(
+      return new LoginPicker(
         tui,
         providers,
         (provider, type) => void startLogin(back, provider, type),
         () => swap(back),
       );
-      mode = { kind: "login", back, picker };
-      notice = undefined;
-      render();
-    } catch (error) {
-      notice = String(error);
-      render();
-    }
-  };
+    });
 
   const startLogin = async (back: View, provider: ProviderInfo, type: AuthType): Promise<void> => {
     try {
@@ -506,13 +505,7 @@ export async function open(base: string): Promise<void> {
     // quit on its own release.
     if (isKeyRelease(data)) return undefined;
     // The picker owns every key while it is open.
-    if (
-      mode.kind === "models" ||
-      mode.kind === "thinking" ||
-      mode.kind === "login" ||
-      mode.kind === "login-flow"
-    )
-      return undefined;
+    if (mode.kind === "overlay" || mode.kind === "login-flow") return undefined;
     if (matchesKey(data, "ctrl+c")) {
       const now = Date.now();
       if (now - lastCtrlC < 500) quit();
