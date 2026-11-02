@@ -2,7 +2,7 @@ import type { Context } from "@earendil-works/chord";
 import { clampThinkingLevel, contentText, type Models } from "@earendil-works/pi-ai";
 import {
   AgentDoc,
-  type ContextView,
+  AssistantEntry,
   type ConversationHandle,
   type ConversationId,
   configure,
@@ -60,23 +60,22 @@ export const conversationTask = (git: Git) =>
   defineTask<ConversationTaskInput, ConversationTaskState, string>({
     name: CONVERSATION_TASK,
     version: 1,
-    initial: () => ({ phase: "wait" }),
+    // A worker or researcher has nothing to wait for; a successor waits for its children.
+    initial: (input) => (input.kind === "successor" ? { phase: "wait" } : { phase: "run" }),
     phases: {
       wait: async (record, runtime, context) => {
-        if (record.input.kind === "successor") {
-          const on = record.input.on;
-          await runtime.commit(
-            () => ({
-              status: "waiting",
-              on,
-              policy: "allSettled",
-              checkpoint: { phase: "run" },
-            }),
-            context,
-          );
-          return;
-        }
-        await runtime.commit(() => ({ status: "running", checkpoint: { phase: "run" } }), context);
+        if (record.input.kind !== "successor")
+          throw new Error(`key.conversation ${record.id}: only a successor waits`);
+        const on = record.input.on;
+        await runtime.commit(
+          () => ({
+            status: "waiting",
+            on,
+            policy: "allSettled",
+            checkpoint: { phase: "run" },
+          }),
+          context,
+        );
       },
       run: async (record, runtime, context) => {
         let conversationId = record.state.checkpoint.conversationId;
@@ -136,23 +135,20 @@ function answerOf(entry: EntryRecord | undefined): string {
   return contentText(message.content, "");
 }
 
-/** What answerOfRun needs of a task runtime: one committed context read. */
-type Contexts = {
-  context(conversationId: ConversationId, context: Context): Promise<ContextView>;
+/** What answerOfRun and successorPrompt need of a runtime or tool api: one commit. */
+type Commits = {
+  commit(change: (tx: Tx) => unknown, context: Context): Promise<unknown>;
 };
 
 /** Submit one prompt to a conversation and return its answer; `undefined` when the run aborted. */
 async function answerOfRun(
   handle: ConversationHandle,
-  runtime: Contexts,
+  commits: Commits,
   context: Context,
   key: string,
   text: string,
 ): Promise<string | undefined> {
-  const submission = await handle.submit(
-    { type: "input", content: text, requestId: key, whenBusy: "steer" },
-    context,
-  );
+  const submission = await handle.submit({ type: "input", content: text, requestId: key }, context);
   const settled = await submission.wait(context);
   if (settled.status === "unanswered" && settled.reason === "aborted") return undefined;
   if (settled.status !== "done" || settled.type !== "input") {
@@ -161,11 +157,11 @@ async function answerOfRun(
         (settled.status === "unanswered" ? `: ${settled.reason}` : ""),
     );
   }
-  return answerOf(
-    (await runtime.context(handle.id, context)).entries.find(
-      (entry) => entry.id === settled.answer,
-    ),
-  );
+  let entry: EntryRecord | undefined;
+  await commits.commit(async (tx) => {
+    entry = await tx.entry(AssistantEntry, settled.answer);
+  }, context);
+  return answerOf(entry);
 }
 
 type Child = {
@@ -173,11 +169,6 @@ type Child = {
   readonly conversation: ConversationId;
   readonly answer?: string;
   readonly status: string;
-};
-
-/** What successorPrompt needs of a task runtime: one commit. */
-type Commits = {
-  commit(change: (tx: Tx) => unknown, context: Context): Promise<void>;
 };
 
 /** The successor's opening: each child's diff, or its answer when it made no diff. */
@@ -308,7 +299,7 @@ const RunChildren = defineDoc<
   version: 1,
   scope: "conversation",
   history: "latest",
-  fork: "current",
+  fork: "initial",
   initial: () => ({}),
   checkpointWhen: () => false,
 });
@@ -422,68 +413,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
   return { Delegate, Research };
 }
 
-/** One question answered in a private copy of a settled conversation; the original is untouched. */
-type AskInput = {
-  readonly conversation: ConversationId;
-  readonly question: string;
-};
-
-type AskTaskState = { readonly phase: "ask"; readonly conversationId?: ConversationId };
-
-const AskTask = defineTask<AskInput, AskTaskState, string>({
-  name: "key.ask",
-  version: 1,
-  initial: () => ({ phase: "ask" }),
-  phases: {
-    ask: async (record, runtime, context) => {
-      const { conversation, question } = record.input;
-      let copyId = record.state.checkpoint.conversationId;
-      if (copyId === undefined) {
-        await runtime.commit(async (tx) => {
-          copyId = (await tx.scanConversations({ ownerTaskId: record.id }, 1)).items[0]?.id;
-          if (copyId === undefined) {
-            const at = await tx.latestEntryId(conversation);
-            if (at === undefined)
-              throw new Error(`key.ask ${record.id}: conversation #${conversation} is empty`);
-            copyId = (
-              await tx.forkConversation(conversation, at, {
-                ownership: { kind: "task", taskId: record.id },
-              })
-            ).id;
-          }
-          return { status: "running", checkpoint: { phase: "ask", conversationId: copyId } };
-        }, context);
-      }
-      if (copyId === undefined) throw new Error(`key.ask ${record.id}: no conversation copy`);
-      const handle = await runtime.conversation(copyId, context);
-      if (handle === undefined)
-        throw new Error(`key.ask ${record.id}: conversation ${copyId} is gone`);
-
-      const answer = await answerOfRun(handle, runtime, context, `key.ask:${record.id}`, question);
-      await runtime.commit(
-        () => ({
-          status: "terminal",
-          outcome:
-            answer === undefined ? { status: "aborted" } : { status: "completed", result: answer },
-        }),
-        context,
-      );
-    },
-  },
-  abort: async (_record, runtime, context) => {
-    await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context);
-  },
-});
-
-/** A replay of one ask tool call reattaches to the question its first attempt started. */
-const AskCall = defineDoc<{ taskId?: TaskId<string> }>({
-  kind: "key.ask-call",
-  version: 1,
-  scope: "task",
-  initial: () => ({}),
-  checkpointWhen: () => false,
-});
-
+/** Ask one settled conversation a question: it answers in a private fork of its own context. */
 const Ask = defineTool({
   name: "ask",
   description:
@@ -494,20 +424,24 @@ const Ask = defineTool({
   }),
   replay: "safe",
   execute: async ({ conversation, question }, api, context) => {
-    const task = await api.commit(async (tx) => {
-      const call = await tx.doc(AskCall, api.taskId);
-      if (call.taskId !== undefined) return call.taskId;
-      call.taskId = await tx.createTask(
-        AskTask,
-        { conversation: conversation as ConversationId, question },
-        { ownership: { kind: "task", taskId: api.taskId } },
-      );
-      return call.taskId;
+    const target = conversation as ConversationId;
+    const fork = await api.commit(async (tx) => {
+      // The ownership index remembers the fork, so a replay or restart reuses it.
+      const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+      if (existing !== undefined) return existing.id;
+      const at = await tx.latestEntryId(target);
+      if (at === undefined) throw new Error(`ask: conversation #${target} is empty`);
+      return (
+        await tx.forkConversation(target, at, {
+          ownership: { kind: "task", taskId: api.taskId },
+        })
+      ).id;
     }, context);
-    const settled = await api.waitForTask(task, context);
-    if (settled.state.outcome.status !== "completed")
-      throw new Error(`ask failed: ${settled.state.outcome.status}`);
-    return { output: [{ type: "text", text: settled.state.outcome.result }] };
+    const handle = await api.conversation(fork, context);
+    if (handle === undefined) throw new Error(`ask: conversation fork ${fork} is gone`);
+    const answer = await answerOfRun(handle, api, context, `key.ask:${api.taskId}`, question);
+    if (answer === undefined) throw new Error("ask failed: aborted");
+    return { output: [{ type: "text", text: answer }] };
   },
 });
 
@@ -541,7 +475,7 @@ export const keySystem = (git: Git) => {
         },
       }),
     ],
-    tasks: [ConversationTask, SuccessorTask, AskTask],
+    tasks: [ConversationTask, SuccessorTask],
     tools: [Delegate, Research, Ask],
   });
 };
