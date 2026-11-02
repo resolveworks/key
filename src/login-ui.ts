@@ -13,12 +13,11 @@ import {
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
-import { FilterList } from "./filter-list.ts";
+import { FilterList, LAYOUT } from "./filter-list.ts";
 import type { LoginEvent, LoginPrompt, ProviderInfo } from "./login.ts";
 import { selectTheme, style } from "./theme.ts";
 
-const MAX_VISIBLE = 12;
-const LAYOUT = { minPrimaryColumnWidth: 56, maxPrimaryColumnWidth: 56 };
+const PROMPT_MAX_VISIBLE = 12;
 
 type Choice = { readonly provider: ProviderInfo; readonly type: AuthType };
 
@@ -198,7 +197,7 @@ export class LoginView extends Container implements Focusable {
           label: option.label,
           ...(option.description === undefined ? {} : { description: option.description }),
         })),
-        Math.max(1, Math.min(prompt.options.length, MAX_VISIBLE)),
+        Math.max(1, Math.min(prompt.options.length, PROMPT_MAX_VISIBLE)),
         selectTheme,
         LAYOUT,
       );

@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { AuthType, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { AuthType } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import {
   type AutocompleteSuggestions,
@@ -90,6 +90,12 @@ export async function open(base: string): Promise<void> {
   let starting = false;
   let loginWatch: (() => void) | undefined;
 
+  /** A failed action, shown once until the next state replaces it. */
+  const fail = (error: unknown): void => {
+    notice = String(error);
+    render();
+  };
+
   const streaming = (id: number): boolean =>
     summaries.some((summary) => summary.id === id && summary.streaming);
 
@@ -108,7 +114,7 @@ export async function open(base: string): Promise<void> {
       : { cwd: here.cwd ?? "" };
   };
 
-  /** The default `/new`'s own completion carries, so a tab types it. */
+  /** The default `/new`'s own completion carries, fixed where the provider is built. */
   const freshDefault = (): string => shortenHome(freshCwd(undefined, leaving(), process.cwd()));
 
   // The terminal owns the screen and the scrollback: within a view the document only grows, so
@@ -137,7 +143,7 @@ export async function open(base: string): Promise<void> {
       throw error;
     }
   };
-  prompt.setAutocompleteProvider(provider(complete, freshDefault));
+  prompt.setAutocompleteProvider(provider(complete, freshDefault()));
   /** The composer's draft, wherever it lives: the editor's text while open, its store while covered. */
   const composerDraft = (): string =>
     place().kind === "new" ? prompt.getText() : (drafts.get("new") ?? "");
@@ -259,74 +265,63 @@ export async function open(base: string): Promise<void> {
       notice = undefined;
       render();
     } catch (error) {
-      notice = String(error);
-      render();
+      fail(error);
     }
   };
 
   /** The picker's enter sets the default its header names and stays open, so one `/model` can
    * set both; escape returns to `back`. */
   const showModels = async (target: Target, back: View): Promise<void> => {
-    let picker: ModelPicker | undefined;
-    const set = async (chosen: Target, model: ModelInfo): Promise<void> => {
-      try {
-        await call(() =>
-          client.api.models.defaults.$post({
-            json: { target: chosen, provider: model.provider, modelId: model.id },
-          }),
-        );
-        if (picker !== undefined && mode.kind === "overlay" && mode.picker === picker)
-          picker.setDefault(chosen, model);
-      } catch (error) {
-        notice = String(error);
-        render();
-      }
-    };
     await overlay(back, async () => {
       const body = await call(() => client.api.models.$get());
       const { models, defaults } = JSON.parse(body) as {
         readonly models: readonly ModelInfo[];
         readonly defaults: ModelDefaults;
       };
-      const built = new ModelPicker(
+      const picker = new ModelPicker(
         tui,
         models,
         defaults,
         target,
-        (chosen, model) => void set(chosen, model),
+        async (chosen, model) => {
+          try {
+            await call(() =>
+              client.api.models.defaults.$post({
+                json: { target: chosen, provider: model.provider, modelId: model.id },
+              }),
+            );
+            picker.setDefault(chosen, model);
+          } catch (error) {
+            fail(error);
+          }
+        },
         () => swap(back),
       );
-      picker = built;
-      return built;
+      return picker;
     });
   };
 
   /** The picker's enter sets the default its header names and stays open, so one `/thinking`
    * can set both; escape returns to `back`. */
   const showThinking = async (target: Target, back: View): Promise<void> => {
-    let picker: ThinkingPicker | undefined;
-    const set = async (chosen: Target, level: ModelThinkingLevel): Promise<void> => {
-      try {
-        await call(() => client.api.thinking.$post({ json: { target: chosen, level } }));
-        if (picker !== undefined && mode.kind === "overlay" && mode.picker === picker)
-          picker.setDefault(chosen, level);
-      } catch (error) {
-        notice = String(error);
-        render();
-      }
-    };
     await overlay(back, async () => {
       const body = await call(() => client.api.thinking.$get());
       const { defaults } = JSON.parse(body) as { readonly defaults: ThinkingDefaults };
-      const built = new ThinkingPicker(
+      const picker = new ThinkingPicker(
         tui,
         defaults,
         target,
-        (chosen, level) => void set(chosen, level),
+        async (chosen, level) => {
+          try {
+            await call(() => client.api.thinking.$post({ json: { target: chosen, level } }));
+            picker.setDefault(chosen, level);
+          } catch (error) {
+            fail(error);
+          }
+        },
         () => swap(back),
       );
-      picker = built;
-      return built;
+      return picker;
     });
   };
 
@@ -358,8 +353,7 @@ export async function open(base: string): Promise<void> {
       render();
       loginWatch = follow<LoginEvent>(client.api.login.$url(), (event) => view.apply(event));
     } catch (error) {
-      notice = String(error);
-      render();
+      fail(error);
     }
   };
 
@@ -367,22 +361,17 @@ export async function open(base: string): Promise<void> {
     try {
       await call(() => client.api.login.respond.$post({ json: { id, value } }));
     } catch (error) {
-      notice = String(error);
-      render();
+      fail(error);
     }
   };
 
   const cancelLogin = async (back: View): Promise<void> => {
-    let failure: string | undefined;
     try {
       await call(() => client.api.login.abort.$post());
+      swap(back);
     } catch (error) {
-      failure = String(error);
-    }
-    swap(back);
-    if (failure !== undefined) {
-      notice = failure;
-      render();
+      swap(back);
+      fail(error);
     }
   };
 
@@ -443,8 +432,7 @@ export async function open(base: string): Promise<void> {
         render();
       }
     } catch (error) {
-      notice = String(error);
-      render();
+      fail(error);
     } finally {
       starting = false;
     }
@@ -454,8 +442,7 @@ export async function open(base: string): Promise<void> {
     try {
       await call(() => client.api.conversations[":id"].abort.$post({ param: { id: String(id) } }));
     } catch (error) {
-      notice = String(error);
-      render();
+      fail(error);
     }
   };
 
@@ -488,8 +475,7 @@ export async function open(base: string): Promise<void> {
         spend();
         swap(composer);
       } catch (error) {
-        notice = String(error);
-        render();
+        fail(error);
       }
       return;
     }

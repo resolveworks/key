@@ -15,9 +15,9 @@ export function provider(
     force: boolean,
     signal: AbortSignal,
   ) => Promise<AutocompleteSuggestions | null>,
-  freshDefault: () => string,
+  freshDefault: string,
 ): AutocompleteProvider {
-  // Built per ask: the default moves with the place `/new` would leave.
+  // The directory a bare `/new` would run, fixed where the provider was built.
   const commands = (): AutocompleteItem[] => [
     { value: "list", label: "list", description: "list past conversations" },
     {
@@ -35,7 +35,7 @@ export function provider(
       label: "login",
       description: "configure a provider",
     },
-    { value: `new ${freshDefault()}`, label: `new ${freshDefault()}`, description: "start fresh" },
+    { value: `new ${freshDefault}`, label: `new ${freshDefault}`, description: "start fresh" },
   ];
   // The library's provider kept for its text grammar alone: an unforced line that starts with
   // "/" is its command branch, and the client's commands are the only ones — no path is ever
