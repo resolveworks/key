@@ -193,4 +193,75 @@ describe("restart", () => {
       expect(await conversationOf(second, child.id)).toBe(conversations.get(child.id));
     }
   });
+
+  it("an ask interrupted by a restart resumes in its one fork", async () => {
+    const setup = keySetup();
+    const env = new FakeEnv();
+    const storage = new ReopenableStorage();
+    const first = await openKey(storage, setup, env);
+    opened.push(first);
+    const main = await first.createConversation(
+      { ownership: { kind: "ownerless" }, agent: { model: MODEL, cwd: REPO } },
+      context,
+    );
+    const hung = unanswered();
+    const asking = route(
+      (request) =>
+        request.messages.at(-1)?.role === "toolResult"
+          ? fauxAssistantMessage("done after ask")
+          : fauxAssistantMessage(
+              fauxToolCall("ask", { conversation: main.id, question: "WHY-ASK" }),
+              { stopReason: "toolUse" },
+            ),
+      { "WHY-ASK": hung.step },
+    );
+    setup.faux.setResponses([asking, asking, asking]);
+    const submission = await main.submit({ type: "input", content: "kick off" }, context);
+    first.resume();
+    await hung.reached;
+
+    const second = await restart(storage, first, setup, env);
+    opened.push(second);
+    const finish: FauxResponseStep = (request) => {
+      const text = requestText(request.messages);
+      if (text.includes("WHY-ASK")) return fauxAssistantMessage("ANSWER-FROM-FROZEN");
+      return fauxAssistantMessage("done after ask");
+    };
+    setup.faux.setResponses([finish, finish, finish]);
+    second.resume();
+    const resumed = await second.submission(submission.id, context);
+    if (resumed === undefined) throw new Error(`no submission #${submission.id}`);
+    expect((await resumed.wait(context)).status).toBe("done");
+
+    // The rerun reattached to the first fork and resent nothing: one fork, one question, no ask task.
+    const picture = await second.commit(async (tx) => {
+      const forks = (await tx.scanConversations({}, 100)).items.filter(
+        (item) => item.parent?.conversationId === main.id,
+      );
+      return {
+        asks: (await tx.scanTasks({ kind: "key.ask" }, 10)).items.length,
+        forks: await Promise.all(
+          forks.map(async (fork) => {
+            const owner = fork.owner?.taskId;
+            const entries = await tx.scanEntries(
+              { conversationId: fork.id, order: "ascending" },
+              100,
+            );
+            return {
+              owner: owner === undefined ? undefined : (await tx.task(owner))?.kind,
+              questions: entries.items.filter(
+                (entry) => entry.kind === "pi.user" && entry.conversationId === fork.id,
+              ),
+            };
+          }),
+        ),
+      };
+    }, context);
+    expect(picture.asks).toBe(0);
+    expect(picture.forks).toHaveLength(1);
+    expect(picture.forks[0]?.owner).toBe("pi.tool");
+    expect(picture.forks[0]?.questions).toHaveLength(1);
+    const transcript = JSON.stringify(await entries(second, main.id));
+    expect(transcript).toContain("ANSWER-FROM-FROZEN");
+  });
 });

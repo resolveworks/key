@@ -339,6 +339,64 @@ describe("ask", () => {
     expect(successor).not.toContain("parent final");
     expect(successor).toContain(`conversation #${parent}`);
   });
+
+  it("is one fork owned by its call, with no ask task between", async () => {
+    const { faux, harness } = await fresh();
+    const target = await conversation(harness);
+    const ask: FauxResponseStep = (request) => {
+      const text = requestText(request.messages);
+      if (text.includes("WHY-ASK")) return turn("ANSWER-FROM-FROZEN");
+      if (text.includes("background context")) return turn("target answer");
+      return request.messages.at(-1)?.role === "toolResult"
+        ? turn("asked and answered")
+        : fauxAssistantMessage(
+            fauxToolCall("ask", { conversation: target.id, question: "WHY-ASK" }),
+            { stopReason: "toolUse" },
+          );
+    };
+    faux.setResponses([ask, ask, ask, ask]);
+    const settledTarget = await target.submit(
+      { type: "input", content: "background context" },
+      context,
+    );
+    harness.resume();
+    expect((await settledTarget.wait(context)).status).toBe("done");
+    const before = await entries(harness, target.id);
+
+    const main = await conversation(harness);
+    const asked = await main.submit({ type: "input", content: "kick off" }, context);
+    expect((await asked.wait(context)).status).toBe("done");
+
+    const picture = await harness.commit(async (tx) => {
+      const forks = (await tx.scanConversations({}, 100)).items.filter(
+        (item) => item.parent?.conversationId === target.id,
+      );
+      return {
+        asks: (await tx.scanTasks({ kind: "key.ask" }, 10)).items.length,
+        forks: await Promise.all(
+          forks.map(async (fork) => {
+            const owner = fork.owner?.taskId;
+            const entries = await tx.scanEntries(
+              { conversationId: fork.id, order: "ascending" },
+              100,
+            );
+            return {
+              owner: owner === undefined ? undefined : (await tx.task(owner))?.kind,
+              questions: entries.items.filter(
+                (entry) => entry.kind === "pi.user" && entry.conversationId === fork.id,
+              ),
+            };
+          }),
+        ),
+      };
+    }, context);
+    expect(picture.asks).toBe(0);
+    expect(picture.forks).toHaveLength(1);
+    expect(picture.forks[0]?.owner).toBe("pi.tool");
+    expect(picture.forks[0]?.questions).toHaveLength(1);
+    expect(await entries(harness, target.id)).toEqual(before);
+    expect(JSON.stringify(await entries(harness, main.id))).toContain("ANSWER-FROM-FROZEN");
+  });
 });
 
 describe("a continuation", () => {
