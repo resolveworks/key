@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { CACHE_ENV, sandboxCommand } from "../src/sandbox.ts";
+import { sandboxCommand } from "../src/sandbox.ts";
 
 const daemon = "/daemon";
 const temporary: string[] = [];
@@ -78,20 +78,5 @@ describe("sandboxCommand", () => {
 
     expect(indexOf(command, "--bind", worktree, worktree)).toBeGreaterThanOrEqual(0);
     expect(indexOf(command, "--bind", gitDir, gitDir)).toBeGreaterThanOrEqual(0);
-  });
-});
-
-describe("CACHE_ENV", () => {
-  test("declares the package stores and signs git off, like Ward's unit", () => {
-    expect(CACHE_ENV).toEqual({
-      UV_PREVIEW_FEATURES: "centralized-project-envs",
-      pnpm_config_store_dir: join(homedir(), ".local/share/pnpm/store"),
-      pnpm_config_enable_global_virtual_store: "true",
-      GIT_CONFIG_COUNT: "2",
-      GIT_CONFIG_KEY_0: "commit.gpgsign",
-      GIT_CONFIG_VALUE_0: "false",
-      GIT_CONFIG_KEY_1: "tag.gpgsign",
-      GIT_CONFIG_VALUE_1: "false",
-    });
   });
 });

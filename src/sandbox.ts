@@ -16,18 +16,6 @@ const CACHES = [
   join(home, ".cargo"),
 ] as const;
 
-/** The environment every command inherits, declared like Ward's unit: package stores in the caches, signing off. */
-export const CACHE_ENV: Record<string, string> = {
-  UV_PREVIEW_FEATURES: "centralized-project-envs",
-  pnpm_config_store_dir: join(home, ".local/share/pnpm/store"),
-  pnpm_config_enable_global_virtual_store: "true",
-  GIT_CONFIG_COUNT: "2",
-  GIT_CONFIG_KEY_0: "commit.gpgsign",
-  GIT_CONFIG_VALUE_0: "false",
-  GIT_CONFIG_KEY_1: "tag.gpgsign",
-  GIT_CONFIG_VALUE_1: "false",
-};
-
 export type Sandbox = { readonly connection: Connection; readonly env: RemoteExecutionEnv };
 
 /** The main repository's `.git` when `cwd` is a linked worktree outside it. */
@@ -89,7 +77,6 @@ export function openSandbox(conversationId: ConversationId, cwd: string, daemon:
     connection,
     id: `bwrap:${conversationId}`,
     cwd,
-    shellEnv: CACHE_ENV,
   });
   return { connection, env };
 }
