@@ -23,6 +23,14 @@ import { keySystem } from "../src/system.ts";
 import { fakeGit, REPO } from "./git.ts";
 import { requestText, route } from "./harness.ts";
 
+/** In-memory storage a second Host can open again: the records outlive the Session that wrote them. */
+class ReopenableStorage extends MemoryStorage {
+  reopen(): this {
+    (this as unknown as { closed: boolean }).closed = false;
+    return this;
+  }
+}
+
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
 type Transcript = { readonly view: ConversationView; readonly stats?: Stats };
 
@@ -84,8 +92,8 @@ describe("host", () => {
     models.setProvider(faux.provider);
     models.setProvider(groqProvider());
     host = new Host({
-      models: () => models,
-      storage: () => new MemoryStorage(),
+      models,
+      storage: new MemoryStorage(),
       extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
@@ -271,8 +279,8 @@ describe("host", () => {
     const models = createModels();
     models.setProvider(faux.provider);
     const local = new Host({
-      models: () => models,
-      storage: () => new MemoryStorage(),
+      models,
+      storage: new MemoryStorage(),
       extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
       port: 0,
       hostname: "127.0.0.1",
@@ -347,7 +355,54 @@ describe("host", () => {
     await list.close();
   });
 
-  test("the conversation list streams a snapshot and later changes", async () => {
+  test("a restarted host lists the same conversations with their kickoff labels", async () => {
+    // One storage across two hosts: the kickoff prompt the first host stored names the cascade
+    // the second lists, without reading any transcript. Closing a Session closes its storage, so
+    // the second opening reopens the same in-memory one — a restart.
+    const storage = new ReopenableStorage();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const open = async () => {
+      const reopened = new Host({
+        models,
+        storage,
+        extensions: [CodingTools, keySystem(fakeGit, () => models).extension, Agents],
+        port: 0,
+        hostname: "127.0.0.1",
+      });
+      await reopened.open();
+      await reopened.setModelDefault("conversation", {
+        provider: "deepseek",
+        modelId: "deepseek-flash",
+      });
+      await reopened.setModelDefault("child", {
+        provider: "deepseek",
+        modelId: "deepseek-flash",
+      });
+      reopened.resume();
+      return reopened;
+    };
+
+    faux.setResponses([fauxAssistantMessage("hello")]);
+    const first = await open();
+    const id = await first.run(REPO, "say hello");
+    await settled(first, id);
+    await first.close();
+    storage.reopen();
+
+    const second = await open();
+    expect(second.summaries).toEqual([
+      { id, label: "say hello", cwd: REPO, depth: 0, streaming: false, attention: true },
+    ]);
+    // The stop survived the restart unseen: looking at it retires the mark again.
+    const watch = await second.watch(id);
+    if (watch === undefined) throw new Error(`no conversation #${id}`);
+    await watch.stop();
+    expect(second.summaries[0]?.attention).toBe(false);
+    await second.close();
+  });
+
+  test("a transcript list streams a snapshot and later changes", async () => {
     const response = await app.request("/api/conversations");
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     const frames = new Frames(response.body as ReadableStream<Uint8Array>);
@@ -650,6 +705,18 @@ describe("host", () => {
   /** The transcript list stream, as the client opens it. */
   async function openList(): Promise<Frames> {
     return new Frames((await app.request("/api/conversations")).body as ReadableStream<Uint8Array>);
+  }
+
+  /** Resolve once a host's list shows the conversation stopped, needing attention. */
+  async function settled(target: Host, id: number): Promise<void> {
+    for (
+      let i = 0;
+      !target.summaries.some((item) => item.id === id && !item.streaming && item.attention);
+      i++
+    ) {
+      if (i > 200) throw new Error("the conversation never stopped for attention");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
   }
 
   /** Start a conversation from a prompt, as a client does: the prompt and its directory. */

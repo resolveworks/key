@@ -17,6 +17,7 @@ import {
   type ConversationView,
   type Cursor,
   createRegistry,
+  defineDoc,
   type Extension,
   Harness,
   type JsonObject,
@@ -65,10 +66,22 @@ export const PORT = 7317;
 /** Everything the host owns lives here, outside every project: store, credentials. */
 const dataDirectory = join(homedir(), ".key");
 
+/** The prompt a human started a cascade with, stored once on the ownerless conversation it began:
+ * the list's label for it, without reading its transcript. */
+const KickoffDoc = defineDoc<{ prompt?: string }>({
+  kind: "key.kickoff",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({}),
+  checkpointWhen: () => true,
+});
+
 /** What the host runs on. `new Host()` is one box: defaults on the session at `PORT`. */
 export type HostOptions = {
-  readonly models: () => Models;
-  readonly storage: () => Storage | Promise<Storage>;
+  readonly models: Models;
+  readonly storage: Storage | Promise<Storage>;
   readonly extensions: readonly Extension[];
   readonly port: number;
   /** The interface the server listens on: `KEY_BIND`, loopback by default. */
@@ -80,11 +93,11 @@ const production = (): HostOptions => {
     credentials: new FileCredentialStore(join(dataDirectory, "auth.json")),
   });
   return {
-    models: () => models,
-    storage: async () => {
+    models,
+    storage: (async () => {
       mkdirSync(dataDirectory, { recursive: true });
       return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
-    },
+    })(),
     extensions: [CodingTools, keySystem(git, () => models).extension, Search, Fetch, Agents],
     port: PORT,
     hostname: process.env.KEY_BIND ?? "127.0.0.1",
@@ -167,7 +180,7 @@ export class Host {
     readonly models: readonly ModelInfo[];
   }> {
     const [models, defaults] = await Promise.all([
-      this.#options.models().getAvailable(),
+      this.#options.models.getAvailable(),
       this.#stored(ModelDefaultsDoc),
     ]);
     return {
@@ -200,7 +213,7 @@ export class Host {
 
   /** Every provider `/login` can configure, with what it offers and whether it is set up. */
   async providers(): Promise<readonly ProviderInfo[]> {
-    const models = this.#options.models();
+    const models = this.#options.models;
     return Promise.all(
       [...models.getProviders()]
         .sort((left, right) => left.name.localeCompare(right.name))
@@ -237,7 +250,7 @@ export class Host {
 
   /** Begin a login the client follows; a new one cancels whatever was still waiting. */
   startLogin(providerId: string, type: AuthType): void {
-    const models = this.#options.models();
+    const models = this.#options.models;
     const provider = models.getProvider(providerId);
     if (provider === undefined) throw new Error(`unknown provider: ${providerId}`);
     const method = type === "oauth" ? provider.auth.oauth : provider.auth.apiKey;
@@ -255,7 +268,7 @@ export class Host {
 
   /** Point one default at a catalog model; a request fails later if its provider has no key. */
   async setModelDefault(target: Target, ref: ModelRef): Promise<void> {
-    if (this.#options.models().getModel(ref.provider, ref.modelId) === undefined)
+    if (this.#options.models.getModel(ref.provider, ref.modelId) === undefined)
       throw new Error(`unknown model: ${ref.provider}/${ref.modelId}`);
     await this.#harness.commit(async (tx) => {
       (await tx.doc(ModelDefaultsDoc))[target] = { ...ref };
@@ -267,7 +280,7 @@ export class Host {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
     const ref = agent?.model;
     if (ref === undefined) throw new Error(`conversation ${view.conversation.id} has no model`);
-    const model = this.#options.models().getModel(ref.provider, ref.modelId);
+    const model = this.#options.models.getModel(ref.provider, ref.modelId);
     const branch = await branchOf(agent?.cwd);
     return {
       ...(branch === undefined ? {} : { branch }),
@@ -290,9 +303,9 @@ export class Host {
     const registry = createRegistry();
     for (const extension of this.#options.extensions) registry.install(extension);
     this.#harness = await Harness.open(
-      await this.#options.storage(),
+      await this.#options.storage,
       {
-        models: this.#options.models(),
+        models: this.#options.models,
         registry,
         env: (target) => {
           // A conversation without a root is a bug to surface, not to paper over.
@@ -326,7 +339,7 @@ export class Host {
 
   /** One catalog model, or the loud failure of a default that names none. */
   #model(ref: { readonly provider: string; readonly modelId: string }) {
-    const model = this.#options.models().getModel(ref.provider, ref.modelId);
+    const model = this.#options.models.getModel(ref.provider, ref.modelId);
     if (model === undefined) throw new Error(`unknown model: ${ref.provider}/${ref.modelId}`);
     return model;
   }
@@ -364,6 +377,10 @@ export class Host {
           thinkingLevel: clampThinkingLevel(this.#model(ref), level),
           instructions: CONVERSATION_INSTRUCTIONS,
         },
+        // The kickoff prompt is named once, in the commit that creates the conversation.
+        init: async (tx, id) => {
+          (await tx.doc(KickoffDoc, id)).prompt = prompt;
+        },
       },
       context,
     );
@@ -398,14 +415,30 @@ export class Host {
     if (added) await this.#publish();
   }
 
-  /** Recompute the transcript list and push it to every attached client. */
+  /** Recompute the transcript list, push it to every attached client, then settle the seen
+   * marks it says are due: the Host's watch paths own every SeenDoc write, never the projection. */
   async #publish(): Promise<void> {
-    this.#summaries = await this.#summarise();
+    const { summaries, retired, attended } = await this.#summarise();
+    this.#summaries = summaries;
     for (const listener of this.#listeners) listener(this.#summaries);
+    if (retired.size > 0 || attended.size > 0) {
+      await this.#harness.commit(async (tx) => {
+        const doc = await tx.doc(SeenDoc);
+        doc.seen = doc.seen.filter((id) => !retired.has(id));
+        for (const id of attended) if (!doc.seen.includes(id)) doc.seen.push(id);
+      }, context);
+    }
   }
 
-  async #summarise(): Promise<readonly Summary[]> {
-    const { conversations, runs } = await this.#scan();
+  /** The transcript list as a pure projection of one scan: nothing is written, so publishing
+   * cannot recurse. Besides the list it reports the seen marks due for settling: the stops that
+   * ended, whose marks retire, and the stops a looker witnessed, whose marks stand. */
+  async #summarise(): Promise<{
+    readonly summaries: readonly Summary[];
+    readonly retired: ReadonlySet<number>;
+    readonly attended: ReadonlySet<number>;
+  }> {
+    const { conversations, runs, cwds, states, kickoffs, seen: seenList } = await this.#scan();
     const owners = new Map(conversations.map(({ id, owner }) => [id, owner?.taskId]));
     // The graph holds live tasks only. Cascade liveness suppresses the final-frontier dot;
     // a blocked task is the one live state that needs the human now.
@@ -433,15 +466,9 @@ export class Host {
       else succeeded.add(run.conversationId);
       if (run.state.status === "completing" || run.state.status === "terminal") ended.add(run.id);
     }
-    const cwds = new Map<number, string>();
     const prompts = new Map<number, string>();
-    const states = new Map<number, LiveState>();
     for (const { id, owner } of conversations) {
-      const cwd = (await this.#harness.snapshot(AgentDoc, id as ConversationId, context))?.cwd;
-      if (cwd !== undefined) cwds.set(id, cwd);
-      const live = await this.#harness.snapshot(LiveDoc, id as ConversationId, context);
-      if (live !== undefined) states.set(id, live);
-      const prompt = owner === undefined ? await this.#kickoffPrompt(id) : labels.get(owner.taskId);
+      const prompt = owner === undefined ? kickoffs.get(id) : labels.get(owner.taskId);
       if (prompt !== undefined) prompts.set(id, prompt);
     }
     /** A conversation whose story continues elsewhere: a successor, or a child that has ended. */
@@ -459,7 +486,7 @@ export class Host {
       if (live?.runFailure !== undefined) return live.runFailure.reason !== "aborted";
       return !cascade.has(id);
     };
-    const seen = new Set((await this.#stored(SeenDoc)).seen);
+    const seen = new Set(seenList);
     /** A mark whose stop ended: the cascade moved on, so the next stop flags anew. */
     const retired = new Set<number>();
     /** A stop that landed while someone had its transcript open: not a call for attention. */
@@ -483,21 +510,19 @@ export class Host {
     });
     // Retire the marks whose stops ended, and keep the ones a looker just witnessed: the doc
     // holds only the stops that stand.
-    if (retired.size > 0 || attended.size > 0) {
-      await this.#harness.commit(async (tx) => {
-        const doc = await tx.doc(SeenDoc);
-        doc.seen = doc.seen.filter((id) => !retired.has(id));
-        for (const id of attended) if (!doc.seen.includes(id)) doc.seen.push(id);
-      }, context);
-    }
-    return summaries;
+    return { summaries, retired, attended };
   }
 
-  /** The conversations and their key.conversation tasks, as one commit sees them: the graph holds live
-   * tasks only, so the list reads the stored records, live or ended. */
+  /** Everything the list needs, as one commit sees it: the conversations and their
+   * key.conversation tasks with each one's agent, live, and kickoff documents, and the seen marks.
+   * The graph holds live tasks only, so the list reads the stored records, live or ended. */
   async #scan(): Promise<{
     readonly conversations: readonly ContextConversation[];
     readonly runs: readonly RunRecord[];
+    readonly cwds: ReadonlyMap<number, string | undefined>;
+    readonly states: ReadonlyMap<number, LiveState>;
+    readonly kickoffs: ReadonlyMap<number, string>;
+    readonly seen: readonly number[];
   }> {
     return this.#harness.commit(async (tx) => {
       const all = async <T>(
@@ -519,25 +544,28 @@ export class Host {
       // key.conversation children. Tool-private continuations (key.ask forks) stay durable
       // but never list.
       const listed = new Set(runs.map(({ id }) => Number(id)));
-      return {
-        conversations: (await all((cursor) => tx.scanConversations({}, SCAN_PAGE_SIZE, cursor)))
-          .map(({ id, owner }) => ({ id, owner }))
-          .filter(({ owner }) => owner === undefined || listed.has(Number(owner.taskId))),
-        runs,
-      };
+      const conversations = (
+        await all((cursor) => tx.scanConversations({}, SCAN_PAGE_SIZE, cursor))
+      )
+        .map(({ id, owner }) => ({ id, owner }))
+        .filter(({ owner }) => owner === undefined || listed.has(Number(owner.taskId)));
+      // Read the per-conversation documents in the same commit, so the list is one consistent
+      // picture; every conversation carries `pi.agent` and `pi.live` from its creation. Drafts
+      // live only inside the commit, so their values are copied out for the projection.
+      const cwds = new Map<number, string | undefined>();
+      const states = new Map<number, LiveState>();
+      const kickoffs = new Map<number, string>();
+      for (const { id, owner } of conversations) {
+        cwds.set(id, (await tx.doc(AgentDoc, id as ConversationId)).cwd);
+        states.set(id, plain(await tx.doc(LiveDoc, id as ConversationId)));
+        if (owner === undefined) {
+          const prompt = (await tx.doc(KickoffDoc, id as ConversationId)).prompt;
+          if (prompt !== undefined) kickoffs.set(id, prompt);
+        }
+      }
+      const seen = [...(await tx.doc(SeenDoc)).seen];
+      return { conversations, runs, cwds, states, kickoffs, seen };
     }, context);
-  }
-
-  /** An ownerless conversation is named by the human prompt that started it. */
-  async #kickoffPrompt(id: number): Promise<string | undefined> {
-    const conversation = await this.#harness.conversation(id as ConversationId, context);
-    if (conversation === undefined) throw new Error(`no conversation #${id}`);
-    const first = (await conversation.entries({ order: "ascending" }, 1, undefined, context))
-      .items[0];
-    const message = first?.model?.[0];
-    return message?.role === "user" && typeof message.content === "string"
-      ? message.content
-      : undefined;
   }
 
   async listen(): Promise<void> {
@@ -604,4 +632,10 @@ async function branchOf(cwd: string | undefined): Promise<string | undefined> {
     .then((stdout) => stdout.trim())
     .catch(() => "");
   return branch === "" ? undefined : branch;
+}
+
+/** A draft's value as a plain detached object: drafts live only inside their commit, and
+ * structuredClone refuses their proxies. */
+function plain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
