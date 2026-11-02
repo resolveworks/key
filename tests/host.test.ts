@@ -35,6 +35,9 @@ class ReopenableStorage extends MemoryStorage {
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
 type Transcript = { readonly view: ConversationView; readonly stats?: Stats };
 
+const allNamed = (frame: readonly Summary[], count: number): boolean =>
+  frame.length === count && frame.every(({ label }) => label !== "");
+
 /** A host's SSE stream, read frame by frame with data lines joined the way the client joins them. */
 class Frames {
   #reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -244,8 +247,8 @@ describe("host", () => {
     faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     const kickoff = await runId("kick off");
-    const heir = `successor of #${kickoff}`;
-    const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
+    const heir = `Successor of conversation #${kickoff}.`;
+    const listed = await list.until((frame: readonly Summary[]) => allNamed(frame, 3));
     await list.close();
 
     expect((await statsOf(idOf(listed, "kick off"))).agent?.model?.modelId).toBe("deepseek-chat");
@@ -268,7 +271,7 @@ describe("host", () => {
     faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     await run("kick off");
-    const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
+    const listed = await list.until((frame: readonly Summary[]) => allNamed(frame, 3));
     await list.close();
 
     // The fake reasoning model supports high but not xhigh; the plain one supports only off.
@@ -356,10 +359,9 @@ describe("host", () => {
     await list.close();
   });
 
-  test("a restarted host lists the same conversations with their kickoff labels", async () => {
-    // One storage across two hosts: the kickoff prompt the first host stored names the cascade
-    // the second lists, without reading any transcript. Closing a Session closes its storage, so
-    // the second opening reopens the same in-memory one — a restart.
+  test("a restarted host lists the same conversations with their opening labels", async () => {
+    // One storage across two hosts: the opening transcript entry names the cascade after restart.
+    // Closing a Session closes its storage, so the second opening reopens the same in-memory one.
     const storage = new ReopenableStorage();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -432,13 +434,13 @@ describe("host", () => {
     faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     const id = await runId("kick off");
-    const listed = await list.until((frame: readonly Summary[]) => frame.length === 3);
+    const listed = await list.until((frame: readonly Summary[]) => allNamed(frame, 3));
     await list.close();
 
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
       { label: "kick off", depth: 0 },
       { label: "task for a", depth: 1 },
-      { label: `successor of #${id}`, depth: 1 },
+      { label: `Successor of conversation #${id}.`, depth: 1 },
     ]);
     // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
@@ -450,7 +452,7 @@ describe("host", () => {
     faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
     const list = await openList();
     const id = await runId("kick off");
-    const heir = `successor of #${id}`;
+    const heir = `Successor of conversation #${id}.`;
     const listed = await list.until(
       (frame: readonly Summary[]) =>
         frame.length === 3 && frame.some((item) => item.label === heir && item.attention),
@@ -594,26 +596,26 @@ describe("host", () => {
     const secondRun = await runId("the second");
 
     // The second cascade finishes while the first's child is held: its block sits on top.
-    const midway = await list.until((frame: readonly Summary[]) => frame.length === 5);
+    const midway = await list.until((frame: readonly Summary[]) => allNamed(frame, 5));
     expect(midway.map(({ label }) => label)).toEqual([
       "the second",
       "task for b",
-      `successor of #${secondRun}`,
+      `Successor of conversation #${secondRun}.`,
       "the first",
       "task for a",
     ]);
 
     child.release();
-    const listed = await list.until((frame: readonly Summary[]) => frame.length === 6);
+    const listed = await list.until((frame: readonly Summary[]) => allNamed(frame, 6));
     await list.close();
 
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
       { label: "the first", depth: 0 },
       { label: "task for a", depth: 1 },
-      { label: `successor of #${firstRun}`, depth: 1 },
+      { label: `Successor of conversation #${firstRun}.`, depth: 1 },
       { label: "the second", depth: 0 },
       { label: "task for b", depth: 1 },
-      { label: `successor of #${secondRun}`, depth: 1 },
+      { label: `Successor of conversation #${secondRun}.`, depth: 1 },
     ]);
     // The first block leads on the strength of its newer heir, though its kickoff is the older.
     expect(listed[0].id).toBeLessThan(listed[3].id);
@@ -634,10 +636,10 @@ describe("host", () => {
     ]);
     const list = await openList();
     const kickoff = await runId("kick off");
-    const listed = await list.until((frame: readonly Summary[]) => frame.length === 5);
+    const listed = await list.until((frame: readonly Summary[]) => allNamed(frame, 5));
     await list.close();
 
-    const heir = `successor of #${kickoff}`;
+    const heir = `Successor of conversation #${kickoff}.`;
     const heirId = listed.find((item) => item.label === heir)?.id;
     expect(heirId).toBeDefined();
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
@@ -645,7 +647,7 @@ describe("host", () => {
       { label: "task for a", depth: 1 },
       { label: heir, depth: 1 },
       { label: "task for b", depth: 2 },
-      { label: `successor of #${heirId}`, depth: 2 },
+      { label: `Successor of conversation #${heirId}.`, depth: 2 },
     ]);
   });
 

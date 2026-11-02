@@ -6,6 +6,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   type AuthType,
   clampThinkingLevel,
+  contentText,
   type Models,
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
@@ -17,7 +18,6 @@ import {
   type ConversationView,
   type Cursor,
   createRegistry,
-  defineDoc,
   type Extension,
   Harness,
   type JsonObject,
@@ -65,18 +65,6 @@ const SCAN_PAGE_SIZE = 256;
 export const PORT = 7317;
 /** Everything the host owns lives here, outside every project: store, credentials. */
 const dataDirectory = join(homedir(), ".key");
-
-/** The prompt a human started a cascade with, stored once on the ownerless conversation it began:
- * the list's label for it, without reading its transcript. */
-const KickoffDoc = defineDoc<{ prompt?: string }>({
-  kind: "key.kickoff",
-  version: 1,
-  scope: "conversation",
-  history: "latest",
-  fork: "initial",
-  initial: () => ({}),
-  checkpointWhen: () => true,
-});
 
 /** What the host runs on. `new Host()` is one box: defaults on the session at `PORT`. */
 export type HostOptions = {
@@ -377,10 +365,6 @@ export class Host {
           thinkingLevel: clampThinkingLevel(this.#model(ref), level),
           instructions: CONVERSATION_INSTRUCTIONS,
         },
-        // The kickoff prompt is named once, in the commit that creates the conversation.
-        init: async (tx, id) => {
-          (await tx.doc(KickoffDoc, id)).prompt = prompt;
-        },
       },
       context,
     );
@@ -438,7 +422,7 @@ export class Host {
     readonly retired: ReadonlySet<number>;
     readonly attended: ReadonlySet<number>;
   }> {
-    const { conversations, runs, cwds, states, kickoffs, seen: seenList } = await this.#scan();
+    const { conversations, runs, cwds, states, prompts, seen: seenList } = await this.#scan();
     const owners = new Map(conversations.map(({ id, owner }) => [id, owner?.taskId]));
     // The graph holds live tasks only. Cascade liveness suppresses the final-frontier dot;
     // a blocked task is the one live state that needs the human now.
@@ -451,25 +435,15 @@ export class Host {
       if (node.conversations.length === 0) blocked.add(node.conversationId);
       else for (const owned of node.conversations) blocked.add(owned);
     }
-    // The runs' stored records, live or ended: each one's label, which are children, and which
-    // conversations answered into a successor.
-    const labels = new Map<number, string>();
+    // The runs' stored records, live or ended: which are children, and which conversations
+    // answered into a successor.
     const children = new Set<number>();
     const ended = new Set<number>();
     const succeeded = new Set<number>();
     for (const run of runs) {
-      labels.set(
-        run.id,
-        run.input.kind === "successor" ? `successor of #${run.conversationId}` : run.input.prompt,
-      );
       if (run.input.kind !== "successor") children.add(run.id);
       else succeeded.add(run.conversationId);
       if (run.state.status === "completing" || run.state.status === "terminal") ended.add(run.id);
-    }
-    const prompts = new Map<number, string>();
-    for (const { id, owner } of conversations) {
-      const prompt = owner === undefined ? kickoffs.get(id) : labels.get(owner.taskId);
-      if (prompt !== undefined) prompts.set(id, prompt);
     }
     /** A conversation whose story continues elsewhere: a successor, or a child that has ended. */
     const closed = (id: number, owner: number | undefined): boolean =>
@@ -514,14 +488,14 @@ export class Host {
   }
 
   /** Everything the list needs, as one commit sees it: the conversations and their
-   * key.conversation tasks with each one's agent, live, and kickoff documents, and the seen marks.
-   * The graph holds live tasks only, so the list reads the stored records, live or ended. */
+   * key.conversation tasks with each one's opening prompt, agent and live documents, and the seen
+   * marks. The graph holds live tasks only, so the list reads stored run records, live or ended. */
   async #scan(): Promise<{
     readonly conversations: readonly ContextConversation[];
     readonly runs: readonly RunRecord[];
     readonly cwds: ReadonlyMap<number, string | undefined>;
     readonly states: ReadonlyMap<number, LiveState>;
-    readonly kickoffs: ReadonlyMap<number, string>;
+    readonly prompts: ReadonlyMap<number, string>;
     readonly seen: readonly number[];
   }> {
     return this.#harness.commit(async (tx) => {
@@ -549,22 +523,23 @@ export class Host {
       )
         .map(({ id, owner }) => ({ id, owner }))
         .filter(({ owner }) => owner === undefined || listed.has(Number(owner.taskId)));
-      // Read the per-conversation documents in the same commit, so the list is one consistent
-      // picture; every conversation carries `pi.agent` and `pi.live` from its creation. Drafts
-      // live only inside the commit, so their values are copied out for the projection.
+      // Read each opening prompt and per-conversation document in the same commit, so every agent
+      // has the same label source and the list is one consistent picture. Drafts live only inside
+      // the commit, so their values are copied out for the projection.
       const cwds = new Map<number, string | undefined>();
       const states = new Map<number, LiveState>();
-      const kickoffs = new Map<number, string>();
-      for (const { id, owner } of conversations) {
+      const prompts = new Map<number, string>();
+      for (const { id } of conversations) {
+        const first = (
+          await tx.scanEntries({ conversationId: id as ConversationId, order: "ascending" }, 1)
+        ).items[0];
+        const message = first?.model?.[0];
+        if (message?.role === "user") prompts.set(id, contentText(message.content));
         cwds.set(id, (await tx.doc(AgentDoc, id as ConversationId)).cwd);
         states.set(id, plain(await tx.doc(LiveDoc, id as ConversationId)));
-        if (owner === undefined) {
-          const prompt = (await tx.doc(KickoffDoc, id as ConversationId)).prompt;
-          if (prompt !== undefined) kickoffs.set(id, prompt);
-        }
       }
       const seen = [...(await tx.doc(SeenDoc)).seen];
-      return { conversations, runs, cwds, states, kickoffs, seen };
+      return { conversations, runs, cwds, states, prompts, seen };
     }, context);
   }
 
