@@ -13,8 +13,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WORKER_INSTRUCTIONS } from "../src/system.ts";
-import { ensureWorker, workerBranch } from "../src/worker.ts";
-import { fakeGit, gitCalls, REPO, resetGit } from "./git.ts";
+import { ensureWorker, repoSlug, workerBranch } from "../src/worker.ts";
+import { fakeGit, gitCalls, REPO, resetGit, setGitToplevel } from "./git.ts";
 import {
   CONVERSATION_TASK,
   conversationOf,
@@ -29,11 +29,11 @@ const context = BACKGROUND_CONTEXT;
 describe("ensureWorker", () => {
   beforeEach(resetGit);
 
-  it("creates a worktree under .key on branch worker/<name>", async () => {
+  it("creates a worktree under .key on branch worker/<repo>/<name>", async () => {
     const worker = await ensureWorker("fix-the-bug", fakeGit, REPO);
     expect(worker).toEqual({
-      path: join(homedir(), ".key", "worktrees", "fix-the-bug"),
-      branch: workerBranch("fix-the-bug"),
+      path: join(homedir(), ".key", "worktrees", repoSlug(REPO), "fix-the-bug"),
+      branch: workerBranch(repoSlug(REPO), "fix-the-bug"),
       base: "base-commit",
     });
     expect(gitCalls()).toContainEqual([
@@ -41,10 +41,21 @@ describe("ensureWorker", () => {
       "add",
       "--quiet",
       "-b",
-      "worker/fix-the-bug",
+      workerBranch(repoSlug(REPO), "fix-the-bug"),
       worker.path,
       "base-commit",
     ]);
+  });
+
+  it("keeps identical worker names in two repositories apart", async () => {
+    const here = await ensureWorker("same-name", fakeGit, REPO);
+    setGitToplevel("/elsewhere/same-repo-name");
+    const there = await ensureWorker("same-name", fakeGit, "/elsewhere/same-repo-name");
+    expect(here.path).not.toBe(there.path);
+    expect(here.branch).not.toBe(there.branch);
+    expect(here.branch).toBe(workerBranch(repoSlug(REPO), "same-name"));
+    expect(there.branch).toBe(workerBranch(repoSlug("/elsewhere/same-repo-name"), "same-name"));
+    expect(gitCalls().filter(([, second]) => second === "add")).toHaveLength(2);
   });
 
   it("rejects a name that is not kebab-case", async () => {
@@ -109,7 +120,7 @@ describe("a worker's run", () => {
   it("runs inside its worktree", async () => {
     const { harness, conversation } = await runWorker("fix-the-bug");
     const agent = await agentState(harness, conversation.id);
-    expect(agent?.cwd).toBe(join(homedir(), ".key", "worktrees", "fix-the-bug"));
+    expect(agent?.cwd).toBe(join(homedir(), ".key", "worktrees", repoSlug(REPO), "fix-the-bug"));
     expect(agent?.instructions).toBe(WORKER_INSTRUCTIONS);
   });
 });

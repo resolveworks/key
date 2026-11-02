@@ -23,7 +23,7 @@ import {
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
-import { ensureWorker, WORKER_NAME, workerBranch } from "./worker.ts";
+import { ensureWorker, repoSlug, WORKER_NAME, workerBranch } from "./worker.ts";
 
 export const CONVERSATION_INSTRUCTIONS =
   "Work directly on simple tasks. Delegate independent implementation work or start researchers for questions that benefit from an isolated context.";
@@ -214,7 +214,10 @@ async function successorPrompt(
       continue;
     }
     if (cwd === undefined) throw new Error("successor: no cwd for worker diffs");
-    const branch = workerBranch(child.input.name);
+    const branch = workerBranch(
+      repoSlug((await git(["rev-parse", "--show-toplevel"], cwd)).trim()),
+      child.input.name,
+    );
     const diff = (await git(["diff", `${child.input.base}...${branch}`], cwd)).trim();
     rendered.push(
       diff.length > 0
@@ -285,7 +288,7 @@ function childTools(git: Git, models: () => Models, taskDefinition: Conversation
     parameters: Type.Object({
       name: Type.String({
         pattern: WORKER_NAME.source,
-        description: "Lowercase kebab-case worker name; its branch is worker/<name>.",
+        description: "Lowercase kebab-case worker name; its branch is worker/<repo>/<name>.",
       }),
       prompt: Type.String({
         description: "A self-contained implementation task and its success criteria.",

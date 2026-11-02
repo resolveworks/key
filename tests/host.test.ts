@@ -20,6 +20,7 @@ import type { Stats } from "../src/footer.ts";
 import { Host, type Summary } from "../src/host.ts";
 import type { LoginEvent, ProviderInfo } from "../src/login.ts";
 import { keySystem } from "../src/system.ts";
+import { repoSlug } from "../src/worker.ts";
 import { fakeGit, REPO } from "./git.ts";
 import { requestText, route } from "./harness.ts";
 
@@ -441,7 +442,7 @@ describe("host", () => {
     ]);
     // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
-    expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/a`);
+    expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/${repoSlug(REPO)}/a`);
   });
 
   test("a settled cascade leaves attention on its final heir alone", async () => {
