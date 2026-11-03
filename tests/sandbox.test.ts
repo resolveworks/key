@@ -49,6 +49,7 @@ describe("sandboxCommand", () => {
     }
     const tmpfs = indexOf(command, "--tmpfs", "/tmp");
     expect(tmpfs).toBeGreaterThan(root);
+    expect(indexOf(command, "--tmpfs", "/run/user/1000")).toBeGreaterThan(tmpfs);
     expect(indexOf(command, "--chdir", cwd)).toBeGreaterThan(tmpfs);
     expect(indexOf(command, "--bind", "/tmp", "/tmp")).toBe(-1);
   });

@@ -59,6 +59,11 @@ export function sandboxCommand(cwd: string, daemon: string): string[] {
     "/dev",
     "--tmpfs",
     "/tmp",
+    // pnpm's engine locks live in $XDG_RUNTIME_DIR; the tmpfs also masks the host
+    // sockets (session dbus, ssh-agent, wayland, pipewire, the user systemd manager)
+    // the ro-bind leaves reachable, since ro blocks writes, not connect().
+    "--tmpfs",
+    "/run/user/1000",
     "--bind",
     cwd,
     cwd,
