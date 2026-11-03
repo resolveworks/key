@@ -52,27 +52,35 @@ class Frames {
     this.#reader = body.getReader();
   }
 
-  /** Resolve with the first frame a predicate accepts, waiting for chunks while it matches none. */
+  /** Resolve with the first frame a predicate accepts, waiting for chunks while it matches none.
+   * The deadline ends a quiet stream too: the read is raced, never sat in. */
   async until<T>(accept: (frame: T) => boolean, timeoutMs = 2000): Promise<T> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const end = this.#buffer.indexOf("\n\n");
-      if (end !== -1) {
-        const frame = this.#buffer.slice(0, end);
-        this.#buffer = this.#buffer.slice(end + 2);
-        const data = frame
-          .split("\n")
-          .filter((line) => line.startsWith("data: "))
-          .map((line) => line.slice("data: ".length))
-          .join("");
-        const parsed = JSON.parse(data) as T;
-        if (accept(parsed)) return parsed;
-        continue;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), timeoutMs);
+    });
+    try {
+      for (;;) {
+        const end = this.#buffer.indexOf("\n\n");
+        if (end !== -1) {
+          const frame = this.#buffer.slice(0, end);
+          this.#buffer = this.#buffer.slice(end + 2);
+          const data = frame
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => line.slice("data: ".length))
+            .join("");
+          const parsed = JSON.parse(data) as T;
+          if (accept(parsed)) return parsed;
+          continue;
+        }
+        const chunk = await Promise.race([this.#reader.read(), expired]);
+        if (chunk === undefined) throw new Error("no frame matched before the timeout");
+        if (chunk.done) throw new Error("the stream ended before a frame matched");
+        this.#buffer += this.#decoder.decode(chunk.value, { stream: true });
       }
-      if (Date.now() > deadline) throw new Error("no frame matched before the timeout");
-      const { value, done } = await this.#reader.read();
-      if (done) throw new Error("the stream ended before a frame matched");
-      this.#buffer += this.#decoder.decode(value, { stream: true });
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -131,7 +139,9 @@ describe("host", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/plain");
     const body = await response.text();
-    expect(body.length).toBeGreaterThan(0);
+    const routes = body.split("\n").map((line) => line.trim().split(/\s+/).slice(0, 2).join(" "));
+    expect(routes).toContain("GET /api/conversations");
+    expect(routes).toContain("POST /api/run");
   });
 
   test("an unknown path is not found", async () => {
@@ -284,15 +294,13 @@ describe("host", () => {
     const listed = await list.until((frame: readonly Summary[]) => allNamed(frame, 3));
     await list.close();
 
-    expect((await statsOf(idOf(listed, "kick off"))).agent?.model?.modelId).toBe("deepseek-chat");
-    expect((await statsOf(idOf(listed, "task for a"))).agent?.model?.modelId).toBe(
-      "deepseek-flash",
-    );
+    expect((await agentOf(idOf(listed, "kick off")))?.model?.modelId).toBe("deepseek-chat");
+    expect((await agentOf(idOf(listed, "task for a")))?.model?.modelId).toBe("deepseek-flash");
     // The child starts on the child default; the successor continues on the conversation's.
-    expect((await statsOf(idOf(listed, heir))).agent?.model?.modelId).toBe("deepseek-chat");
-    expect((await statsOf(idOf(listed, "kick off"))).agent?.thinkingLevel).toBe("low");
-    expect((await statsOf(idOf(listed, "task for a"))).agent?.thinkingLevel).toBe("minimal");
-    expect((await statsOf(idOf(listed, heir))).agent?.thinkingLevel).toBe("low");
+    expect((await agentOf(idOf(listed, heir)))?.model?.modelId).toBe("deepseek-chat");
+    expect((await agentOf(idOf(listed, "kick off")))?.thinkingLevel).toBe("low");
+    expect((await agentOf(idOf(listed, "task for a")))?.thinkingLevel).toBe("minimal");
+    expect((await agentOf(idOf(listed, heir)))?.thinkingLevel).toBe("low");
   });
 
   test("the thinking defaults are clamped to each conversation's model", async () => {
@@ -308,8 +316,8 @@ describe("host", () => {
     await list.close();
 
     // The fake reasoning model supports high but not xhigh; the plain one supports only off.
-    expect((await statsOf(idOf(listed, "kick off"))).agent?.thinkingLevel).toBe("high");
-    expect((await statsOf(idOf(listed, "task for a"))).agent?.thinkingLevel).toBe("off");
+    expect((await agentOf(idOf(listed, "kick off")))?.thinkingLevel).toBe("high");
+    expect((await agentOf(idOf(listed, "task for a")))?.thinkingLevel).toBe("off");
   });
 
   test("without a conversation default a run fails loudly instead of falling back", async () => {
@@ -382,13 +390,9 @@ describe("host", () => {
     expect(running.streaming).toBe(true);
 
     await app.request(`/api/conversations/${running.id}/abort`, { method: "POST" });
-    const after = await list.until((frame: readonly Summary[]) =>
-      frame.some((item) => !item.streaming && !item.attention),
+    await list.until((frame: readonly Summary[]) =>
+      frame.some((item) => item.id === running.id && !item.streaming && !item.attention),
     );
-    expect(after.find((item) => item.id === running.id)).toMatchObject({
-      streaming: false,
-      attention: false,
-    });
     await list.close();
   });
 
@@ -481,7 +485,8 @@ describe("host", () => {
     const response = await app.request("/api/conversations");
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     const frames = new Frames(response.body as ReadableStream<Uint8Array>);
-    expect(await frames.until((frame: readonly Summary[]) => frame.length === 0)).toEqual([]);
+    // Before any publish the stream sends the empty list it opened on.
+    await frames.until((frame: readonly Summary[]) => frame.length === 0);
 
     faux.setResponses([fauxAssistantMessage("hello")]);
     await run("say hello");
@@ -492,7 +497,6 @@ describe("host", () => {
   });
 
   test("a run answers the conversation it starts, whatever the prompt's shape", async () => {
-    faux.setResponses([fauxAssistantMessage("hello")]);
     const id = await startRun("say hello\nand more");
     const list = await openList();
     const listed = await list.until((frame: readonly Summary[]) => frame.length > 0);
@@ -713,11 +717,10 @@ describe("host", () => {
     );
     await transcript.until<Transcript>(({ view }) => view.conversation.id === id);
     await transcript.close();
-    const retired = await list.until((frame: readonly Summary[]) =>
+    await list.until((frame: readonly Summary[]) =>
       frame.some((item) => item.id === id && !item.attention),
     );
     await list.close();
-    expect(retired.find((item) => item.id === id)?.attention).toBe(false);
   });
 
   test("a stop that lands while its transcript is open is already seen", async () => {
@@ -768,14 +771,10 @@ describe("host", () => {
       body: JSON.stringify({ prompt: "again" }),
     });
     expect(message.status).toBe(202);
-    const reflagged = await list.until((frame: readonly Summary[]) =>
+    await list.until((frame: readonly Summary[]) =>
       frame.some((item) => item.id === id && item.attention && !item.streaming),
     );
     await list.close();
-    expect(reflagged.find((item) => item.id === id)).toMatchObject({
-      attention: true,
-      streaming: false,
-    });
   });
 
   test("interleaved cascades hold one block each by their kickoff, not their newest", async () => {
@@ -858,7 +857,6 @@ describe("host", () => {
 
     const heir = `Successor of conversation #${kickoff}.`;
     const heirId = listed.find((item) => item.label === heir)?.id;
-    expect(heirId).toBeDefined();
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
       { label: "kick off", depth: 0 },
       { label: "task for a", depth: 1 },
@@ -1008,18 +1006,13 @@ describe("host", () => {
     });
   }
 
-  /** One conversation's agent doc and the stats its view cannot carry, read the way the
-   * transcript stream reads them. */
-  async function statsOf(id: number): Promise<{
-    stats: Stats;
-    agent: AgentState | undefined;
-  }> {
+  /** One conversation's agent doc, read the way the transcript stream reads it. */
+  async function agentOf(id: number): Promise<AgentState | undefined> {
     const watch = await host.watch(id);
     if (watch === undefined) throw new Error(`no conversation #${id}`);
-    const stats = await host.stats(watch.value);
     const agent = watch.value.docs["pi.agent"] as AgentState | undefined;
     await watch.stop();
-    return { stats, agent };
+    return agent;
   }
 
   /** The ID of the conversation a summary labels. */
