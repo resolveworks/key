@@ -179,6 +179,11 @@ describe("inheritCwd", () => {
 describe("keybinds", () => {
   test("every override names a real pi-tui action", () => {
     // pi-tui skips an unknown action without a word, so a typo here would never fire.
+    expect(Object.keys(keybinds).sort()).toEqual([
+      "tui.editor.yank",
+      "tui.input.copy",
+      "tui.select.cancel",
+    ]);
     for (const action of Object.keys(keybinds))
       expect(action in TUI_KEYBINDINGS, action).toBe(true);
   });

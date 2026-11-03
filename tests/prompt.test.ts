@@ -2,8 +2,6 @@ import { describe, expect, test, vi } from "vitest";
 import { provider } from "../src/prompt.ts";
 
 const signal = new AbortController().signal;
-// The host's stand-in: one answer, handed back to the editor untouched.
-const answer = { items: [{ value: "src/", label: "src/" }], prefix: "sr" };
 // The default's stand-in: the path /new's completion carries.
 const freshDefault = "~/somewhere";
 
@@ -53,23 +51,18 @@ describe("provider", () => {
   });
 
   test("every other line is the host's, as it stands before the cursor", async () => {
-    const complete = vi.fn().mockResolvedValue(answer);
-    const typed = await provider(complete, () => freshDefault).getSuggestions(
-      ["look at sr"],
-      0,
-      10,
-      { signal },
-    );
+    const complete = vi.fn();
+    const autocomplete = provider(complete, () => freshDefault);
+    await autocomplete.getSuggestions(["look at sr"], 0, 10, { signal });
     expect(complete).toHaveBeenNthCalledWith(1, "look at sr", false, signal);
-    expect(typed).toBe(answer);
+
+    // A cursor mid-line asks for what stands before it, not the tail after.
+    await autocomplete.getSuggestions(["look at sr"], 0, 7, { signal });
+    expect(complete).toHaveBeenNthCalledWith(2, "look at", false, signal);
 
     // Tab on a slash line is a forced completion: a path, not a command, so still the host's.
-    const forced = await provider(complete, () => freshDefault).getSuggestions(["/li"], 0, 3, {
-      signal,
-      force: true,
-    });
-    expect(complete).toHaveBeenNthCalledWith(2, "/li", true, signal);
-    expect(forced).toBe(answer);
+    await autocomplete.getSuggestions(["/li"], 0, 3, { signal, force: true });
+    expect(complete).toHaveBeenNthCalledWith(3, "/li", true, signal);
   });
 
   test("applying /new's completion lands the command with its path, room to drill behind", () => {

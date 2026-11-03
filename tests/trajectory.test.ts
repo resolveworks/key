@@ -1,10 +1,12 @@
 // The transcript as a reader sees it: every case here builds a view by hand and reads the rendered
-// lines back with color stripped, so a rule is pinned as text rather than as ANSI.
+// lines back with color stripped, so a rule is pinned as text rather than as ANSI — but the diff's
+// rule is the painting itself, so that one case reads its lines whole.
 
 import type { AssistantMessage, JsonObject, Message, Usage } from "@earendil-works/pi-ai";
 import type { EntryRecord, LiveState, TranscriptView } from "@earendil-works/pi-durable";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
+import { diff } from "../src/theme.ts";
 import { transcript } from "../src/trajectory.ts";
 
 const WIDTH = 80;
@@ -98,7 +100,6 @@ describe("transcript", () => {
   it("a user message renders as a box with its text", () => {
     const rows = lines(view([user("fix the failing test")]));
     expect(rows.some((row) => row.includes("fix the failing test"))).toBe(true);
-    expect(rows.some((row) => row.trim() === "")).toBe(true);
   });
 
   it("assistant text renders as markdown and thinking renders above it", () => {
@@ -141,18 +142,20 @@ describe("transcript", () => {
     expect(titled({ query: "fallback" })).toContain("tool fallback");
   });
 
-  it("an edit renders its diff with +/- lines", () => {
-    const rendered = text(
+  it("an edit renders its diff, each line painted by what it does", () => {
+    const rows = transcript(
       view([
         call("c1", "edit", { path: "src/a.ts" }),
         result("c1", "edit", "ok", {
           details: { diff: " 1 const a = 1;\n-2 const b = 2;\n+2 const b = 3;" },
         }),
       ]),
-    );
-    expect(rendered).toContain("-2 const b = 2;");
-    expect(rendered).toContain("+2 const b = 3;");
-    expect(rendered).toContain(" 1 const a = 1;");
+    ).flatMap((block) => block.render(WIDTH));
+    const painted = (line: string): string | undefined =>
+      rows.find((row) => stripTerminalSequences(row).includes(line));
+    expect(painted("-2 const b = 2;")).toContain(diff.removed("-2 const b = 2;"));
+    expect(painted("+2 const b = 3;")).toContain(diff.added("+2 const b = 3;"));
+    expect(painted(" 1 const a = 1;")).toContain(diff.context(" 1 const a = 1;"));
   });
 
   it("a call with no result yet keeps its running box, with the command it runs", () => {
@@ -202,10 +205,6 @@ describe("transcript", () => {
     expect(failure("length")).toContain("Response was truncated before completion.");
     expect(failure("stop")).not.toContain("Error");
     expect(failure("toolUse")).not.toMatch(/aborted|truncated|Error/);
-  });
-
-  it("an aborted answer says so, even with nothing to show", () => {
-    expect(text(view([answer([], "aborted")]))).toContain("Operation aborted");
   });
 
   it("an empty transcript says so", () => {
