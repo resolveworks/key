@@ -21,7 +21,7 @@ const child = (id: number, name: string, attention = false): Summary => ({
   cwd: `/key/worktrees/${name}`,
 });
 
-// The host lists by cascade, newest cascade first; only conversations that need a human join the
+// The host lists by cascade, newest kickoff first; only conversations that need a human join the
 // ring. The composer joins it too only while a trajectory is being written in it — an empty
 // `/new` is no place at all.
 const summaries = [summary(5, true), summary(4, false), summary(3, true), summary(1, true)];
@@ -43,7 +43,7 @@ describe("cycle", () => {
   });
 
   test("the ring follows the tree, crossing cascade blocks whole", () => {
-    // Two cascades, newest block first: each kickoff with an attention child beneath it.
+    // Two cascades, newest kickoff's block first: each kickoff with an attention child beneath it.
     const tree = [summary(2, true), summary(5, true, 1), summary(1, true), summary(3, true, 1)];
     expect(cycle(tree, 5, 1, draft)).toBe(1); // off the top cascade into the older one
     expect(cycle(tree, 3, 1, draft)).toBe("new"); // off the oldest, onto the composer
@@ -81,7 +81,7 @@ describe("cycle", () => {
 });
 
 describe("stepList", () => {
-  // Three cascades, newest block first: kickoffs 7, 2, and 1, the first two levels deep.
+  // Three cascades, newest kickoff's block first: kickoffs 7, 2, and 1, the first two levels deep.
   const tree = [
     summary(7, false),
     summary(6, false, 1),
