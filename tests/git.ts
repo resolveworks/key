@@ -1,5 +1,5 @@
 // Git reduced to a recorder: a test cares that Key issues the right git command, never what git
-// does with it. Anything that is not git was never asked for and fails loudly.
+// does with it. Anything the fake was not asked to answer fails loudly.
 import type { Context } from "@earendil-works/chord";
 import type { Result, ShellExecOptions, ShellExecResult } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -53,5 +53,6 @@ export const fakeGit: Git = async (args, _cwd) => {
   calls = [...calls, args];
   if (args[0] === "diff") return diff;
   if (args[0] === "for-each-ref") return refs;
-  return "";
+  if (args[0] === "worktree") return "";
+  throw new Error(`fake git: no answer for ${JSON.stringify(args)}`);
 };
