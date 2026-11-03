@@ -15,29 +15,32 @@ export function provider(
     force: boolean,
     signal: AbortSignal,
   ) => Promise<AutocompleteSuggestions | null>,
-  freshDefault: string,
+  freshDefault: () => string | undefined,
 ): AutocompleteProvider {
-  // The directory a bare `/new` would run, fixed where the provider was built.
-  const commands = (): AutocompleteItem[] => [
-    { value: "list", label: "list", description: "list past conversations" },
-    { value: "tree", label: "tree", description: "fork from a transcript entry" },
-    {
-      value: "model",
-      label: "model",
-      description: "set the conversation and child defaults",
-    },
-    {
-      value: "thinking",
-      label: "thinking",
-      description: "set the conversation and child thinking defaults",
-    },
-    {
-      value: "login",
-      label: "login",
-      description: "configure a provider",
-    },
-    { value: `new ${freshDefault}`, label: `new ${freshDefault}`, description: "start fresh" },
-  ];
+  const commands = (): AutocompleteItem[] => {
+    const cwd = freshDefault();
+    const fresh = cwd === undefined ? "new" : `new ${cwd}`;
+    return [
+      { value: "list", label: "list", description: "list past conversations" },
+      { value: "tree", label: "tree", description: "fork from a transcript entry" },
+      {
+        value: "model",
+        label: "model",
+        description: "set the conversation and child defaults",
+      },
+      {
+        value: "thinking",
+        label: "thinking",
+        description: "set the conversation and child thinking defaults",
+      },
+      {
+        value: "login",
+        label: "login",
+        description: "configure a provider",
+      },
+      { value: fresh, label: fresh, description: "start fresh" },
+    ];
+  };
   // The library's provider kept for its text grammar alone: an unforced line that starts with
   // "/" is its command branch, and the client's commands are the only ones — no path is ever
   // answered against this filesystem.

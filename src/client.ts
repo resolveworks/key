@@ -1,9 +1,8 @@
 // A dumb terminal chat: all state lives in the host; the client keeps which view is open —
 // and every view's own draft — and renders the whole screen from that state on change.
 
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AuthType } from "@earendil-works/pi-ai";
@@ -35,7 +34,7 @@ import { hc } from "hono/client";
 import type { api } from "./api.ts";
 import type { Target } from "./defaults.ts";
 import type { FilterList } from "./filter-list.ts";
-import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
+import { dot, Footer, type Stats } from "./footer.ts";
 import type { Summary } from "./host.ts";
 import { selectList } from "./list.ts";
 import type { LoginEvent, ProviderInfo } from "./login.ts";
@@ -119,15 +118,14 @@ export async function open(base: string): Promise<void> {
 
   /** What `/new` would leave: the open conversation's directory — a child's worktree answered by
    * its cascade's kickoff — or, from the composer, the target it already carries. */
-  const leaving = (): { readonly cwd: string } | undefined => {
+  const leaving = (): string | undefined => {
     const here = place();
-    return here.kind === "transcript"
-      ? { cwd: inheritCwd(summaries, here.id) }
-      : { cwd: here.cwd ?? "" };
+    const cwd = here.kind === "transcript" ? inheritCwd(summaries, here.id) : here.cwd;
+    return cwd || undefined;
   };
 
-  /** The default `/new`'s own completion carries, fixed where the provider is built. */
-  const freshDefault = (): string => shortenHome(freshCwd(undefined, leaving(), process.cwd()));
+  /** Only a conversation or an already-targeted composer gives `/new` a path to prefill. */
+  const freshDefault = (): string | undefined => leaving();
 
   // The terminal owns the screen and the scrollback: within a view the document only grows, so
   // rendered lines scroll up into history instead of being redrawn. A selector replaces the
@@ -144,10 +142,7 @@ export async function open(base: string): Promise<void> {
   ): Promise<AutocompleteSuggestions | null> => {
     try {
       const body = await call(() =>
-        client.api.complete.$post(
-          { json: { cwd: process.cwd(), text, force } },
-          { init: { signal } },
-        ),
+        client.api.complete.$post({ json: { cwd: leaving(), text, force } }, { init: { signal } }),
       );
       return JSON.parse(body) as AutocompleteSuggestions | null;
     } catch (error) {
@@ -155,7 +150,7 @@ export async function open(base: string): Promise<void> {
       throw error;
     }
   };
-  prompt.setAutocompleteProvider(provider(complete, freshDefault()));
+  prompt.setAutocompleteProvider(provider(complete, freshDefault));
   /** The composer's draft, wherever it lives: the editor's text while open, its store while covered. */
   const composerDraft = (): string =>
     place().kind === "new" ? prompt.getText() : (drafts.get("new") ?? "");
@@ -256,15 +251,21 @@ export async function open(base: string): Promise<void> {
       footer.clear();
     } else if (mode.view.kind === "new") {
       showPrompt();
-      show([new Text(style.dim("new trajectory · type to start"), 0, 0)]);
-      footer.show(mode.view.cwd ?? process.cwd());
+      const instruction =
+        mode.view.cwd === undefined
+          ? "new trajectory · choose a directory with /new <path>"
+          : "new trajectory · type to start";
+      show([new Text(style.dim(instruction), 0, 0)]);
+      if (mode.view.cwd === undefined) footer.clear();
+      else footer.show(mode.view.cwd);
     } else {
       const id = mode.view.id;
       showPrompt();
       if (view === undefined) {
         show([new Text(style.dim("connecting…"), 0, 0)]);
         const summary = summaries.find((candidate) => candidate.id === id);
-        footer.show(summary?.cwd ?? process.cwd());
+        if (summary?.cwd) footer.show(summary.cwd);
+        else footer.clear();
       } else {
         show(transcript(view));
         if (stats !== undefined) footer.watch(view, stats, contextTokens);
@@ -482,9 +483,7 @@ export async function open(base: string): Promise<void> {
           }),
         );
       } else {
-        // The trajectory runs where `/new` pointed it; only unnamed and uninherited does it
-        // start where the client stands.
-        const cwd = from.cwd ?? process.cwd();
+        const cwd = freshCwd(undefined, from.cwd);
         const body = await call(() => client.api.run.$post({ json: { prompt: value, cwd } }));
         opened = (JSON.parse(body) as { conversation: number }).conversation;
       }
@@ -526,6 +525,20 @@ export async function open(base: string): Promise<void> {
     }
   };
 
+  /** Target the composer at a real host directory before a trajectory can start there. */
+  const retarget = async (named: string | undefined): Promise<void> => {
+    try {
+      const cwd = leaving();
+      const path = freshCwd(named, cwd);
+      const body = await call(() => client.api.cwd.$post({ json: { path, cwd } }));
+      composer = { kind: "new", cwd: (JSON.parse(body) as { cwd: string }).cwd };
+      spend();
+      swap(composer);
+    } catch (error) {
+      fail(error);
+    }
+  };
+
   prompt.onSubmit = (text: string): void => {
     if (text.trim() === "/list") {
       spend();
@@ -554,14 +567,7 @@ export async function open(base: string): Promise<void> {
     }
     const fresh = /^\/new(?:\s+(.+))?$/.exec(text.trim());
     if (fresh !== null) {
-      // The directory answers here, at the prompt — not as a trajectory failing its first step.
-      try {
-        composer = { kind: "new", cwd: targetCwd(freshCwd(fresh[1], leaving(), process.cwd())) };
-        spend();
-        swap(composer);
-      } catch (error) {
-        fail(error);
-      }
+      void retarget(fresh[1]);
       return;
     }
     void send(place(), text);
@@ -678,24 +684,11 @@ function saveCursor(conversation: number | undefined): void {
   writeFileSync(cursorFile, JSON.stringify({ conversation: conversation ?? null }));
 }
 
-/** The directory `/new` names: `~` is home; whatever does not name a directory throws, and the
- * notice says it where it was typed. */
-export function targetCwd(path: string): string {
-  const home = homedir();
-  const expanded = path === "~" || path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
-  const resolved = resolve(expanded);
-  if (!statSync(resolved).isDirectory()) throw new Error(`not a directory: ${resolved}`);
-  return resolved;
-}
-
-/** Where `/new` runs next: its named path, else the directory of the place it leaves, else
- * the client's own. */
-export function freshCwd(
-  named: string | undefined,
-  leaving: { readonly cwd: string } | undefined,
-  client: string,
-): string {
-  return named ?? (leaving?.cwd || client);
+/** Where `/new` runs next: its named path, else the directory of the place it leaves. */
+export function freshCwd(named: string | undefined, leaving: string | undefined): string {
+  const cwd = named ?? leaving;
+  if (cwd === undefined) throw new Error("choose a directory with /new <path>");
+  return cwd;
 }
 
 /** What a conversation hands a fresh trajectory: its own directory at its cascade's head —

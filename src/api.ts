@@ -23,8 +23,13 @@ const MessageInput = Type.Object({ prompt: Prompt });
 
 const ForkInput = Type.Object({ at: Type.Number() });
 
+const CwdInput = Type.Object({
+  path: Type.String({ minLength: 1 }),
+  cwd: Type.Optional(Type.String({ minLength: 1 })),
+});
+
 const CompleteInput = Type.Object({
-  cwd: Type.String({ minLength: 1 }),
+  cwd: Type.Optional(Type.String({ minLength: 1 })),
   text: Type.String(),
   force: Type.Optional(Type.Boolean()),
 });
@@ -65,7 +70,8 @@ const index = `key host
   GET  /api/conversations/:id          one transcript window, then changes (SSE)
   GET  /api/conversations/:id/entries  page entries behind or between the windows
   POST /api/run                        {prompt, cwd} → {conversation}: start a conversation in that directory
-  POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
+  POST /api/cwd                        {path, cwd?} → {cwd}: resolve a real directory on the host
+  POST /api/complete                   {cwd?, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a conversation
   POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
   POST /api/conversations/:id/fork      {at}: fork a conversation after that entry
@@ -177,6 +183,14 @@ export function api(host: Host) {
           const { prompt, cwd } = c.req.valid("json");
           const conversation = await host.run(cwd, prompt);
           return c.json({ conversation }, 202);
+        },
+      )
+      .post(
+        "/api/cwd",
+        validator("json", (body) => Parse(CwdInput, body)),
+        (c) => {
+          const { path, cwd } = c.req.valid("json");
+          return c.json({ cwd: host.resolveCwd(path, cwd) });
         },
       )
       .get("/api/models", async (c) => c.json(await host.modelSettings()))

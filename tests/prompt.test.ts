@@ -10,7 +10,7 @@ const freshDefault = "~/somewhere";
 describe("provider", () => {
   test("an unforced slash line completes the client's own commands, never asking the host", async () => {
     const complete = vi.fn();
-    const suggestions = await provider(complete, freshDefault).getSuggestions(["/li"], 0, 3, {
+    const suggestions = await provider(complete, () => freshDefault).getSuggestions(["/li"], 0, 3, {
       signal,
     });
     expect(complete).not.toHaveBeenCalled();
@@ -19,7 +19,7 @@ describe("provider", () => {
 
   test("/tree completes to the transcript fork picker", async () => {
     const complete = vi.fn();
-    const suggestions = await provider(complete, freshDefault).getSuggestions(["/tr"], 0, 3, {
+    const suggestions = await provider(complete, () => freshDefault).getSuggestions(["/tr"], 0, 3, {
       signal,
     });
     expect(complete).not.toHaveBeenCalled();
@@ -30,7 +30,7 @@ describe("provider", () => {
 
   test("/new's completion is the command and the path it would run, one item", async () => {
     const complete = vi.fn();
-    const suggestions = await provider(complete, freshDefault).getSuggestions(["/ne"], 0, 3, {
+    const suggestions = await provider(complete, () => freshDefault).getSuggestions(["/ne"], 0, 3, {
       signal,
     });
     expect(complete).not.toHaveBeenCalled();
@@ -39,16 +39,32 @@ describe("provider", () => {
     ]);
   });
 
+  test("/new starts bare without a selected conversation and reads the selection live", async () => {
+    let cwd: string | undefined;
+    const autocomplete = provider(vi.fn(), () => cwd);
+    expect((await autocomplete.getSuggestions(["/ne"], 0, 3, { signal }))?.items).toEqual([
+      { value: "new", label: "new", description: "start fresh" },
+    ]);
+
+    cwd = "/host/repo";
+    expect((await autocomplete.getSuggestions(["/ne"], 0, 3, { signal }))?.items).toEqual([
+      { value: "new /host/repo", label: "new /host/repo", description: "start fresh" },
+    ]);
+  });
+
   test("every other line is the host's, as it stands before the cursor", async () => {
     const complete = vi.fn().mockResolvedValue(answer);
-    const typed = await provider(complete, freshDefault).getSuggestions(["look at sr"], 0, 10, {
-      signal,
-    });
+    const typed = await provider(complete, () => freshDefault).getSuggestions(
+      ["look at sr"],
+      0,
+      10,
+      { signal },
+    );
     expect(complete).toHaveBeenNthCalledWith(1, "look at sr", false, signal);
     expect(typed).toBe(answer);
 
     // Tab on a slash line is a forced completion: a path, not a command, so still the host's.
-    const forced = await provider(complete, freshDefault).getSuggestions(["/li"], 0, 3, {
+    const forced = await provider(complete, () => freshDefault).getSuggestions(["/li"], 0, 3, {
       signal,
       force: true,
     });
@@ -59,7 +75,7 @@ describe("provider", () => {
   test("applying /new's completion lands the command with its path, room to drill behind", () => {
     // The editor applies against the item and the prefix it was answered with: what the send
     // takes is `/new` naming where it runs, and further tabs complete the path on the host.
-    const applied = provider(vi.fn(), freshDefault).applyCompletion(
+    const applied = provider(vi.fn(), () => freshDefault).applyCompletion(
       ["/n"],
       0,
       2,

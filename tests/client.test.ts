@@ -1,8 +1,6 @@
-import { homedir, tmpdir } from "node:os";
-import { resolve } from "node:path";
 import { TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
-import { cycle, freshCwd, inheritCwd, keybinds, line, stepList, targetCwd } from "../src/client.ts";
+import { cycle, freshCwd, inheritCwd, keybinds, line, stepList } from "../src/client.ts";
 import { dot } from "../src/footer.ts";
 import type { Summary } from "../src/host.ts";
 import { style } from "../src/theme.ts";
@@ -137,39 +135,18 @@ describe("line", () => {
   });
 });
 
-describe("targetCwd", () => {
-  test("an absolute path stands, a relative one resolves against the client's cwd", () => {
-    expect(targetCwd(tmpdir())).toBe(tmpdir());
-    expect(targetCwd(".")).toBe(process.cwd());
-  });
-
-  test("~ is home, with or without a path under it", () => {
-    expect(targetCwd("~")).toBe(homedir());
-    expect(targetCwd("~/")).toBe(homedir());
-  });
-
-  test("whatever does not name a directory throws", () => {
-    expect(() => targetCwd(resolve(tmpdir(), "key-no-such-dir"))).toThrow(/ENOENT/);
-    // This file is a file.
-    expect(() => targetCwd(import.meta.filename)).toThrow("not a directory");
-  });
-});
-
 describe("freshCwd", () => {
-  const client = "/key/client";
-
   test("a named path wins, whatever was open before", () => {
-    expect(freshCwd("/key/elsewhere", summary(3, true), client)).toBe("/key/elsewhere");
-    expect(freshCwd("/key/elsewhere", undefined, client)).toBe("/key/elsewhere");
+    expect(freshCwd("/key/elsewhere", "/key/repo")).toBe("/key/elsewhere");
+    expect(freshCwd("/key/elsewhere", undefined)).toBe("/key/elsewhere");
   });
 
   test("unnamed, the abandoned conversation's directory is the default", () => {
-    expect(freshCwd(undefined, summary(3, true), client)).toBe("/key/repo");
+    expect(freshCwd(undefined, "/key/repo")).toBe("/key/repo");
   });
 
-  test("with nothing to abandon — or a cwd it never wrote — the client's own directory", () => {
-    expect(freshCwd(undefined, undefined, client)).toBe(client);
-    expect(freshCwd(undefined, { ...summary(3, true), cwd: "" }, client)).toBe(client);
+  test("with nothing to inherit, a directory is required", () => {
+    expect(() => freshCwd(undefined, undefined)).toThrow("choose a directory with /new <path>");
   });
 });
 

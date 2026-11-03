@@ -22,7 +22,7 @@ import { Host, type Summary } from "../src/host.ts";
 import type { LoginEvent, ProviderInfo } from "../src/login.ts";
 import { keySystem } from "../src/system.ts";
 import { repoSlug } from "../src/worker.ts";
-import { fakeGit, REPO } from "./git.ts";
+import { fakeGit, setGitToplevel } from "./git.ts";
 import { requestText, route } from "./harness.ts";
 
 /** In-memory storage a second Host can open again: the records outlive the Session that wrote them. */
@@ -84,10 +84,13 @@ class Frames {
 
 describe("host", () => {
   let host: Host;
+  let cwd: string;
   let faux: ReturnType<typeof fauxProvider>;
   let app: ReturnType<typeof api>;
 
   beforeEach(async () => {
+    cwd = mkdtempSync(join(tmpdir(), "key-host-"));
+    setGitToplevel(cwd);
     // The fake provider serves the pair the tests set as both defaults.
     faux = fauxProvider({
       provider: "deepseek",
@@ -143,6 +146,33 @@ describe("host", () => {
     const response = await app.request("/api/conversations/999999");
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("no such conversation");
+  });
+
+  test("new conversation paths resolve to real directories on the host", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "key-cwd-"));
+    const resolveCwd = (path: string, base?: string) =>
+      app.request("/api/cwd", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path, cwd: base }),
+      });
+
+    const relative = await resolveCwd(".", cwd);
+    expect(relative.status).toBe(200);
+    expect(await relative.json()).toEqual({ cwd });
+    expect((await resolveCwd(join(cwd, "missing"))).status).toBe(500);
+
+    const file = join(cwd, "file");
+    writeFileSync(file, "");
+    expect(await (await resolveCwd(file)).text()).toBe(`Error: not a directory: ${file}`);
+
+    const invalidRun = await app.request("/api/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "hello", cwd: join(cwd, "missing") }),
+    });
+    expect(invalidRun.status).toBe(500);
+    expect(host.summaries).toEqual([]);
   });
 
   test("the host lists the configured providers' models and the two stored defaults", async () => {
@@ -299,7 +329,7 @@ describe("host", () => {
       readonly defaults: unknown;
     };
     expect(settings.defaults).toEqual({});
-    await expect(local.run(REPO, "say hello")).rejects.toThrow(
+    await expect(local.run(cwd, "say hello")).rejects.toThrow(
       "no conversation model default: set one with /model",
     );
     await local.close();
@@ -393,14 +423,14 @@ describe("host", () => {
 
     faux.setResponses([fauxAssistantMessage("hello")]);
     const first = await open();
-    const id = await first.run(REPO, "say hello");
+    const id = await first.run(cwd, "say hello");
     await settled(first, id);
     await first.close();
     storage.reopen();
 
     const second = await open();
     expect(second.summaries).toEqual([
-      { id, label: "say hello", cwd: REPO, depth: 0, streaming: false, attention: true },
+      { id, label: "say hello", cwd: cwd, depth: 0, streaming: false, attention: true },
     ]);
     // The stop survived the restart unseen: looking at it retires the mark again.
     const watch = await second.watch(id);
@@ -465,7 +495,7 @@ describe("host", () => {
     await list.close();
     expect(listed.find(({ id }) => id === fork)).toMatchObject({
       label: "say hello",
-      cwd: REPO,
+      cwd: cwd,
       depth: 0,
       streaming: false,
     });
@@ -545,7 +575,7 @@ describe("host", () => {
     ]);
     // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
-    expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/${repoSlug(REPO)}/a`);
+    expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/${repoSlug(cwd)}/a`);
   });
 
   test("a settled cascade leaves attention on its final heir alone", async () => {
@@ -866,7 +896,7 @@ describe("host", () => {
     return app.request("/api/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt, cwd: REPO }),
+      body: JSON.stringify({ prompt, cwd: cwd }),
     });
   }
 

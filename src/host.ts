@@ -42,6 +42,7 @@ import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
+import { targetCwd } from "./cwd.ts";
 import type { Target } from "./defaults.ts";
 import { Fetch } from "./fetch.ts";
 import { contextTokens as activeContextTokens, type Stats } from "./footer.ts";
@@ -361,19 +362,27 @@ export class Host {
   /** The prompt's path completions, answered from the host's own filesystem: the line as it stands
    * before the cursor, and whether the tab key forced the asking. */
   complete(
-    cwd: string,
+    cwd: string | undefined,
     text: string,
     force: boolean,
     signal: AbortSignal,
   ): Promise<AutocompleteSuggestions | null> {
-    return new CombinedAutocompleteProvider([], cwd).getSuggestions([text], 0, text.length, {
-      signal,
-      force,
-    });
+    return new CombinedAutocompleteProvider([], cwd ?? process.cwd()).getSuggestions(
+      [text],
+      0,
+      text.length,
+      { signal, force },
+    );
+  }
+
+  /** Resolve a directory the client names against the host's filesystem. */
+  resolveCwd(path: string, cwd: string | undefined): string {
+    return targetCwd(path, cwd);
   }
 
   /** Start a cascade in a directory: an ownerless conversation and its first prompt. */
   async run(cwd: string, prompt: string): Promise<number> {
+    cwd = targetCwd(cwd);
     const { conversation: ref } = await this.#stored(ModelDefaultsDoc);
     if (ref === undefined) throw new Error("no conversation model default: set one with /model");
     const { conversation: level } = await this.thinkingDefaults();
