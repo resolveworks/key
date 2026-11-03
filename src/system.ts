@@ -84,7 +84,8 @@ export const CONVERSATION_TASK = "key.conversation";
 export const conversationTask = (git: Git) =>
   defineTask<ConversationTaskInput, ConversationTaskState, string>({
     name: CONVERSATION_TASK,
-    // The worker input shape changed at v1 too; nothing migrates, so a stale task blocks.
+    // A v1 worker stored its branch and base; v2 stores its name. Nothing migrates, so a stale
+    // task blocks instead of diffing worker/undefined.
     version: 2,
     // A worker or researcher has nothing to wait for; a successor waits for its children.
     initial: (input) => (input.kind === "successor" ? { phase: "wait" } : { phase: "run" }),
