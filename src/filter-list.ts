@@ -7,21 +7,15 @@ import {
   fuzzyFilter,
   getKeybindings,
   Input,
-  SelectList,
-  type SelectListLayoutOptions,
+  type SelectList,
   Spacer,
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
-import { selectTheme, style } from "./theme.ts";
+import { selectList } from "./list.ts";
+import { style } from "./theme.ts";
 
 const MAX_VISIBLE = 12;
-
-/** The shared column shape of the client's pickers. */
-export const LAYOUT: SelectListLayoutOptions = {
-  minPrimaryColumnWidth: 56,
-  maxPrimaryColumnWidth: 56,
-};
 
 export type FilterListOptions<T> = {
   keyOf: (item: T) => string;
@@ -29,6 +23,7 @@ export type FilterListOptions<T> = {
   search: (item: T) => string;
   empty: (query: string) => string;
   placeholder: string;
+  maxVisible?: number;
   onSelect: (item: T) => void;
   onCancel: () => void;
 };
@@ -99,14 +94,12 @@ export class FilterList<T> extends Container implements Focusable {
     const query = this.#search.getValue().trim();
     this.#filtered =
       query === "" ? this.#items : fuzzyFilter([...this.#items], query, this.#options.search);
-    const list = new SelectList(
+    const list = selectList(
       this.#filtered.map((item) => ({
         value: this.#options.keyOf(item),
         ...this.#options.item(item),
       })),
-      MAX_VISIBLE,
-      selectTheme,
-      LAYOUT,
+      this.#options.maxVisible ?? MAX_VISIBLE,
     );
     const index = Math.max(
       this.#filtered.findIndex((item) => this.#options.keyOf(item) === this.#selectedKey),

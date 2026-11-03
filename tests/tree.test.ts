@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { row, searchText, treePicker } from "../src/tree.ts";
 
 /** All FilterList asks of the TUI: render requests that go nowhere. */
-const tui = { requestRender: () => undefined } as unknown as TUI;
+const tui = { terminal: { rows: 24 }, requestRender: () => undefined } as unknown as TUI;
 
 function entry(id: number, kind: string, model?: readonly Message[]): EntryRecord {
   return {
@@ -135,6 +135,17 @@ describe("searchText", () => {
 });
 
 describe("treePicker", () => {
+  it("fills the terminal, less the filter, spacer, and scroll indicator", () => {
+    const entries = Array.from({ length: 40 }, (_, index) => user(index + 1, `entry ${index + 1}`));
+    const list = treePicker(
+      tui,
+      entries,
+      () => undefined,
+      () => undefined,
+    );
+    expect(list.render(100)).toHaveLength(24);
+  });
+
   it("opens on the newest entry: enter picks it, escape cancels", () => {
     const picked: EntryRecord[] = [];
     let canceled = false;

@@ -13,7 +13,8 @@ import {
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
-import { FilterList, LAYOUT } from "./filter-list.ts";
+import { FilterList } from "./filter-list.ts";
+import { LAYOUT } from "./list.ts";
 import type { LoginEvent, LoginPrompt, ProviderInfo } from "./login.ts";
 import { selectTheme, style } from "./theme.ts";
 

@@ -25,7 +25,6 @@ import {
   KeybindingsManager,
   matchesKey,
   ProcessTerminal,
-  SelectList,
   Spacer,
   setKeybindings,
   Text,
@@ -38,6 +37,7 @@ import type { Target } from "./defaults.ts";
 import type { FilterList } from "./filter-list.ts";
 import { dot, Footer, type Stats, shortenHome } from "./footer.ts";
 import type { Summary } from "./host.ts";
+import { selectList } from "./list.ts";
 import type { LoginEvent, ProviderInfo } from "./login.ts";
 import { LoginPicker, LoginView } from "./login-ui.ts";
 import { ModelPicker } from "./model-picker.ts";
@@ -234,7 +234,11 @@ export async function open(base: string): Promise<void> {
     if (mode.kind === "list") {
       const page = mode;
       hidePrompt();
-      const list = makeList(summaries, tui.terminal.rows);
+      const list = selectList(
+        summaries.map((summary) => ({ value: String(summary.id), label: line(summary) })),
+        Math.max(1, tui.terminal.rows - 2),
+        { minPrimaryColumnWidth: 64, maxPrimaryColumnWidth: 64 },
+      );
       const index = summaries.findIndex((summary) => summary.id === page.selected);
       if (index >= 0) list.setSelectedIndex(index);
       list.onSelectionChange = (item) => {
@@ -710,17 +714,6 @@ export function line(summary: Summary): string {
   return `${"  ".repeat(summary.depth)}${dot(summary.streaming)} ${
     summary.attention ? style.warning("!") : " "
   } ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`;
-}
-
-/** One selectable transcript per row the terminal has, less the spacer above and the scroll
- * indicator below. */
-function makeList(summaries: readonly Summary[], rows: number): SelectList {
-  return new SelectList(
-    summaries.map((summary) => ({ value: String(summary.id), label: line(summary) })),
-    Math.max(1, rows - 2),
-    selectTheme,
-    { minPrimaryColumnWidth: 64, maxPrimaryColumnWidth: 64 },
-  );
 }
 
 /** The places that need a human as a ring: a drafted composer first, then the attention

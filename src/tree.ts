@@ -97,6 +97,8 @@ export function treePicker(
     search: searchText,
     empty: (query) => (query === "" ? "no entries to fork from" : "no matching entries"),
     placeholder: "type to narrow",
+    // The filter and its spacer take two rows; leave one for the list's scroll indicator.
+    maxVisible: Math.max(1, tui.terminal.rows - 3),
     onSelect,
     onCancel,
   });
