@@ -15,6 +15,7 @@ import {
   AgentDoc,
   type AgentState,
   type ConversationId,
+  type ConversationRecord,
   type ConversationView,
   type Cursor,
   createRegistry,
@@ -25,7 +26,6 @@ import {
   Harness,
   type JsonObject,
   LiveDoc,
-  type LiveState,
   type ModelRef,
   type Page,
   type SessionDocToken,
@@ -327,13 +327,16 @@ export class Host {
       context,
     );
 
-    await this.#publish();
+    // `start()` delivers pending frames only, so the recovered graph must be taken from the
+    // watch itself: the first publish below would otherwise see no live tasks after a restart.
     const watch = await this.#harness.watchTaskGraph(context);
+    this.#graph = watch.value;
     watch.start(async (call) => {
       if (call.kind !== "value") return;
       this.#graph = call.value;
       await this.#publish();
     });
+    await this.#publish();
   }
 
   /** One catalog model, or the loud failure of a default that names none. */
@@ -429,106 +432,12 @@ export class Host {
     if (added) await this.#publish();
   }
 
-  /** Recompute the transcript list, push it to every attached client, then settle the seen
-   * marks it says are due: the Host's watch paths own every SeenDoc write, never the projection. */
+  /** Recompute the transcript list as one commit that also settles the seen marks it says are
+   * due, then push it to every attached client. The settle writes documents only, and the
+   * task-graph watch advances on task and conversation records alone, so publishing cannot
+   * recurse through it. */
   async #publish(): Promise<void> {
-    const { summaries, retired, attended } = await this.#summarise();
-    this.#summaries = summaries;
-    for (const listener of this.#listeners) listener(this.#summaries);
-    if (retired.size > 0 || attended.size > 0) {
-      await this.#harness.commit(async (tx) => {
-        const doc = await tx.doc(SeenDoc);
-        doc.seen = doc.seen.filter((id) => !retired.has(id));
-        for (const id of attended) if (!doc.seen.includes(id)) doc.seen.push(id);
-      }, context);
-    }
-  }
-
-  /** The transcript list as a pure projection of one scan: nothing is written, so publishing
-   * cannot recurse. Besides the list it reports the seen marks due for settling: the stops that
-   * ended, whose marks retire, and the stops a looker witnessed, whose marks stand. */
-  async #summarise(): Promise<{
-    readonly summaries: readonly Summary[];
-    readonly retired: ReadonlySet<number>;
-    readonly attended: ReadonlySet<number>;
-  }> {
-    const { conversations, runs, cwds, states, prompts, seen: seenList } = await this.#scan();
-    const owners = new Map(conversations.map(({ id, owner }) => [id, owner?.taskId]));
-    // The graph holds live tasks only. Cascade liveness suppresses the final-frontier dot;
-    // a blocked task is the one live state that needs the human now.
-    const cascade = new Set<number>();
-    const blocked = new Set<number>();
-    for (const node of Object.values(this.#graph.tasks)) {
-      cascade.add(node.conversationId);
-      for (const owned of node.conversations) cascade.add(owned);
-      if (node.blocked === undefined) continue;
-      if (node.conversations.length === 0) blocked.add(node.conversationId);
-      else for (const owned of node.conversations) blocked.add(owned);
-    }
-    // The runs' stored records, live or ended: which are children, and which conversations
-    // answered into a successor.
-    const children = new Set<number>();
-    const ended = new Set<number>();
-    const succeeded = new Set<number>();
-    for (const run of runs) {
-      if (run.input.kind !== "successor") children.add(run.id);
-      else succeeded.add(run.conversationId);
-      if (run.state.status === "completing" || run.state.status === "terminal") ended.add(run.id);
-    }
-    /** A conversation whose story continues elsewhere: a successor, or a child that has ended. */
-    const closed = (id: number, owner: number | undefined): boolean =>
-      succeeded.has(id) || (owner !== undefined && children.has(owner) && ended.has(owner));
-    /** Whether the cascade stopped here with the next move the human's: an open frontier, or a
-     * task that cannot move on its own. A closed branch's failure crosses upstream as its result. */
-    const stopped = (
-      id: number,
-      live: LiveState | undefined,
-      owner: number | undefined,
-    ): boolean => {
-      if (blocked.has(id)) return true;
-      if (closed(id, owner)) return false;
-      if (live?.runFailure !== undefined) return live.runFailure.reason !== "aborted";
-      return !cascade.has(id);
-    };
-    const seen = new Set(seenList);
-    /** A mark whose stop ended: the cascade moved on, so the next stop flags anew. */
-    const retired = new Set<number>();
-    /** A stop that landed while someone had its transcript open: not a call for attention. */
-    const attended = new Set<number>();
-    const summaries = forest(conversations).map(({ id, depth }) => {
-      const live = states.get(id);
-      const stoppedHere = stopped(id, live, owners.get(id));
-      if (!stoppedHere && seen.has(id)) retired.add(id);
-      if (stoppedHere && this.#watchers.has(id) && !seen.has(id)) {
-        seen.add(id);
-        attended.add(id);
-      }
-      return {
-        id,
-        label: prompts.get(id)?.split("\n", 1)[0]?.trim() ?? "",
-        cwd: cwds.get(id) ?? "",
-        depth,
-        streaming: live?.run !== undefined,
-        attention: stoppedHere && !seen.has(id),
-      };
-    });
-    // Retire the marks whose stops ended, and keep the ones a looker just witnessed: the doc
-    // holds only the stops that stand.
-    return { summaries, retired, attended };
-  }
-
-  /** Everything the list needs, as one commit sees it: the conversations and their
-   * key.conversation tasks with each one's opening prompt, agent and live documents, and the seen
-   * marks. The graph holds live tasks only, so the list reads stored run records, live or ended. */
-  async #scan(): Promise<{
-    readonly conversations: readonly ContextConversation[];
-    readonly runs: readonly RunRecord[];
-    readonly cwds: ReadonlyMap<number, string | undefined>;
-    readonly states: ReadonlyMap<number, LiveState>;
-    readonly prompts: ReadonlyMap<number, string>;
-    readonly seen: readonly number[];
-  }> {
-    return this.#harness.commit(async (tx) => {
+    const summaries = await this.#harness.commit(async (tx) => {
       const all = async <T>(
         scan: (cursor: Cursor | undefined) => Promise<Page<T, Cursor>>,
       ): Promise<readonly T[]> => {
@@ -555,9 +464,9 @@ export class Host {
         .filter(({ owner }) => owner === undefined || listed.has(Number(owner.taskId)));
       // Read each opening prompt and per-conversation document in the same commit, so every agent
       // has the same label source and the list is one consistent picture. Drafts live only inside
-      // the commit, so their values are copied out for the projection.
+      // the commit, and the list needs just two scalars of the live one.
       const cwds = new Map<number, string | undefined>();
-      const states = new Map<number, LiveState>();
+      const states = new Map<number, { streaming: boolean; aborted: boolean }>();
       const prompts = new Map<number, string>();
       for (const { id } of conversations) {
         const first = (
@@ -566,11 +475,72 @@ export class Host {
         const message = first?.model?.[0];
         if (message?.role === "user") prompts.set(id, contentText(message.content));
         cwds.set(id, (await tx.doc(AgentDoc, id as ConversationId)).cwd);
-        states.set(id, plain(await tx.doc(LiveDoc, id as ConversationId)));
+        const live = await tx.doc(LiveDoc, id as ConversationId);
+        states.set(id, {
+          streaming: live.run !== undefined,
+          aborted: live.runFailure?.reason === "aborted",
+        });
       }
-      const seen = [...(await tx.doc(SeenDoc)).seen];
-      return { conversations, runs, cwds, states, prompts, seen };
+
+      const owners = new Map(conversations.map(({ id, owner }) => [id, owner?.taskId]));
+      // The graph holds live tasks only. Cascade liveness suppresses the final-frontier dot;
+      // a blocked task is the one live state that needs the human now.
+      const cascade = new Set<number>();
+      const blocked = new Set<number>();
+      for (const node of Object.values(this.#graph.tasks)) {
+        cascade.add(node.conversationId);
+        for (const owned of node.conversations) cascade.add(owned);
+        if (node.blocked === undefined) continue;
+        if (node.conversations.length === 0) blocked.add(node.conversationId);
+        else for (const owned of node.conversations) blocked.add(owned);
+      }
+      // The runs' stored records, live or ended: which are children, and which conversations
+      // answered into a successor.
+      const children = new Set<number>();
+      const ended = new Set<number>();
+      const succeeded = new Set<number>();
+      for (const run of runs) {
+        if (run.input.kind !== "successor") children.add(run.id);
+        else succeeded.add(run.conversationId);
+        if (run.state.status === "completing" || run.state.status === "terminal") ended.add(run.id);
+      }
+      /** A conversation whose story continues elsewhere: a successor, or a child that has ended. */
+      const closed = (id: number, owner: number | undefined): boolean =>
+        succeeded.has(id) || (owner !== undefined && children.has(owner) && ended.has(owner));
+      /** Whether the cascade stopped here with the next move the human's: an open frontier, or a
+       * task that cannot move on its own. A closed branch's failure crosses upstream as its
+       * result. An aborted run is the human's own hand, so it never flags. */
+      const stopped = (id: number, owner: number | undefined): boolean => {
+        if (blocked.has(id)) return true;
+        if (closed(id, owner)) return false;
+        if (states.get(id)?.aborted) return false;
+        return !cascade.has(id);
+      };
+      // The settled marks are the doc: retire the stops that ended — the cascade moved on, so the
+      // next stop flags anew — and stand the ones a looker just witnessed.
+      const seenDoc = await tx.doc(SeenDoc);
+      const seen = new Set(seenDoc.seen);
+      let changed = false;
+      const summaries = forest(conversations).map(({ id, depth }) => {
+        const stoppedHere = stopped(id, owners.get(id));
+        if (stoppedHere && this.#watchers.has(id) && !seen.has(id)) {
+          seen.add(id);
+          changed = true;
+        } else if (!stoppedHere && seen.delete(id)) changed = true;
+        return {
+          id,
+          label: prompts.get(id)?.split("\n", 1)[0]?.trim() ?? "",
+          cwd: cwds.get(id) ?? "",
+          depth,
+          streaming: states.get(id)?.streaming ?? false,
+          attention: stoppedHere && !seen.has(id),
+        };
+      });
+      if (changed) seenDoc.seen = [...seen];
+      return summaries;
     }, context);
+    this.#summaries = summaries;
+    for (const listener of this.#listeners) listener(this.#summaries);
   }
 
   async listen(): Promise<void> {
@@ -593,11 +563,8 @@ export class Host {
   }
 }
 
-/** A task-owned conversation's creator edge, placing it beneath the conversation that started it. */
-type Creator = { readonly taskId: number; readonly conversationId: number };
-
 /** A conversation the list shows, with the task edge that names and places it. */
-type ContextConversation = { readonly id: number; readonly owner?: Creator };
+type ContextConversation = Pick<ConversationRecord, "id" | "owner">;
 
 /** A key.conversation's stored record: its input names the conversation it mints. */
 type RunRecord = TaskRecord<ConversationTaskInput, unknown, string>;
@@ -635,10 +602,4 @@ async function branchOf(cwd: string | undefined): Promise<string | undefined> {
     .then((stdout) => stdout.trim())
     .catch(() => "");
   return branch === "" ? undefined : branch;
-}
-
-/** A draft's value as a plain detached object: drafts live only inside their commit, and
- * structuredClone refuses their proxies. */
-function plain<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }

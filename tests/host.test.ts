@@ -438,6 +438,45 @@ describe("host", () => {
     await second.close();
   });
 
+  test("a restarted host's first list carries the recovered cascade", async () => {
+    // A run still in flight when the host died recovers as live: the list the reopened host
+    // publishes at open must say streaming and not flag, which takes the graph the watch
+    // recovered, not the empty one the field starts as.
+    const storage = new ReopenableStorage();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const open = async () => {
+      const reopened = new Host({
+        models,
+        storage,
+        extensions: [CodingTools, keySystem(fakeGit), Agents],
+        port: 0,
+        hostname: "127.0.0.1",
+      });
+      await reopened.open();
+      await reopened.setModelDefault("conversation", {
+        provider: "deepseek",
+        modelId: "deepseek-flash",
+      });
+      return reopened;
+    };
+
+    const hung = stuck();
+    faux.setResponses([hung.step]);
+    const first = await open();
+    const id = await first.run(cwd, "say hello");
+    first.resume();
+    await hung.reached;
+    await first.close();
+    storage.reopen();
+
+    const second = await open();
+    expect(second.summaries).toEqual([
+      { id, label: "say hello", cwd: cwd, depth: 0, streaming: true, attention: false },
+    ]);
+    await second.close();
+  });
+
   test("a transcript list streams a snapshot and later changes", async () => {
     const response = await app.request("/api/conversations");
     expect(response.headers.get("content-type")).toBe("text/event-stream");
