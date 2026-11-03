@@ -27,19 +27,15 @@ import {
 const context = BACKGROUND_CONTEXT;
 
 let opened: Harness | undefined;
-let reports: unknown[] = [];
 
 afterEach(async () => {
   await opened?.close(context);
   opened = undefined;
-  if (reports.length > 0) throw new Error(`harness reported failures: ${reports.join("\n")}`);
-  reports = [];
 });
 
 /** One test's harness: the faux model over memory storage, scheduling off until a run asks. */
 async function fresh(): Promise<{ readonly faux: FauxProviderHandle; readonly harness: Harness }> {
   const setup = keySetup();
-  reports = setup.reports;
   const harness = await openKey(new MemoryStorage(), setup);
   opened = harness;
   return { faux: setup.faux, harness };

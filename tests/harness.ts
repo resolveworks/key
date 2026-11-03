@@ -48,8 +48,6 @@ export type KeySetup = {
   readonly faux: FauxProviderHandle;
   readonly models: Models;
   readonly registry: Registry;
-  /** The store above, kept here for the files that still check reports themselves. */
-  readonly reports: unknown[];
 };
 
 export function keySetup(): KeySetup {
@@ -62,7 +60,7 @@ export function keySetup(): KeySetup {
   registry.install(Search);
   registry.install(Fetch);
   registry.install(Agents);
-  return { faux, models, registry, reports };
+  return { faux, models, registry };
 }
 
 export { CONVERSATION_TASK };
@@ -79,7 +77,7 @@ export async function openKey(
       models: setup.models,
       registry: setup.registry,
       env: () => env,
-      onReport: (error) => setup.reports.push(error),
+      onReport: (error) => reports.push(error),
     },
     context,
   );

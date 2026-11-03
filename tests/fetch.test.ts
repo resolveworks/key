@@ -21,20 +21,16 @@ const { connect } = vi.hoisted(() => ({ connect: vi.fn() }));
 vi.mock("playwright-core", () => ({ chromium: { connect } }));
 
 let opened: Harness | undefined;
-let reports: unknown[] = [];
 
 afterEach(async () => {
   await opened?.close(context);
   opened = undefined;
   delete process.env.KEY_BROWSER_ENDPOINT;
-  if (reports.length > 0) throw new Error(`harness reported failures: ${reports.join("\n")}`);
-  reports = [];
 });
 
 /** One test's harness: the faux model over memory storage, scheduling on. */
 async function fresh(): Promise<{ readonly faux: FauxProviderHandle; readonly harness: Harness }> {
   const setup = keySetup();
-  reports = setup.reports;
   const harness = await openKey(new MemoryStorage(), setup);
   opened = harness;
   harness.resume();
