@@ -202,6 +202,8 @@ describe("transcript", () => {
       text(view([answer([{ type: "text", text: "partial answer" }], stopReason)]));
     expect(failure("error")).toContain("Error: Unknown error");
     expect(failure("aborted")).toContain("Operation aborted");
+    // An abort lands before the model says anything more often than after: the line needs no content.
+    expect(text(view([answer([], "aborted")]))).toContain("Operation aborted");
     expect(failure("length")).toContain("Response was truncated before completion.");
     expect(failure("stop")).not.toContain("Error");
     expect(failure("toolUse")).not.toMatch(/aborted|truncated|Error/);
