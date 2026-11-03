@@ -1,5 +1,6 @@
-// The tree picker: the conversation's entries newest-first, each an inclusive fork cutoff — type
-// to narrow, enter picks the entry to fork at, escape leaves.
+// The tree picker: the conversation's entries in conversation order, each an inclusive fork cutoff —
+// except a user message, which cuts before itself so its text returns to the composer. Type to
+// narrow, enter picks the entry to fork at, escape leaves.
 
 import { contentText, type Message, type ToolCall } from "@earendil-works/pi-ai";
 import type { EntryRecord } from "@earendil-works/pi-durable";
@@ -26,9 +27,9 @@ function ofRole<R extends Message["role"]>(
 /** Every run of whitespace one space: a single line, its length left to the list's truncation. */
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** The entry's message text of `role` on one line, empty without such a message. */
-const textOf = (entry: EntryRecord, role: "user" | "system"): string =>
-  oneLine(contentText(ofRole(entry, role)?.content ?? ""));
+/** The entry's user text on one line, empty without a user message. */
+const textOf = (entry: EntryRecord): string =>
+  oneLine(contentText(ofRole(entry, "user")?.content ?? ""));
 
 /** `kind · preview`, or the bare kind when the entry shows nothing of its own. */
 function textRow(kind: string, text: string): TreeRow {
@@ -66,13 +67,9 @@ export function row(entry: EntryRecord): TreeRow {
       };
     }
     case "pi.user":
-      return textRow("user", textOf(entry, "user"));
+      return textRow("user", textOf(entry));
     case "pi.compaction":
-      return textRow("compaction", textOf(entry, "user"));
-    case "pi.reset":
-      return textRow("reset", textOf(entry, "user"));
-    case "pi.system":
-      return textRow("system", textOf(entry, "system"));
+      return textRow("compaction", textOf(entry));
     default:
       return textRow(entry.kind, oneLine(contentText(entry.model?.[0]?.content ?? "")));
   }
@@ -84,7 +81,19 @@ export function searchText(entry: EntryRecord): string {
   return description === undefined ? label : `${label} ${description}`;
 }
 
-/** The `/tree` overlay: the conversation's entries newest-first, the newest selected. */
+/** Where a fork from `entry` cuts: a user message is the edit the picker is for, so it cuts before
+ * itself and hands its text back; every other entry is inherited up to and including itself. */
+export function forkPoint(
+  entries: readonly EntryRecord[],
+  entry: EntryRecord,
+): { readonly at: EntryRecord["id"] | undefined; readonly draft: string | undefined } {
+  if (entry.kind !== "pi.user") return { at: entry.id, draft: undefined };
+  const at = entries.findIndex((candidate) => candidate.id === entry.id);
+  return { at: entries[at - 1]?.id, draft: textOf(entry) };
+}
+
+/** The `/tree` overlay: the conversation's entries in conversation order, the newest selected. A
+ * system or reset entry is never a fork target, so it does not list. */
 export function treePicker(
   tui: TUI,
   entries: readonly EntryRecord[],
@@ -102,9 +111,13 @@ export function treePicker(
     onSelect,
     onCancel,
   });
-  // Entry ids rise with the conversation, so descending is newest-first; the newest is selected.
-  const newestFirst = [...entries].sort((a, b) => b.id - a.id);
-  list.select(newestFirst[0] === undefined ? undefined : keyOf(newestFirst[0]));
-  list.rebuild(newestFirst);
+  // Entry ids rise with the conversation, so ascending is conversation order and the last entry is
+  // where the conversation stands: the list opens there, its window scrolled up to it.
+  const ordered = entries
+    .filter((entry) => entry.kind !== "pi.system" && entry.kind !== "pi.reset")
+    .sort((a, b) => a.id - b.id);
+  const newest = ordered.at(-1);
+  list.select(newest === undefined ? undefined : keyOf(newest));
+  list.rebuild(ordered);
   return list;
 }

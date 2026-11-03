@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
+  type AgentChange,
   AgentDoc,
   type AgentState,
   type ConversationId,
@@ -395,14 +396,32 @@ export class Host {
   }
 
   /** Fork a conversation at an entry: an independent cascade that inherits the history up to and
-   * including that entry, with the agent as it stood there. The source keeps running as it was. */
-  async fork(conversationId: number, at: EntryId): Promise<number> {
+   * including that entry, with the agent as it stood there. Without an entry the fork starts empty,
+   * carrying the agent as it stands now. The source keeps running as it was. */
+  async fork(conversationId: number, at?: EntryId): Promise<number> {
     const id = conversationId as ConversationId;
     const conversation = await this.#harness.conversation(id, context);
     if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
-    const fork = await conversation.fork(at, { ownership: { kind: "ownerless" } }, context);
+    const ownership = { kind: "ownerless" } as const;
+    const fork =
+      at === undefined
+        ? await this.#harness.createConversation(
+            { ownership, agent: await this.#agentOf(id) },
+            context,
+          )
+        : await conversation.fork(at, { ownership }, context);
     await this.#publish();
     return fork.id;
+  }
+
+  /** A conversation's stored agent as a creating conversation takes it: the choices whose
+   * create-option shape matches the document's — extensions and tools are stored by name, created
+   * by object — so an empty fork keeps its source's model, directory, thinking, and instructions. */
+  async #agentOf(id: ConversationId): Promise<AgentChange> {
+    const stored = await this.#harness.snapshot(AgentDoc, id, context);
+    if (stored === undefined) throw new Error(`no agent for conversation #${id}`);
+    const { model, thinkingLevel, instructions, cwd, maxTurns } = stored;
+    return { model, thinkingLevel, instructions, cwd, maxTurns };
   }
 
   /** Message a conversation directly, steering its current run when it is busy. */

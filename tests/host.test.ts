@@ -20,7 +20,7 @@ import type { api } from "../src/api.ts";
 import type { Stats } from "../src/footer.ts";
 import { Host, type Summary } from "../src/host.ts";
 import type { LoginEvent, ProviderInfo } from "../src/login.ts";
-import { keySystem } from "../src/system.ts";
+import { CONVERSATION_INSTRUCTIONS, keySystem } from "../src/system.ts";
 import { fakeGit } from "./git.ts";
 import { requestText, route } from "./harness.ts";
 
@@ -576,6 +576,53 @@ describe("host", () => {
     });
     expect((await host.entries(source, { order: "ascending" }, 100)).items).toEqual(history);
     expect(faux.state.callCount).toBe(calls + 1);
+  });
+
+  test("an empty fork starts from nothing with its source's agent", async () => {
+    faux.setResponses([fauxAssistantMessage("hello")]);
+    const source = await runId("say hello");
+    const history = await answered(source, "hello");
+
+    const forked = await app.request(`/api/conversations/${source}/fork`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(forked.status).toBe(202);
+    const { conversation: fork } = (await forked.json()) as { conversation: number };
+    expect(fork).toBeGreaterThan(source);
+
+    const watch = await host.watch(fork);
+    if (watch === undefined) throw new Error(`no conversation #${fork}`);
+    // Nothing inherited and no parent entry to inherit from, but the agent as it stands now.
+    expect(watch.value.conversation.parent).toBeUndefined();
+    expect(watch.value.entries).toEqual([]);
+    expect(watch.value.docs["pi.agent"]).toMatchObject({
+      model: { provider: "deepseek", modelId: "deepseek-flash" },
+      cwd: cwd,
+      thinkingLevel: "high",
+      instructions: CONVERSATION_INSTRUCTIONS,
+    });
+    await watch.stop();
+
+    // The fork's first request carries the prompt and the system it builds, none of the source's run.
+    let asked = "";
+    faux.setResponses([
+      (request) => {
+        asked = requestText(request.messages);
+        return fauxAssistantMessage("a fresh start");
+      },
+    ]);
+    const message = await app.request(`/api/conversations/${fork}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "start over" }),
+    });
+    expect(message.status).toBe(202);
+    const grown = await answered(fork, "a fresh start");
+    expect(asked).not.toContain("hello");
+    expect(grown.map(({ kind }) => kind)).toEqual(["pi.user", "pi.system", "pi.assistant"]);
+    expect((await host.entries(source, { order: "ascending" }, 100)).items).toEqual(history);
   });
 
   test("a fork of an unknown transcript is refused, and the entry id is validated", async () => {
