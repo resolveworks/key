@@ -249,7 +249,7 @@ async function successorPrompt(
     const diff = (await git(["diff", `${child.input.base}...${branch}`], cwd)).trim();
     rendered.push(
       diff.length > 0
-        ? `<worker name="${child.input.name}" branch="${branch}" conversation="${child.conversation}">\n<diff>\n${diff}\n</diff>\n</worker>`
+        ? `<worker name="${child.input.name}" branch="${branch}" conversation="${child.conversation}">\n<diff>\n\`\`\`\n${diff}\n\`\`\`\n</diff>\n</worker>`
         : `<worker name="${child.input.name}" branch="${branch}" conversation="${child.conversation}">\n<answer>\n${child.answer ?? `Worker ${child.status}.`}\n</answer>\n</worker>`,
     );
   }
