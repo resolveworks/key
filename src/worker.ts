@@ -1,46 +1,27 @@
-// A worker's isolated checkout: a git worktree keyed by the delegate call's task id,
-// on branch worker/<name>.
+// A worker's isolated checkout: a git worktree keyed by the delegate call's task id, on
+// branch worker/<name> — cut fresh, or checked out again when an earlier cascade left the branch.
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TaskId } from "@earendil-works/pi-durable";
 import type { Git } from "./git.ts";
 
-export const WORKER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export type Worker = { readonly path: string; readonly branch: string; readonly base: string };
 
-const BRANCH_PREFIX = "worker/";
-
-export type Worker = {
-  readonly path: string;
-  readonly branch: string;
-  readonly base: string;
-};
-
-export function workerBranch(name: string): string {
-  return `${BRANCH_PREFIX}${name}`;
-}
-
-/** Create the worker's worktree in the repository at `cwd`, or accept the one a crashed attempt
- * left. */
+/** The worker's checkout in `cwd`'s repository, or the one a crash left. */
 export async function ensureWorker(
   name: string,
   taskId: TaskId,
   git: Git,
   cwd: string,
 ): Promise<Worker> {
-  if (!WORKER_NAME.test(name))
-    throw new Error(`key: worker name "${name}" must be lowercase kebab-case`);
-  const branch = workerBranch(name);
-  const base = (await git(["rev-parse", "HEAD"], cwd)).trim();
+  const branch = `worker/${name}`;
   const path = join(homedir(), ".key", "worktrees", String(taskId));
-  if (await registered(path, branch, git, cwd)) return { path, branch, base };
-  await git(["worktree", "add", "--quiet", "-b", branch, path, base], cwd);
-  return { path, branch, base };
-}
-
-async function registered(path: string, branch: string, git: Git, cwd: string): Promise<boolean> {
-  const list = await git(["worktree", "list", "--porcelain"], cwd);
-  return list.split("\n\n").some((block) => {
-    const lines = block.split("\n");
-    return lines.includes(`worktree ${path}`) && lines.includes(`branch refs/heads/${branch}`);
-  });
+  if (!existsSync(path)) {
+    const ref = `refs/heads/${branch}`;
+    const kept = (await git(["for-each-ref", "--format=%(objectname)", ref], cwd)).trim();
+    if (kept === "") await git(["worktree", "add", "--quiet", "-b", branch, path, "HEAD"], cwd);
+    else await git(["worktree", "add", "--quiet", path, branch], cwd);
+  }
+  return { path, branch, base: (await git(["rev-parse", "HEAD"], path)).trim() };
 }

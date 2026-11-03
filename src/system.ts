@@ -25,7 +25,7 @@ import { num, obj, str } from "@earendil-works/pi-schema";
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
-import { ensureWorker, WORKER_NAME, workerBranch } from "./worker.ts";
+import { ensureWorker } from "./worker.ts";
 
 export const CONVERSATION_INSTRUCTIONS = `
 <role>
@@ -68,7 +68,7 @@ export const RESEARCHER_INSTRUCTIONS =
 export type ConversationTaskInput =
   | {
       readonly kind: "worker";
-      readonly name: string;
+      readonly branch: string;
       readonly prompt: string;
       readonly base: string;
     }
@@ -245,12 +245,12 @@ async function successorPrompt(
       continue;
     }
     if (cwd === undefined) throw new Error("successor: no cwd for worker diffs");
-    const branch = workerBranch(child.input.name);
+    const branch = child.input.branch;
     const diff = (await git(["diff", `${child.input.base}...${branch}`], cwd)).trim();
     rendered.push(
       diff.length > 0
-        ? `<worker name="${child.input.name}" branch="${branch}" conversation="${child.conversation}">\n<diff>\n\`\`\`\n${diff}\n\`\`\`\n</diff>\n</worker>`
-        : `<worker name="${child.input.name}" branch="${branch}" conversation="${child.conversation}">\n<answer>\n${child.answer ?? `Worker ${child.status}.`}\n</answer>\n</worker>`,
+        ? `<worker branch="${branch}" conversation="${child.conversation}">\n<diff>\n\`\`\`\n${diff}\n\`\`\`\n</diff>\n</worker>`
+        : `<worker branch="${branch}" conversation="${child.conversation}">\n<answer>\n${child.answer ?? `Worker ${child.status}.`}\n</answer>\n</worker>`,
     );
   }
   return [
@@ -384,7 +384,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
       "Start an implementation worker in its own git worktree and fresh conversation. Use this by default for implementation rather than editing the current checkout. This call only starts the worker; it does not return the worker's result. After launching all independent workers for the current wave, end this run immediately. Do not implement the delegated task locally, wait, or poll. A separate successor conversation receives the children's diffs and results after they settle; you will not resume to collect them.",
     parameters: obj({
       name: str({
-        pattern: WORKER_NAME.source,
+        pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
         description: "Lowercase kebab-case worker name; its branch is worker/<name>.",
       }),
       prompt: str({
@@ -401,7 +401,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
         api,
         context,
         taskDefinition,
-        { kind: "worker", prompt, name, base: worker.base },
+        { kind: "worker", prompt, branch: worker.branch, base: worker.base },
         (tx, conversation) =>
           configureChild(tx, conversation, api.models, {
             cwd: worker.path,

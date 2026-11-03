@@ -1,5 +1,6 @@
 // A worker runs in a worktree under the key home, outside the repo, on its own branch.
-import { homedir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -11,10 +12,10 @@ import {
   MemoryStorage,
   type TaskId,
 } from "@earendil-works/pi-durable";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKER_INSTRUCTIONS } from "../src/system.ts";
-import { ensureWorker, workerBranch } from "../src/worker.ts";
-import { fakeGit, gitCalls, REPO, resetGit } from "./git.ts";
+import { ensureWorker } from "../src/worker.ts";
+import { fakeGit, gitCalls, REPO, resetGit, setGitRefs } from "./git.ts";
 import {
   CONVERSATION_TASK,
   conversationOf,
@@ -33,41 +34,50 @@ describe("ensureWorker", () => {
     const worker = await ensureWorker("fix-the-bug", 7 as TaskId, fakeGit, REPO);
     expect(worker).toEqual({
       path: join(homedir(), ".key", "worktrees", "7"),
-      branch: workerBranch("fix-the-bug"),
+      branch: "worker/fix-the-bug",
       base: "base-commit",
     });
-    expect(gitCalls()).toContainEqual([
-      "worktree",
-      "add",
-      "--quiet",
-      "-b",
-      workerBranch("fix-the-bug"),
-      worker.path,
-      "base-commit",
+    expect(gitCalls()).toEqual([
+      ["for-each-ref", "--format=%(objectname)", "refs/heads/worker/fix-the-bug"],
+      ["worktree", "add", "--quiet", "-b", "worker/fix-the-bug", worker.path, "HEAD"],
+      ["rev-parse", "HEAD"],
     ]);
   });
 
-  it("reuses the worktree a crashed attempt left for the same task", async () => {
-    const first = await ensureWorker("fix-the-bug", 7 as TaskId, fakeGit, REPO);
-    const again = await ensureWorker("fix-the-bug", 7 as TaskId, fakeGit, REPO);
-    expect(again).toEqual(first);
-    expect(gitCalls().filter(([, verb]) => verb === "add")).toHaveLength(1);
+  it("checks out the branch an earlier cascade left instead of cutting a new one", async () => {
+    setGitRefs("kept-commit\n");
+    const worker = await ensureWorker("x", 7 as TaskId, fakeGit, REPO);
+    expect(gitCalls()).toContainEqual(["worktree", "add", "--quiet", worker.path, "worker/x"]);
+    expect(worker).toEqual({
+      path: join(homedir(), ".key", "worktrees", "7"),
+      branch: "worker/x",
+      base: "base-commit",
+    });
+  });
+
+  it("accepts the checkout a crashed attempt left for the same task", async () => {
+    // A rented home: the real ~/.key is read-only inside a worker's sandbox.
+    const home = mkdtempSync(join(tmpdir(), "key-home-"));
+    const path = join(home, ".key", "worktrees", "9000001");
+    mkdirSync(path, { recursive: true });
+    vi.stubEnv("HOME", home);
+    try {
+      const worker = await ensureWorker("fix-the-bug", 9_000_001 as TaskId, fakeGit, REPO);
+      expect(worker.path).toBe(path);
+      expect(gitCalls().filter(([verb]) => verb === "worktree")).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("keys two same-named workers in two repositories by their tasks", async () => {
     const here = await ensureWorker("same-name", 7 as TaskId, fakeGit, REPO);
     const there = await ensureWorker("same-name", 8 as TaskId, fakeGit, "/elsewhere/repo");
     expect(here.path).not.toBe(there.path);
-    expect(here.branch).toBe(workerBranch("same-name"));
-    expect(there.branch).toBe(workerBranch("same-name"));
+    expect(here.branch).toBe("worker/same-name");
+    expect(there.branch).toBe("worker/same-name");
     expect(gitCalls().filter(([, verb]) => verb === "add")).toHaveLength(2);
-  });
-
-  it("rejects a name that is not kebab-case", async () => {
-    await expect(ensureWorker("Not Kebab", 7 as TaskId, fakeGit, REPO)).rejects.toThrow(
-      /lowercase kebab-case/,
-    );
-    expect(gitCalls()).toEqual([]);
   });
 });
 
@@ -103,8 +113,8 @@ describe("a worker's run", () => {
     const task = await harness.commit(async (tx) => {
       const records = await tx.scanTasks({ kind: CONVERSATION_TASK }, 100);
       const child = records.items.find((record) => {
-        const input = record.input as { readonly kind?: string; readonly name?: string };
-        return input.kind === "worker" && input.name === name;
+        const input = record.input as { readonly kind?: string; readonly branch?: string };
+        return input.kind === "worker" && input.branch === `worker/${name}`;
       });
       if (child === undefined) throw new Error(`no worker ${name}`);
       return child.id;

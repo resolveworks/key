@@ -8,7 +8,6 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { workerBranch } from "../src/worker.ts";
 import { gitCalls, REPO, resetGit, setGitDiff } from "./git.ts";
 import {
   type ConversationTaskRecord,
@@ -58,8 +57,8 @@ function turn(text: string, children: readonly string[] = []) {
 
 const children = (records: readonly ConversationTaskRecord[]) =>
   records.filter((record) => record.input.kind !== "successor");
-const nameOf = (record: ConversationTaskRecord): string | undefined =>
-  record.input.kind === "worker" ? record.input.name : undefined;
+const branchOf = (record: ConversationTaskRecord): string | undefined =>
+  record.input.kind === "worker" ? record.input.branch : undefined;
 const onOf = (record: ConversationTaskRecord): readonly TaskId<string>[] | undefined =>
   record.input.kind === "successor" ? record.input.on : undefined;
 
@@ -130,7 +129,7 @@ describe("the child cascade", () => {
     expect(child.input).toEqual({
       kind: "worker",
       prompt: "task for a",
-      name: "a",
+      branch: "worker/a",
       base: "base-commit",
     });
     expect(next.input).toEqual({ kind: "successor", on: [child.id] });
@@ -155,7 +154,7 @@ describe("the child cascade", () => {
     const delegated = children(await cascade(harness)).sort((left, right) => left.id - right.id);
     const next = await waitForSuccessor(harness);
 
-    expect(delegated.map(nameOf)).toEqual(["a", "b"]);
+    expect(delegated.map(branchOf)).toEqual(["worker/a", "worker/b"]);
     expect([...(onOf(next) ?? [])].sort()).toEqual(delegated.map((record) => record.id).sort());
     await harness.waitForTask(next.id, context);
   });
@@ -197,7 +196,7 @@ describe("the child cascade", () => {
 
     expect(transcript).toContain("diff --git a/auth.ts b/auth.ts");
     expect(transcript).not.toContain("worker summary");
-    expect(gitCalls()).toContainEqual(["diff", `base-commit...${workerBranch("a")}`]);
+    expect(gitCalls()).toContainEqual(["diff", "base-commit...worker/a"]);
     await harness.waitForTask(next.id, context);
   });
 
@@ -265,7 +264,7 @@ describe("the child cascade", () => {
     const next = await waitForSuccessor(harness);
     await harness.waitForTask(next.id, context);
 
-    expect(children(await cascade(harness)).map(nameOf)).toEqual(["a"]);
+    expect(children(await cascade(harness)).map(branchOf)).toEqual(["worker/a"]);
   });
 });
 
@@ -414,14 +413,14 @@ describe("a continuation", () => {
       context,
     );
     expect((await submission.wait(context)).status).toBe("done");
-    const b = children(await cascade(harness)).find((record) => nameOf(record) === "b");
+    const b = children(await cascade(harness)).find((record) => branchOf(record) === "worker/b");
     if (b === undefined) throw new Error("no child b");
     const next = await waitForSuccessor(harness, [b.id]);
     await harness.waitForTask(next.id, context);
 
     const transcript = await entries(harness, kickoff);
     expect(transcript.filter((entry) => entry.kind === "pi.user")).toHaveLength(2);
-    expect(children(await cascade(harness)).map(nameOf)).toEqual(["a", "b"]);
+    expect(children(await cascade(harness)).map(branchOf)).toEqual(["worker/a", "worker/b"]);
     expect(next.input).toEqual({ kind: "successor", on: [b.id] });
   });
 });
@@ -439,7 +438,7 @@ describe("an interruption", () => {
     expect(child.input).toEqual({
       kind: "worker",
       prompt: "task for a",
-      name: "a",
+      branch: "worker/a",
       base: "base-commit",
     });
     await harness.waitForTask(child.id, context);
@@ -475,7 +474,7 @@ describe("an interruption", () => {
     });
     const transcript = await entries(harness, await conversationOf(harness, next.id));
     expect(JSON.stringify(transcript)).toContain(
-      `<worker name=\\"a\\" branch=\\"${workerBranch("a")}\\" conversation=\\"${await conversationOf(harness, child.id)}\\">`,
+      `<worker branch=\\"worker/a\\" conversation=\\"${await conversationOf(harness, child.id)}\\">`,
     );
   });
 
@@ -501,12 +500,12 @@ describe("an interruption", () => {
     );
     expect((await submission.wait(context)).status).toBe("done");
     const records = await cascade(harness);
-    const b = children(records).find((record) => nameOf(record) === "b");
+    const b = children(records).find((record) => branchOf(record) === "worker/b");
     if (b === undefined) throw new Error("no child b");
     const next = await waitForSuccessor(harness, [b.id]);
     await harness.waitForTask(next.id, context);
 
-    expect(children(await cascade(harness)).map(nameOf)).toEqual(["a", "b"]);
+    expect(children(await cascade(harness)).map(branchOf)).toEqual(["worker/a", "worker/b"]);
     expect(next.input).toEqual({ kind: "successor", on: [b.id] });
   });
 });
