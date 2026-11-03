@@ -1,12 +1,14 @@
 // One conversation's bubblewrap sandbox: a read-only host, the worktree and the caches writable.
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 
 const home = homedir();
+// Where pnpm keeps its store operation locks, and where the session sockets live.
+const runtimeDirectory = join("/run/user", String(userInfo().uid));
 
 // Writable package-manager caches and state.
 const CACHES = [
@@ -59,11 +61,10 @@ export function sandboxCommand(cwd: string, daemon: string): string[] {
     "/dev",
     "--tmpfs",
     "/tmp",
-    // pnpm's engine locks live in $XDG_RUNTIME_DIR; the tmpfs also masks the host
-    // sockets (session dbus, ssh-agent, wayland, pipewire, the user systemd manager)
-    // the ro-bind leaves reachable, since ro blocks writes, not connect().
+    // Fresh locks for pnpm, and the host's session sockets masked: ro-bind blocks
+    // writes, not connect().
     "--tmpfs",
-    "/run/user/1000",
+    runtimeDirectory,
     "--bind",
     cwd,
     cwd,

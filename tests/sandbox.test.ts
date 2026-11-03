@@ -1,7 +1,7 @@
 // The bwrap argv we build; enforcing it is bwrap's job.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { sandboxCommand } from "../src/sandbox.ts";
@@ -49,7 +49,9 @@ describe("sandboxCommand", () => {
     }
     const tmpfs = indexOf(command, "--tmpfs", "/tmp");
     expect(tmpfs).toBeGreaterThan(root);
-    expect(indexOf(command, "--tmpfs", "/run/user/1000")).toBeGreaterThan(tmpfs);
+    expect(indexOf(command, "--tmpfs", join("/run/user", String(userInfo().uid)))).toBeGreaterThan(
+      tmpfs,
+    );
     expect(indexOf(command, "--chdir", cwd)).toBeGreaterThan(tmpfs);
     expect(indexOf(command, "--bind", "/tmp", "/tmp")).toBe(-1);
   });
