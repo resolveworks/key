@@ -25,23 +25,18 @@ export class FakeEnv extends NodeExecutionEnv {
 
 let calls: readonly (readonly string[])[] = [];
 let diff = "";
-let toplevel = REPO;
+let worktrees: readonly { readonly path: string; readonly branch: string }[] = [];
 
 /** Every git invocation, as its argument vector, in order. */
 export function gitCalls(): readonly (readonly string[])[] {
   return calls;
 }
 
-/** Forget the git calls recorded so far. */
+/** Forget the git calls and worktrees recorded so far. */
 export function resetGit(): void {
   calls = [];
   diff = "";
-  toplevel = REPO;
-}
-
-/** The checkout root the fake answers `rev-parse --show-toplevel` with. */
-export function setGitToplevel(path: string): void {
-  toplevel = path;
+  worktrees = [];
 }
 
 export function setGitDiff(value: string): void {
@@ -51,7 +46,13 @@ export function setGitDiff(value: string): void {
 /** The fake git port: records every call and answers the small surface Key consumes. */
 export const fakeGit: Git = async (args, _cwd) => {
   calls = [...calls, args];
-  if (args[0] === "rev-parse") return args[1] === "HEAD" ? "base-commit\n" : `${toplevel}\n`;
+  if (args[0] === "rev-parse") return "base-commit\n";
   if (args[0] === "diff") return diff;
+  if (args[0] === "worktree" && args[1] === "add") {
+    worktrees = [...worktrees, { branch: args[4], path: args[5] }];
+    return "";
+  }
+  if (args[0] === "worktree")
+    return `${worktrees.map((w) => `worktree ${w.path}\nHEAD base-commit\nbranch refs/heads/${w.branch}`).join("\n\n")}\n`;
   return "";
 };

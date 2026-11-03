@@ -25,7 +25,7 @@ import { num, obj, str } from "@earendil-works/pi-schema";
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
-import { ensureWorker, repoSlug, WORKER_NAME, workerBranch } from "./worker.ts";
+import { ensureWorker, WORKER_NAME, workerBranch } from "./worker.ts";
 
 export const CONVERSATION_INSTRUCTIONS = `
 <role>
@@ -245,10 +245,7 @@ async function successorPrompt(
       continue;
     }
     if (cwd === undefined) throw new Error("successor: no cwd for worker diffs");
-    const branch = workerBranch(
-      repoSlug((await git(["rev-parse", "--show-toplevel"], cwd)).trim()),
-      child.input.name,
-    );
+    const branch = workerBranch(child.input.name);
     const diff = (await git(["diff", `${child.input.base}...${branch}`], cwd)).trim();
     rendered.push(
       diff.length > 0
@@ -388,7 +385,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
     parameters: obj({
       name: str({
         pattern: WORKER_NAME.source,
-        description: "Lowercase kebab-case worker name; its branch is worker/<repo>/<name>.",
+        description: "Lowercase kebab-case worker name; its branch is worker/<name>.",
       }),
       prompt: str({
         description:
@@ -399,7 +396,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
     execute: async ({ prompt, name }, api, context) => {
       const repo = (await api.agent(context)).cwd;
       if (repo === undefined) throw new Error("delegate: no cwd to make a worktree from");
-      const worker = await ensureWorker(name, git, repo);
+      const worker = await ensureWorker(name, api.taskId, git, repo);
       const taskId = await startChild(
         api,
         context,

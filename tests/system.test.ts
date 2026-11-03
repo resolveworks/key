@@ -8,7 +8,7 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { repoSlug, workerBranch } from "../src/worker.ts";
+import { workerBranch } from "../src/worker.ts";
 import { gitCalls, REPO, resetGit, setGitDiff } from "./git.ts";
 import {
   type ConversationTaskRecord,
@@ -197,10 +197,7 @@ describe("the child cascade", () => {
 
     expect(transcript).toContain("diff --git a/auth.ts b/auth.ts");
     expect(transcript).not.toContain("worker summary");
-    expect(gitCalls()).toContainEqual([
-      "diff",
-      `base-commit...${workerBranch(repoSlug(REPO), "a")}`,
-    ]);
+    expect(gitCalls()).toContainEqual(["diff", `base-commit...${workerBranch("a")}`]);
     await harness.waitForTask(next.id, context);
   });
 
@@ -478,7 +475,7 @@ describe("an interruption", () => {
     });
     const transcript = await entries(harness, await conversationOf(harness, next.id));
     expect(JSON.stringify(transcript)).toContain(
-      `<worker name=\\"a\\" branch=\\"${workerBranch(repoSlug(REPO), "a")}\\" conversation=\\"${await conversationOf(harness, child.id)}\\">`,
+      `<worker name=\\"a\\" branch=\\"${workerBranch("a")}\\" conversation=\\"${await conversationOf(harness, child.id)}\\">`,
     );
   });
 

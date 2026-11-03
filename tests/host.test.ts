@@ -21,8 +21,7 @@ import type { Stats } from "../src/footer.ts";
 import { Host, type Summary } from "../src/host.ts";
 import type { LoginEvent, ProviderInfo } from "../src/login.ts";
 import { keySystem } from "../src/system.ts";
-import { repoSlug } from "../src/worker.ts";
-import { fakeGit, setGitToplevel } from "./git.ts";
+import { fakeGit } from "./git.ts";
 import { requestText, route } from "./harness.ts";
 
 /** In-memory storage a second Host can open again: the records outlive the Session that wrote them. */
@@ -90,7 +89,6 @@ describe("host", () => {
 
   beforeEach(async () => {
     cwd = mkdtempSync(join(tmpdir(), "key-host-"));
-    setGitToplevel(cwd);
     // The fake provider serves the pair the tests set as both defaults.
     faux = fauxProvider({
       provider: "deepseek",
@@ -575,7 +573,8 @@ describe("host", () => {
     ]);
     // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
-    expect(listed[1].cwd).toBe(`${homedir()}/.key/worktrees/${repoSlug(cwd)}/a`);
+    // The child's worktree is keyed by the delegate call's task id under the key home.
+    expect(listed[1].cwd).toMatch(new RegExp(`^${homedir()}/\\.key/worktrees/\\d+$`));
   });
 
   test("a settled cascade leaves attention on its final heir alone", async () => {
