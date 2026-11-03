@@ -1,12 +1,13 @@
-// The tree picker as rules: what each entry kind shows as a row, and the wiring over a fake TUI —
-// newest first and selected, enter picking, escape leaving, a query narrowing.
+// The tree picker as rules: what each entry kind shows as a row, where a fork from one cuts, and
+// the wiring over a fake TUI — conversation order with the newest selected, enter picking, escape
+// leaving, a query narrowing.
 
 import { homedir } from "node:os";
 import type { AssistantMessage, JsonObject, Message, Usage } from "@earendil-works/pi-ai";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import type { TUI } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
-import { row, searchText, treePicker } from "../src/tree.ts";
+import { forkPoint, row, searchText, treePicker } from "../src/tree.ts";
 
 /** All FilterList asks of the TUI: render requests that go nowhere. */
 const tui = { terminal: { rows: 24 }, requestRender: () => undefined } as unknown as TUI;
@@ -100,21 +101,14 @@ describe("row", () => {
     });
   });
 
-  it("labels compaction by its summary and reset by its handoff", () => {
+  it("labels compaction by its summary", () => {
     const summary = entry(8, "pi.compaction", [
       { role: "user", content: "Earlier: the login work.", timestamp: 0 },
     ]);
     expect(row(summary)).toEqual({ label: "compaction · Earlier: the login work." });
-    expect(row(entry(9, "pi.reset"))).toEqual({ label: "reset" });
-    const handoff = entry(10, "pi.reset", [
-      { role: "user", content: "Take over the task.", timestamp: 0 },
-    ]);
-    expect(row(handoff).label).toBe("reset · Take over the task.");
   });
 
-  it("falls back to bare kind words for system, empty, model-less, and unknown entries", () => {
-    const system = entry(11, "pi.system", [{ role: "system", content: "", timestamp: 0 }]);
-    expect(row(system)).toEqual({ label: "system" });
+  it("falls back to bare kind words for empty, model-less, and unknown entries", () => {
     expect(row(entry(12, "pi.assistant"))).toEqual({ label: "assistant" });
     expect(row(answer(13, [], ""))).toEqual({ label: "assistant" });
     expect(row(entry(14, "key.note"))).toEqual({ label: "key.note" });
@@ -131,6 +125,43 @@ describe("searchText", () => {
     expect(searchText(answer(21, [{ type: "text", text: "Done." }]))).toBe(
       "assistant · Done. faux/faux-1",
     );
+  });
+});
+
+describe("forkPoint", () => {
+  it("cuts a user message before itself and hands its text back", () => {
+    const entries = [
+      user(1, "fix the login"),
+      answer(2, [{ type: "text", text: "on it" }]),
+      user(3, "and the logout"),
+    ];
+    expect(forkPoint(entries, entries[2])).toEqual({ at: 2, draft: "and the logout" });
+  });
+
+  it("cuts the conversation's first user message at the empty history before it", () => {
+    // A real conversation opens with the prompt, then the system prompt built for it.
+    const entries = [
+      user(1, "fix the login"),
+      entry(2, "pi.system", [{ role: "system", content: "you are key", timestamp: 0 }]),
+    ];
+    expect(forkPoint(entries, entries[0])).toEqual({ at: undefined, draft: "fix the login" });
+  });
+
+  it("inherits a compaction inclusively: its summary is no edit", () => {
+    const summary = entry(2, "pi.compaction", [
+      { role: "user", content: "Earlier: the login work.", timestamp: 0 },
+    ]);
+    expect(forkPoint([user(1, "fix the login"), summary], summary)).toEqual({
+      at: 2,
+      draft: undefined,
+    });
+  });
+
+  it("inherits an answer or a tool result inclusively", () => {
+    const said = answer(1, [{ type: "text", text: "done" }]);
+    const ran = result(2, "bash", "3 passed");
+    expect(forkPoint([said, ran], said)).toEqual({ at: 1, draft: undefined });
+    expect(forkPoint([said, ran], ran)).toEqual({ at: 2, draft: undefined });
   });
 });
 
@@ -163,7 +194,7 @@ describe("treePicker", () => {
     expect(canceled).toBe(true);
   });
 
-  it("orders newest first: down then enter picks the second newest", () => {
+  it("orders oldest first: up then enter picks the second newest", () => {
     const picked: EntryRecord[] = [];
     const list = treePicker(
       tui,
@@ -171,9 +202,25 @@ describe("treePicker", () => {
       (chosen) => picked.push(chosen),
       () => undefined,
     );
-    list.handleInput("\x1b[B"); // down
+    list.handleInput("\x1b[A"); // up
     list.handleInput("\r"); // enter
     expect(picked.map((chosen) => chosen.id)).toEqual([2]);
+  });
+
+  it("leaves system and reset out: they are no fork targets", () => {
+    const picked: EntryRecord[] = [];
+    const list = treePicker(
+      tui,
+      [
+        user(1, "a"),
+        entry(2, "pi.system", [{ role: "system", content: "you are key", timestamp: 0 }]),
+        entry(3, "pi.reset"),
+      ],
+      (chosen) => picked.push(chosen),
+      () => undefined,
+    );
+    list.handleInput("\r"); // enter
+    expect(picked.map((chosen) => chosen.id)).toEqual([1]);
   });
 
   it("narrows to the rows the query names", () => {

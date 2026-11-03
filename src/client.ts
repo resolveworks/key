@@ -46,7 +46,7 @@ import { selectTheme, style } from "./theme.ts";
 import type { ThinkingDefaults } from "./thinking.ts";
 import { ThinkingPicker } from "./thinking-picker.ts";
 import { transcript } from "./trajectory.ts";
-import { treePicker } from "./tree.ts";
+import { forkPoint, treePicker } from "./tree.ts";
 
 const RECONNECT_MS = 250;
 /** Where a client restart picks up: the transcript that was open, if any. */
@@ -380,10 +380,22 @@ export async function open(base: string): Promise<void> {
       return;
     }
     const source = back.id;
+    const newest = entries.at(-1)?.id;
     const picker = treePicker(
       tui,
       entries,
-      (entry) => void fork(source, entry.id),
+      (entry) => {
+        const point = forkPoint(entries, entry);
+        // Inheriting the newest entry would duplicate the conversation; a user message cuts before
+        // itself instead, so picking it is still the edit the picker is for.
+        if (point.at === newest) {
+          swap(back);
+          notice = "already at the newest entry";
+          render();
+          return;
+        }
+        void fork(source, point.at, point.draft);
+      },
       () => swap(back),
     );
     mode = { kind: "overlay", back, picker };
@@ -502,15 +514,24 @@ export async function open(base: string): Promise<void> {
     }
   };
 
-  const fork = async (source: number, at: EntryRecord["id"]): Promise<void> => {
+  /** Fork the open transcript toward `at` — an entry it inherits, or, without one, the empty
+   * history before its first entry — landing `draft` in the fork's composer: a user entry cuts
+   * before itself, so its text comes back editable, ready to resend. */
+  const fork = async (
+    source: number,
+    at: EntryRecord["id"] | undefined,
+    draft: string | undefined,
+  ): Promise<void> => {
     try {
       const body = await call(() =>
         client.api.conversations[":id"].fork.$post({
           param: { id: String(source) },
-          json: { at: Number(at) },
+          json: at === undefined ? {} : { at: Number(at) },
         }),
       );
       const { conversation } = JSON.parse(body) as { conversation: number };
+      // Seeded before the swap: it lends the entering view its draft, which is the composer's text.
+      if (draft !== undefined) drafts.set(nameOf({ kind: "transcript", id: conversation }), draft);
       swap({ kind: "transcript", id: conversation });
     } catch (error) {
       fail(error);
