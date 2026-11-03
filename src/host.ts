@@ -49,7 +49,7 @@ import { contextTokens as activeContextTokens, type Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { LoginSession, type ProviderInfo } from "./login.ts";
 import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.ts";
-import { openSandbox, type Sandbox } from "./sandbox.ts";
+import { sandboxEnv } from "./sandbox.ts";
 import { Search } from "./search.ts";
 import { SeenDoc } from "./seen.ts";
 import {
@@ -122,7 +122,6 @@ export class Host {
   /** Conversations a client currently has open, by id: a stop that lands under a watch is seen. */
   #watchers = new Map<number, number>();
   #login?: LoginSession;
-  #sandboxes = new Map<ConversationId, Sandbox>();
   #options: HostOptions;
 
   constructor(options: HostOptions = production()) {
@@ -317,11 +316,11 @@ export class Host {
       {
         models: this.#options.models,
         registry,
-        env: (target) => {
+        env: (target, context) => {
           // A conversation without a root is a bug to surface, not to paper over.
           if (target.cwd === undefined)
             throw new Error(`conversation ${target.conversationId} has no cwd`);
-          return this.#sandbox(target.conversationId, target.cwd).env;
+          return sandboxEnv(target.conversationId, target.cwd, localDaemon(), context);
         },
         onReport: (report) => console.error("key:", report),
       },
@@ -335,16 +334,6 @@ export class Host {
       this.#graph = call.value;
       await this.#publish();
     });
-  }
-
-  /** One conversation's sandbox, created lazily and reused for every call it makes. */
-  #sandbox(conversationId: ConversationId, cwd: string): Sandbox {
-    let sandbox = this.#sandboxes.get(conversationId);
-    if (sandbox === undefined) {
-      sandbox = openSandbox(conversationId, cwd, localDaemon());
-      this.#sandboxes.set(conversationId, sandbox);
-    }
-    return sandbox;
   }
 
   /** One catalog model, or the loud failure of a default that names none. */
@@ -600,8 +589,6 @@ export class Host {
     this.#login?.abort();
     const closed = this.#server?.close() ?? Promise.resolve();
     await this.#harness.close(context);
-    for (const sandbox of this.#sandboxes.values()) sandbox.connection.close();
-    this.#sandboxes.clear();
     await closed;
   }
 }
