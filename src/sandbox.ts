@@ -3,7 +3,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { Context } from "@earendil-works/chord";
 import type { ConversationId } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 
 const home = homedir();
@@ -87,4 +89,25 @@ export function openSandbox(conversationId: ConversationId, cwd: string, daemon:
     cwd,
   });
   return { connection, env };
+}
+
+export type SandboxOpener = (
+  conversationId: ConversationId,
+  cwd: string,
+  daemon: string,
+) => Sandbox;
+
+/** One invocation's environment: the invocation that built it is the sandbox's whole lifetime, so its abort signal is the close. */
+export function sandboxEnv(
+  conversationId: ConversationId,
+  cwd: string,
+  daemon: string,
+  context: Context,
+  open: SandboxOpener = openSandbox,
+): ExecutionEnv {
+  const sandbox = open(conversationId, cwd, daemon);
+  const { abortSignal: signal } = context;
+  if (signal === undefined) throw new Error("sandboxEnv: the context has no abort signal");
+  signal.addEventListener("abort", () => sandbox.connection.close(), { once: true });
+  return sandbox.env;
 }
