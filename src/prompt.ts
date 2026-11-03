@@ -1,4 +1,4 @@
-// The prompt's completions: the client's slash commands answered here — `/new` carrying the
+// The prompt's completions: the client's slash commands answered here — `/new` naming the
 // directory a bare one would run — and every path answered by the host, whose filesystem is the
 // one the trajectories run on.
 
@@ -7,7 +7,9 @@ import {
   type AutocompleteProvider,
   type AutocompleteSuggestions,
   CombinedAutocompleteProvider,
+  type SlashCommand,
 } from "@earendil-works/pi-tui";
+import { shortenHome } from "./footer.ts";
 
 export function provider(
   complete: (
@@ -17,9 +19,10 @@ export function provider(
   ) => Promise<AutocompleteSuggestions | null>,
   freshDefault: () => string | undefined,
 ): AutocompleteProvider {
-  const commands = (): AutocompleteItem[] => {
+  // The name column is clamped narrow and cut without an ellipsis, so a fresh path rides the
+  // argument hint beside it, where it reads whole.
+  const commands = (): (AutocompleteItem | SlashCommand)[] => {
     const cwd = freshDefault();
-    const fresh = cwd === undefined ? "new" : `new ${cwd}`;
     return [
       { value: "list", label: "list", description: "list past conversations" },
       { value: "tree", label: "tree", description: "fork from a transcript entry" },
@@ -38,7 +41,9 @@ export function provider(
         label: "login",
         description: "configure a provider",
       },
-      { value: fresh, label: fresh, description: "start fresh" },
+      cwd === undefined
+        ? { value: "new", label: "new", description: "start fresh" }
+        : { name: "new", argumentHint: shortenHome(cwd), description: "start fresh" },
     ];
   };
   // The library's provider kept for its text grammar alone: an unforced line that starts with
