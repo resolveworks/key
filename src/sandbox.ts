@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
@@ -13,7 +13,7 @@ const home = homedir();
 const runtimeDirectory = join("/run/user", String(userInfo().uid));
 
 // Writable package-manager caches and state.
-const CACHES = [
+export const CACHES = [
   join(home, ".local/share/pnpm"),
   join(home, ".cache/pnpm"),
   join(home, ".local/state/pnpm"),
@@ -24,28 +24,20 @@ const CACHES = [
 
 export type Sandbox = { readonly connection: Connection; readonly env: RemoteExecutionEnv };
 
-/** The main repository's `.git` when `cwd` is a linked worktree outside it. */
+/** The main repository's `.git`, which a linked worktree's commits write through the read-only host. */
 function gitCommonDir(cwd: string): string | undefined {
-  let stdout: string;
-  const env = { ...process.env };
-  for (const name of Object.keys(env)) if (name.startsWith("GIT_")) delete env[name];
   try {
-    stdout = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd,
-      env,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    return (
+      execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() || undefined
+    );
   } catch {
-    // Not a git repository — or git unable to answer — means no bind to add.
+    // Not a git repository: nothing to bind.
     return undefined;
   }
-  if (stdout === "") return undefined;
-  const path = resolve(cwd, stdout);
-  const inside = relative(cwd, path);
-  return inside === "" || (inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside))
-    ? undefined
-    : path;
 }
 
 /** The bwrap argv that starts the sandbox, before `Connection` appends `serve --token`. */
