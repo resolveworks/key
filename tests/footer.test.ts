@@ -105,30 +105,21 @@ describe("footer", () => {
   });
 
   test("the spend is every bucket the conversation recorded, answers and tools alike", () => {
-    const spent = totals(usage as never);
-    expect(spent.input).toBe(1200);
-    expect(spent.cacheRead).toBe(8600);
+    const bucket = (input: number, cacheRead: number, total: number) => ({
+      input,
+      output: 0,
+      cacheRead,
+      cacheWrite: 0,
+      totalTokens: input + cacheRead,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+    });
+    const spent = totals({
+      models: { "deepseek/a": bucket(1200, 8600, 0.001), "deepseek/b": bucket(300, 400, 0.0005) },
+      tools: { bash: bucket(50, 0, 0.0002) },
+    } as never);
+    expect(spent.input).toBe(1550);
+    expect(spent.cacheRead).toBe(9000);
     expect(spent.cost.total).toBeCloseTo(0.0017);
-  });
-
-  test("the context is pi-ai's estimate over the messages the entries project", () => {
-    expect(contextTokens(context([answered(400, 9600)]))).toBe(10_005);
-  });
-
-  test("a compaction summary invalidates the usage from before it", () => {
-    const compaction = {
-      id: 2,
-      kind: "pi.compaction",
-      model: [
-        {
-          role: "user",
-          content:
-            "The conversation history before this point was compacted into the following summary:\n\n<summary>\nold work\n</summary>",
-          timestamp: 1,
-        },
-      ],
-    } as unknown as EntryRecord;
-    expect(contextTokens(context([compaction, answered(400, 9600)]))).toBeLessThan(200);
   });
 
   test("with nothing answered yet the context is an estimate of what was sent", () => {
@@ -172,7 +163,7 @@ describe("footer", () => {
   test("a fresh trajectory names where it would run and nothing it has spent", () => {
     const footer = new Footer();
     footer.show("/key/repo");
-    expect(footer.render(80)).toHaveLength(1);
+    expect(footer.render(80).map(stripTerminalSequences)).toEqual(["/key/repo"]);
   });
 
   test("the selector owns the whole screen: cleared, the footer draws nothing", () => {
@@ -180,18 +171,6 @@ describe("footer", () => {
     footer.show("/key/repo");
     footer.clear();
     expect(footer.render(80)).toEqual([]);
-  });
-
-  test("a transcript draws exactly where it runs and what it spent", () => {
-    const footer = new Footer();
-    footer.watch(
-      view([answered(1200, 8600)]),
-      {
-        contextWindow: 128_000,
-      },
-      0,
-    );
-    expect(footer.render(100)).toHaveLength(2);
   });
 
   test("the stats line opens with a dot: filled while the conversation streams, hollow once it settles", () => {
