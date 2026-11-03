@@ -27,8 +27,38 @@ import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
 import { ensureWorker, repoSlug, WORKER_NAME, workerBranch } from "./worker.ts";
 
-export const CONVERSATION_INSTRUCTIONS =
-  "You are the coding assistant responsible for the user's task. Own it across fresh contexts. Work directly on simple or tightly coupled tasks. Delegate independent implementation or research when parallelism or context isolation would help. Give every child a self-contained prompt with the necessary context and success criteria. Evaluate and integrate child results rather than merely relaying them. Ask earlier conversations for missing goals or context instead of guessing.";
+export const CONVERSATION_INSTRUCTIONS = `
+<role>
+You coordinate the user's coding task during this run. Answer directly, delegate
+implementation or research, or evaluate and integrate child results already
+supplied to you rather than merely relaying them.
+</role>
+
+<delegation>
+Default to delegate for implementation instead of editing the current checkout.
+Direct edits are the exception, reserved for trivial changes and integration or
+conflict resolution that cannot sensibly be delegated.
+
+Use research for non-trivial investigations that benefit from isolated context
+or parallel work. Perform quick lookups directly, but never duplicate research
+already assigned to a researcher.
+
+Give every child a self-contained prompt containing the goal, relevant context
+and constraints, scope or file ownership, success criteria, and required
+verification. Launch independent children for the current wave in parallel.
+</delegation>
+
+<handoff>
+delegate and research start separate conversations; they are not background jobs
+within your run. Once you have launched the current wave, your run is complete.
+End it immediately with a brief status. Do not continue the delegated work, wait,
+poll, or ask in-flight children for results.
+
+After the children settle, a separate successor conversation receives their
+results and decides what to do next. Use ask to consult settled earlier
+conversations for missing goals or context instead of guessing.
+</handoff>
+`;
 export const WORKER_INSTRUCTIONS =
   "You are an implementation worker completing one delegated task in your own git worktree and branch. Stay within the requested scope. Implement and test the changes, and commit any resulting work before finishing. If you cannot finish, commit a sound checkpoint. Report what changed, how you verified it, and anything left undone.";
 export const RESEARCHER_INSTRUCTIONS =
@@ -354,14 +384,15 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
   const Delegate = defineTool({
     name: "delegate",
     description:
-      "Start a worker immediately in its own git worktree and conversation. Returns without waiting. When this run ends, a fresh successor starts after all its children settle and receives their results.",
+      "Start an implementation worker in its own git worktree and fresh conversation. Use this by default for implementation rather than editing the current checkout. This call only starts the worker; it does not return the worker's result. After launching all independent workers for the current wave, end this run immediately. Do not implement the delegated task locally, wait, or poll. A separate successor conversation receives the children's diffs and results after they settle; you will not resume to collect them.",
     parameters: obj({
       name: str({
         pattern: WORKER_NAME.source,
         description: "Lowercase kebab-case worker name; its branch is worker/<repo>/<name>.",
       }),
       prompt: str({
-        description: "A self-contained implementation task and its success criteria.",
+        description:
+          "A self-contained implementation assignment: goal, relevant context and constraints, scope or file ownership, success criteria, and required verification. The worker commits its changes.",
       }),
     }),
     replay: "safe",
@@ -380,17 +411,25 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
             instructions: WORKER_INSTRUCTIONS,
           }),
       );
-      return { output: [{ type: "text", text: `Started worker task #${taskId}.` }] };
+      return {
+        output: [
+          {
+            type: "text",
+            text: `Started worker task #${taskId}. End this run; a separate successor conversation will receive its diff and result.`,
+          },
+        ],
+      };
     },
   });
 
   const Research = defineTool({
     name: "research",
     description:
-      "Start a researcher immediately in a fresh conversation without a worktree. Returns without waiting. When this run ends, a fresh successor starts after all its children settle and receives their results.",
+      "Start a researcher in a fresh conversation to investigate and report findings without changing code. Use this for non-trivial research benefiting from isolated context or parallel investigation. This call only starts the researcher; it does not return findings. After launching all independent researchers for the current wave, end this run immediately. Do not duplicate the research locally, wait, poll, or ask the researcher for results. A separate successor conversation receives the findings after the children settle; you will not resume to collect them.",
     parameters: obj({
       prompt: str({
-        description: "A self-contained research question and the findings needed.",
+        description:
+          "A self-contained research assignment: context, question, relevant sources or scope, exact findings required, and success criteria. Research only; no code changes.",
       }),
     }),
     replay: "safe",
@@ -407,7 +446,14 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
             instructions: RESEARCHER_INSTRUCTIONS,
           }),
       );
-      return { output: [{ type: "text", text: `Started researcher task #${taskId}.` }] };
+      return {
+        output: [
+          {
+            type: "text",
+            text: `Started researcher task #${taskId}. End this run; a separate successor conversation will receive its findings.`,
+          },
+        ],
+      };
     },
   });
   return { Delegate, Research };
