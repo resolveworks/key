@@ -53,8 +53,8 @@ async function restart(
 }
 
 const nameOf = (record: { readonly input: unknown }) => {
-  const input = record.input as { readonly kind?: string; readonly name?: string };
-  return input.kind === "worker" ? input.name : undefined;
+  const input = record.input as { readonly kind?: string; readonly branch?: string };
+  return input.kind === "worker" ? input.branch : undefined;
 };
 
 /** Start one prompt directly in an ownerless conversation. */
@@ -149,8 +149,8 @@ describe("restart", () => {
       return records;
     });
     expect(minted.filter((record) => nameOf(record) !== undefined).map(nameOf)).toEqual([
-      "kid-a",
-      "kid-b",
+      "worker/kid-a",
+      "worker/kid-b",
     ]);
     const conversations = new Map(
       await Promise.all(
@@ -180,7 +180,7 @@ describe("restart", () => {
       minted.map((record) => record.id).sort(),
     );
     const children = after.filter((record) => nameOf(record) !== undefined);
-    expect(children.map(nameOf)).toEqual(["kid-a", "kid-b"]);
+    expect(children.map(nameOf)).toEqual(["worker/kid-a", "worker/kid-b"]);
     const successors = after.filter(
       (record) => (record.input as { readonly kind?: string }).kind === "successor",
     );
