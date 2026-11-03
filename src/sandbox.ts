@@ -8,9 +8,11 @@ import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 
 const home = homedir();
 
-// The writable caches, mounted at their canonical paths like Ward's volumes.
+// Writable package-manager caches and state.
 const CACHES = [
   join(home, ".local/share/pnpm"),
+  join(home, ".cache/pnpm"),
+  join(home, ".local/state/pnpm"),
   join(home, ".cache/uv"),
   join(home, ".local/share/uv"),
   join(home, ".cargo"),

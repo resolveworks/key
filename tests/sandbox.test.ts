@@ -39,6 +39,8 @@ describe("sandboxCommand", () => {
     for (const path of [
       cwd,
       join(homedir(), ".local/share/pnpm"),
+      join(homedir(), ".cache/pnpm"),
+      join(homedir(), ".local/state/pnpm"),
       join(homedir(), ".cache/uv"),
       join(homedir(), ".local/share/uv"),
       join(homedir(), ".cargo"),
