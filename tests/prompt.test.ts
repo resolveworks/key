@@ -1,5 +1,8 @@
+import { homedir } from "node:os";
+import { SelectList, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { describe, expect, test, vi } from "vitest";
 import { provider } from "../src/prompt.ts";
+import { selectTheme } from "../src/theme.ts";
 
 const signal = new AbortController().signal;
 // The host's stand-in: one answer, handed back to the editor untouched.
@@ -28,14 +31,14 @@ describe("provider", () => {
     ]);
   });
 
-  test("/new's completion is the command and the path it would run, one item", async () => {
+  test("/new's completion names the command, with the path it would run beside it", async () => {
     const complete = vi.fn();
     const suggestions = await provider(complete, () => freshDefault).getSuggestions(["/ne"], 0, 3, {
       signal,
     });
     expect(complete).not.toHaveBeenCalled();
     expect(suggestions?.items).toEqual([
-      { value: "new ~/somewhere", label: "new ~/somewhere", description: "start fresh" },
+      { value: "new", label: "new", description: "~/somewhere — start fresh" },
     ]);
   });
 
@@ -48,8 +51,32 @@ describe("provider", () => {
 
     cwd = "/host/repo";
     expect((await autocomplete.getSuggestions(["/ne"], 0, 3, { signal }))?.items).toEqual([
-      { value: "new /host/repo", label: "new /host/repo", description: "start fresh" },
+      { value: "new", label: "new", description: "/host/repo — start fresh" },
     ]);
+  });
+
+  test("/new's path survives the suggestion row's narrow name column, home-shortened", async () => {
+    // The editor clamps a command's name to 32 columns and cuts the rest without an ellipsis:
+    // a path in the name column would lose its leaf, so the row must read whole in the row.
+    const cwd = `${homedir()}/.key/worktrees/key-e01a74c8/sandbox-gitdir`;
+    const suggestions = await provider(vi.fn(), () => cwd).getSuggestions(["/new"], 0, 4, {
+      signal,
+    });
+    expect(suggestions?.items).toEqual([
+      {
+        value: "new",
+        label: "new",
+        description: "~/.key/worktrees/key-e01a74c8/sandbox-gitdir — start fresh",
+      },
+    ]);
+
+    const list = new SelectList(suggestions?.items ?? [], 5, selectTheme, {
+      minPrimaryColumnWidth: 12,
+      maxPrimaryColumnWidth: 32,
+    });
+    const row = stripTerminalSequences(list.render(90)[0] ?? "");
+    expect(row).toContain("~/.key/worktrees/key-e01a74c8/sandbox-gitdir");
+    expect(row).toContain("start fresh");
   });
 
   test("every other line is the host's, as it stands before the cursor", async () => {
@@ -72,20 +99,21 @@ describe("provider", () => {
     expect(forced).toBe(answer);
   });
 
-  test("applying /new's completion lands the command with its path, room to drill behind", () => {
+  test("applying /new's completion lands the command alone, room to drill behind", () => {
     // The editor applies against the item and the prefix it was answered with: what the send
-    // takes is `/new` naming where it runs, and further tabs complete the path on the host.
+    // takes is a bare `/new`, which runs where the suggestion named, and further tabs complete
+    // the path on the host.
     const applied = provider(vi.fn(), () => freshDefault).applyCompletion(
       ["/n"],
       0,
       2,
-      { value: "new ~/somewhere", label: "new ~/somewhere" },
+      { value: "new", label: "new" },
       "/n",
     );
     expect(applied).toEqual({
-      lines: ["/new ~/somewhere "],
+      lines: ["/new "],
       cursorLine: 0,
-      cursorCol: "/new ~/somewhere ".length,
+      cursorCol: "/new ".length,
     });
   });
 });
