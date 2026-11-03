@@ -56,6 +56,8 @@ const nameOf = (record: { readonly input: unknown }) => {
   const input = record.input as { readonly kind?: string; readonly name?: string };
   return input.kind === "worker" ? input.name : undefined;
 };
+const isSuccessor = (record: { readonly input: unknown }) =>
+  (record.input as { readonly kind?: string }).kind === "successor";
 
 /** Start one prompt directly in an ownerless conversation. */
 async function run(
@@ -141,22 +143,16 @@ describe("restart", () => {
     expect((await initial.wait(context)).status).toBe("done");
     const minted = await vi.waitFor(async () => {
       const records = await cascade(first);
-      expect(
-        records.filter(
-          (record) => (record.input as { readonly kind?: string }).kind === "successor",
-        ),
-      ).toHaveLength(1);
+      expect(records.filter(isSuccessor)).toHaveLength(1);
       return records;
     });
-    expect(minted.filter((record) => nameOf(record) !== undefined).map(nameOf)).toEqual([
-      "kid-a",
-      "kid-b",
-    ]);
+    const mintedChildren = minted.filter((record) => nameOf(record) !== undefined);
+    expect(mintedChildren.map(nameOf)).toEqual(["kid-a", "kid-b"]);
     const conversations = new Map(
       await Promise.all(
-        minted
-          .filter((record) => nameOf(record) !== undefined)
-          .map(async (record) => [record.id, await conversationOf(first, record.id)] as const),
+        mintedChildren.map(
+          async (child) => [child.id, await conversationOf(first, child.id)] as const,
+        ),
       ),
     );
 
@@ -181,16 +177,19 @@ describe("restart", () => {
     );
     const children = after.filter((record) => nameOf(record) !== undefined);
     expect(children.map(nameOf)).toEqual(["kid-a", "kid-b"]);
-    const successors = after.filter(
-      (record) => (record.input as { readonly kind?: string }).kind === "successor",
-    );
+    const successors = after.filter(isSuccessor);
     expect(successors).toHaveLength(1);
     expect(successors[0]?.input).toMatchObject({
       kind: "successor",
       on: children.map((record) => record.id),
     });
-    for (const child of children) {
-      expect(await conversationOf(second, child.id)).toBe(conversations.get(child.id));
+    const answers = ["child a done", "child b done"];
+    for (const [index, child] of children.entries()) {
+      const original = conversations.get(child.id);
+      if (original === undefined) throw new Error(`no conversation of task #${child.id}`);
+      // A resumed child answers in the one conversation it already owned, not in a second.
+      expect(await conversationOf(second, child.id)).toBe(original);
+      expect(JSON.stringify(await entries(second, original))).toContain(answers[index]);
     }
   });
 

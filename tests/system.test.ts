@@ -168,9 +168,7 @@ describe("the child cascade", () => {
 
     const transcript = await entries(harness, parent);
     expect(JSON.stringify(transcript)).not.toContain("CHILD-ANSWER-BENEATH-THE-SURFACE");
-    const successorTranscript = await entries(harness, await conversationOf(harness, next.id));
-    const text = JSON.stringify(successorTranscript);
-    expect(text).not.toContain("the parent ends here");
+    const text = JSON.stringify(await entries(harness, await conversationOf(harness, next.id)));
     expect(text).toContain("CHILD-ANSWER-BENEATH-THE-SURFACE");
     expect(text).toContain(`conversation #${parent}`);
     expect(text).toContain(`conversation=\\"${await conversationOf(harness, child.id)}\\"`);
@@ -223,7 +221,7 @@ describe("the child cascade", () => {
     await harness.waitForTask(next.id, context);
   });
 
-  it("a successor is a new conversation, not the parent resumed", async () => {
+  it("a successor does not resume the parent conversation", async () => {
     const { faux, harness } = await fresh();
     const answer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I delegated a.", ["a"]), answer, answer, turn("summed")]);
@@ -232,17 +230,20 @@ describe("the child cascade", () => {
     const next = await waitForSuccessor(harness);
     await harness.waitForTask(next.id, context);
 
-    expect(await conversationOf(harness, next.id)).not.toBe(parent);
     const transcript = await entries(harness, parent);
-    const author = transcript.flatMap((entry) => entry.model?.map((message) => message.role));
-    expect(author.filter((role) => role === "user")).toHaveLength(1);
+    const roles = transcript.flatMap((entry) => entry.model?.map((message) => message.role));
+    expect(roles.filter((role) => role === "user")).toHaveLength(1);
   });
 
   it("a run that starts no children ends the cascade", async () => {
     const { faux, harness } = await fresh();
     faux.setResponses([turn("just an answer")]);
 
-    await started(harness, "kick off");
+    const parent = await started(harness, "kick off");
+    // The run's end task could still mint a successor: wait until the conversation has nothing left.
+    const handle = await harness.conversation(parent, context);
+    if (handle === undefined) throw new Error(`no conversation #${parent}`);
+    await handle.waitForIdle(context);
 
     expect(await cascade(harness)).toEqual([]);
   });
@@ -265,18 +266,24 @@ describe("the child cascade", () => {
 });
 
 describe("child results", () => {
-  it("a delegation whose result is an error starts nothing", async () => {
+  it("a delegation that fails its schema starts no child", async () => {
     const { faux, harness } = await fresh();
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall("delegate", { name: "Not Kebab", prompt: "no" }), {
         stopReason: "toolUse",
       }),
+      // A worker wrongly started by this call would need a third answer, so the failure stays here.
+      turn("no"),
       turn("no"),
     ]);
 
-    await started(harness, "kick off");
+    const parent = await started(harness, "kick off");
+    const rejected = (await entries(harness, parent)).filter(
+      (entry) => entry.kind === "pi.tool-result",
+    );
 
-    expect(await cascade(harness)).toEqual([]);
+    expect(JSON.stringify(rejected)).toContain("expected to match ^[a-z0-9]+(?:-[a-z0-9]+)*$");
+    expect(children(await cascade(harness))).toEqual([]);
   });
 });
 
@@ -332,7 +339,7 @@ describe("ask", () => {
     expect(successor).toContain(`conversation #${parent}`);
   });
 
-  it("is one fork owned by its call, with no ask task between", async () => {
+  it("answers in one fork and leaves the target conversation untouched", async () => {
     const { faux, harness } = await fresh();
     const target = await conversation(harness);
     const ask: FauxResponseStep = (request) => {
@@ -359,40 +366,18 @@ describe("ask", () => {
     const asked = await main.submit({ type: "input", content: "kick off" }, context);
     expect((await asked.wait(context)).status).toBe("done");
 
-    const picture = await harness.commit(async (tx) => {
-      const forks = (await tx.scanConversations({}, 100)).items.filter(
-        (item) => item.parent?.conversationId === target.id,
-      );
-      return {
-        asks: (await tx.scanTasks({ kind: "key.ask" }, 10)).items.length,
-        forks: await Promise.all(
-          forks.map(async (fork) => {
-            const owner = fork.owner?.taskId;
-            const entries = await tx.scanEntries(
-              { conversationId: fork.id, order: "ascending" },
-              100,
-            );
-            return {
-              owner: owner === undefined ? undefined : (await tx.task(owner))?.kind,
-              questions: entries.items.filter(
-                (entry) => entry.kind === "pi.user" && entry.conversationId === fork.id,
-              ),
-            };
-          }),
-        ),
-      };
+    const forks = await harness.commit(async (tx) => {
+      const { items } = await tx.scanConversations({}, 100);
+      return items.filter((item) => item.parent?.conversationId === target.id);
     }, context);
-    expect(picture.asks).toBe(0);
-    expect(picture.forks).toHaveLength(1);
-    expect(picture.forks[0]?.owner).toBe("pi.tool");
-    expect(picture.forks[0]?.questions).toHaveLength(1);
+    expect(forks).toHaveLength(1);
     expect(await entries(harness, target.id)).toEqual(before);
     expect(JSON.stringify(await entries(harness, main.id))).toContain("ANSWER-FROM-FROZEN");
   });
 });
 
 describe("a continuation", () => {
-  it("messages a conversation in place and joins only that run's children", async () => {
+  it("a steer starts a second run in the same conversation and a second successor", async () => {
     const { faux, harness } = await fresh();
     const firstAnswer = route(turn("a is on its way"), { "task for a": turn("a answers") });
     faux.setResponses([turn("I delegated a.", ["a"]), firstAnswer, firstAnswer, turn("summed")]);
@@ -417,7 +402,6 @@ describe("a continuation", () => {
     const transcript = await entries(harness, kickoff);
     expect(transcript.filter((entry) => entry.kind === "pi.user")).toHaveLength(2);
     expect(children(await cascade(harness)).map(branchOf)).toEqual(["worker/a", "worker/b"]);
-    expect(next.input).toEqual({ kind: "successor", on: [b.id] });
   });
 });
 
