@@ -25,7 +25,7 @@ import { num, obj, str } from "@earendil-works/pi-schema";
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
-import { ensureWorker } from "./worker.ts";
+import { ensureWorker, WORKER_NAME, workerBranch } from "./worker.ts";
 
 export const CONVERSATION_INSTRUCTIONS = `
 <role>
@@ -66,12 +66,7 @@ export const RESEARCHER_INSTRUCTIONS =
 
 /** A worker, researcher, or the successor of a run: a task in a fresh conversation. */
 export type ConversationTaskInput =
-  | {
-      readonly kind: "worker";
-      readonly branch: string;
-      readonly prompt: string;
-      readonly base: string;
-    }
+  | { readonly kind: "worker"; readonly name: string; readonly prompt: string }
   | { readonly kind: "researcher"; readonly prompt: string }
   | {
       readonly kind: "successor";
@@ -89,7 +84,8 @@ export const CONVERSATION_TASK = "key.conversation";
 export const conversationTask = (git: Git) =>
   defineTask<ConversationTaskInput, ConversationTaskState, string>({
     name: CONVERSATION_TASK,
-    version: 1,
+    // The worker input shape changed at v1 too; nothing migrates, so a stale task blocks.
+    version: 2,
     // A worker or researcher has nothing to wait for; a successor waits for its children.
     initial: (input) => (input.kind === "successor" ? { phase: "wait" } : { phase: "run" }),
     phases: {
@@ -245,8 +241,8 @@ async function successorPrompt(
       continue;
     }
     if (cwd === undefined) throw new Error("successor: no cwd for worker diffs");
-    const branch = child.input.branch;
-    const diff = (await git(["diff", `${child.input.base}...${branch}`], cwd)).trim();
+    const branch = workerBranch(child.input.name);
+    const diff = (await git(["diff", `HEAD...${branch}`], cwd)).trim();
     rendered.push(
       diff.length > 0
         ? `<worker branch="${branch}" conversation="${child.conversation}">\n<diff>\n\`\`\`\n${diff}\n\`\`\`\n</diff>\n</worker>`
@@ -384,7 +380,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
       "Start an implementation worker in its own git worktree and fresh conversation. Use this by default for implementation rather than editing the current checkout. This call only starts the worker; it does not return the worker's result. After launching all independent workers for the current wave, end this run immediately. Do not implement the delegated task locally, wait, or poll. A separate successor conversation receives the children's diffs and results after they settle; you will not resume to collect them.",
     parameters: obj({
       name: str({
-        pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        pattern: WORKER_NAME.source,
         description: "Lowercase kebab-case worker name; its branch is worker/<name>.",
       }),
       prompt: str({
@@ -396,15 +392,15 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
     execute: async ({ prompt, name }, api, context) => {
       const repo = (await api.agent(context)).cwd;
       if (repo === undefined) throw new Error("delegate: no cwd to make a worktree from");
-      const worker = await ensureWorker(name, api.taskId, git, repo);
+      const path = await ensureWorker(name, api.taskId, git, repo);
       const taskId = await startChild(
         api,
         context,
         taskDefinition,
-        { kind: "worker", prompt, branch: worker.branch, base: worker.base },
+        { kind: "worker", name, prompt },
         (tx, conversation) =>
           configureChild(tx, conversation, api.models, {
-            cwd: worker.path,
+            cwd: path,
             instructions: WORKER_INSTRUCTIONS,
           }),
       );

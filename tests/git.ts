@@ -51,7 +51,6 @@ export function setGitRefs(value: string): void {
 /** The fake git port: records every call and answers the small surface Key consumes. */
 export const fakeGit: Git = async (args, _cwd) => {
   calls = [...calls, args];
-  if (args[0] === "rev-parse") return "base-commit\n";
   if (args[0] === "diff") return diff;
   if (args[0] === "for-each-ref") return refs;
   return "";

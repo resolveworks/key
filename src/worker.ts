@@ -6,7 +6,12 @@ import { join } from "node:path";
 import type { TaskId } from "@earendil-works/pi-durable";
 import type { Git } from "./git.ts";
 
-export type Worker = { readonly path: string; readonly branch: string; readonly base: string };
+export const WORKER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** A worker's branch, derived from its name: identity is the name, never a stored ref. */
+export function workerBranch(name: string): string {
+  return `worker/${name}`;
+}
 
 /** The worker's checkout in `cwd`'s repository, or the one a crash left. */
 export async function ensureWorker(
@@ -14,14 +19,14 @@ export async function ensureWorker(
   taskId: TaskId,
   git: Git,
   cwd: string,
-): Promise<Worker> {
-  const branch = `worker/${name}`;
+): Promise<string> {
   const path = join(homedir(), ".key", "worktrees", String(taskId));
   if (!existsSync(path)) {
+    const branch = workerBranch(name);
     const ref = `refs/heads/${branch}`;
     const kept = (await git(["for-each-ref", "--format=%(objectname)", ref], cwd)).trim();
     if (kept === "") await git(["worktree", "add", "--quiet", "-b", branch, path, "HEAD"], cwd);
     else await git(["worktree", "add", "--quiet", path, branch], cwd);
   }
-  return { path, branch, base: (await git(["rev-parse", "HEAD"], path)).trim() };
+  return path;
 }

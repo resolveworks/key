@@ -8,6 +8,7 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { workerBranch } from "../src/worker.ts";
 import { gitCalls, REPO, resetGit, setGitDiff } from "./git.ts";
 import {
   type ConversationTaskRecord,
@@ -58,7 +59,7 @@ function turn(text: string, children: readonly string[] = []) {
 const children = (records: readonly ConversationTaskRecord[]) =>
   records.filter((record) => record.input.kind !== "successor");
 const branchOf = (record: ConversationTaskRecord): string | undefined =>
-  record.input.kind === "worker" ? record.input.branch : undefined;
+  record.input.kind === "worker" ? workerBranch(record.input.name) : undefined;
 const onOf = (record: ConversationTaskRecord): readonly TaskId<string>[] | undefined =>
   record.input.kind === "successor" ? record.input.on : undefined;
 
@@ -126,12 +127,7 @@ describe("the child cascade", () => {
     const child = children(await cascade(harness))[0];
     const next = await waitForSuccessor(harness, [child.id]);
 
-    expect(child.input).toEqual({
-      kind: "worker",
-      prompt: "task for a",
-      branch: "worker/a",
-      base: "base-commit",
-    });
+    expect(child.input).toEqual({ kind: "worker", name: "a", prompt: "task for a" });
     expect(next.input).toEqual({ kind: "successor", on: [child.id] });
     await harness.waitForTask(next.id, context);
   });
@@ -196,7 +192,7 @@ describe("the child cascade", () => {
 
     expect(transcript).toContain("diff --git a/auth.ts b/auth.ts");
     expect(transcript).not.toContain("worker summary");
-    expect(gitCalls()).toContainEqual(["diff", "base-commit...worker/a"]);
+    expect(gitCalls()).toContainEqual(["diff", "HEAD...worker/a"]);
     await harness.waitForTask(next.id, context);
   });
 
@@ -435,12 +431,7 @@ describe("an interruption", () => {
     const kickoff = await run(harness, "kick off");
     await stuck.reached;
     const child = children(await cascade(harness))[0];
-    expect(child.input).toEqual({
-      kind: "worker",
-      prompt: "task for a",
-      branch: "worker/a",
-      base: "base-commit",
-    });
+    expect(child.input).toEqual({ kind: "worker", name: "a", prompt: "task for a" });
     await harness.waitForTask(child.id, context);
 
     const handle = await harness.conversation(kickoff, context);

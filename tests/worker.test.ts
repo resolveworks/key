@@ -31,28 +31,19 @@ describe("ensureWorker", () => {
   beforeEach(resetGit);
 
   it("creates a worktree under .key keyed by the task, on branch worker/<name>", async () => {
-    const worker = await ensureWorker("fix-the-bug", 7 as TaskId, fakeGit, REPO);
-    expect(worker).toEqual({
-      path: join(homedir(), ".key", "worktrees", "7"),
-      branch: "worker/fix-the-bug",
-      base: "base-commit",
-    });
+    const path = await ensureWorker("fix-the-bug", 7 as TaskId, fakeGit, REPO);
+    expect(path).toBe(join(homedir(), ".key", "worktrees", "7"));
     expect(gitCalls()).toEqual([
       ["for-each-ref", "--format=%(objectname)", "refs/heads/worker/fix-the-bug"],
-      ["worktree", "add", "--quiet", "-b", "worker/fix-the-bug", worker.path, "HEAD"],
-      ["rev-parse", "HEAD"],
+      ["worktree", "add", "--quiet", "-b", "worker/fix-the-bug", path, "HEAD"],
     ]);
   });
 
   it("checks out the branch an earlier cascade left instead of cutting a new one", async () => {
     setGitRefs("kept-commit\n");
-    const worker = await ensureWorker("x", 7 as TaskId, fakeGit, REPO);
-    expect(gitCalls()).toContainEqual(["worktree", "add", "--quiet", worker.path, "worker/x"]);
-    expect(worker).toEqual({
-      path: join(homedir(), ".key", "worktrees", "7"),
-      branch: "worker/x",
-      base: "base-commit",
-    });
+    const path = await ensureWorker("x", 7 as TaskId, fakeGit, REPO);
+    expect(gitCalls()).toContainEqual(["worktree", "add", "--quiet", path, "worker/x"]);
+    expect(path).toBe(join(homedir(), ".key", "worktrees", "7"));
   });
 
   it("accepts the checkout a crashed attempt left for the same task", async () => {
@@ -62,8 +53,8 @@ describe("ensureWorker", () => {
     mkdirSync(path, { recursive: true });
     vi.stubEnv("HOME", home);
     try {
-      const worker = await ensureWorker("fix-the-bug", 9_000_001 as TaskId, fakeGit, REPO);
-      expect(worker.path).toBe(path);
+      const kept = await ensureWorker("fix-the-bug", 9_000_001 as TaskId, fakeGit, REPO);
+      expect(kept).toBe(path);
       expect(gitCalls().filter(([verb]) => verb === "worktree")).toEqual([]);
     } finally {
       vi.unstubAllEnvs();
@@ -74,9 +65,7 @@ describe("ensureWorker", () => {
   it("keys two same-named workers in two repositories by their tasks", async () => {
     const here = await ensureWorker("same-name", 7 as TaskId, fakeGit, REPO);
     const there = await ensureWorker("same-name", 8 as TaskId, fakeGit, "/elsewhere/repo");
-    expect(here.path).not.toBe(there.path);
-    expect(here.branch).toBe("worker/same-name");
-    expect(there.branch).toBe("worker/same-name");
+    expect(here).not.toBe(there);
     expect(gitCalls().filter(([, verb]) => verb === "add")).toHaveLength(2);
   });
 });
@@ -113,8 +102,8 @@ describe("a worker's run", () => {
     const task = await harness.commit(async (tx) => {
       const records = await tx.scanTasks({ kind: CONVERSATION_TASK }, 100);
       const child = records.items.find((record) => {
-        const input = record.input as { readonly kind?: string; readonly branch?: string };
-        return input.kind === "worker" && input.branch === `worker/${name}`;
+        const input = record.input as { readonly kind?: string; readonly name?: string };
+        return input.kind === "worker" && input.name === name;
       });
       if (child === undefined) throw new Error(`no worker ${name}`);
       return child.id;
