@@ -778,7 +778,7 @@ describe("host", () => {
     });
   });
 
-  test("interleaved cascades hold one block each, the newest cascade's on top", async () => {
+  test("interleaved cascades hold one block each by their kickoff, not their newest", async () => {
     const child = held("a answers");
     const second: FauxResponseStep = (request) => {
       if (requestText(request.messages).includes("Successor of conversation"))
@@ -811,7 +811,7 @@ describe("host", () => {
     await child.asked;
     const secondRun = await runId("the second");
 
-    // The second cascade finishes while the first's child is held: its block sits on top.
+    // The second kickoff is the newer, so its block leads while the first's child is held.
     const midway = await list.until((frame: readonly Summary[]) => allNamed(frame, 5));
     expect(midway.map(({ label }) => label)).toEqual([
       "the second",
@@ -825,17 +825,18 @@ describe("host", () => {
     const listed = await list.until((frame: readonly Summary[]) => allNamed(frame, 6));
     await list.close();
 
+    // The first's successor arrives after every conversation above, and still its block stays
+    // below: a block answers to its kickoff, not to the newest conversation in it.
     expect(listed.map(({ label, depth }) => ({ label, depth }))).toEqual([
-      { label: "the first", depth: 0 },
-      { label: "task for a", depth: 1 },
-      { label: `Successor of conversation #${firstRun}.`, depth: 1 },
       { label: "the second", depth: 0 },
       { label: "task for b", depth: 1 },
       { label: `Successor of conversation #${secondRun}.`, depth: 1 },
+      { label: "the first", depth: 0 },
+      { label: "task for a", depth: 1 },
+      { label: `Successor of conversation #${firstRun}.`, depth: 1 },
     ]);
-    // The first block leads on the strength of its newer heir, though its kickoff is the older.
-    expect(listed[0].id).toBeLessThan(listed[3].id);
-    expect(listed[2].id).toBeGreaterThan(listed[5].id);
+    expect(listed[3].id).toBeLessThan(listed[0].id);
+    expect(listed[5].id).toBeGreaterThan(listed[2].id);
   });
 
   test("a successor lists after its run's children, with its own children beneath it", async () => {

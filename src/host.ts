@@ -592,9 +592,9 @@ type RunRecord = TaskRecord<ConversationTaskInput, unknown, string>;
 type Placed = ContextConversation & { depth: number };
 
 /** The listed conversations in display order: one contiguous block per cascade — the tree rooted
- * at the ownerless kickoff conversation — the newest cascade's block first, and within a block a
- * conversation ahead of its children, siblings ascending by id, so a run's successor follows
- * its children on their level. */
+ * at the ownerless kickoff conversation — the newest root first, so a cascade keeps its place as
+ * its children and successors arrive, and within a block a conversation ahead of its children,
+ * siblings ascending by id, so a run's successor follows its children on their level. */
 function forest(conversations: readonly ContextConversation[]): readonly Placed[] {
   const block = (root: ContextConversation, depth: number): readonly Placed[] => [
     { ...root, depth },
@@ -605,12 +605,8 @@ function forest(conversations: readonly ContextConversation[]): readonly Placed[
   ];
   return conversations
     .filter(({ owner }) => owner === undefined)
-    .map((root) => block(root, 0))
-    .sort(
-      (left, right) =>
-        Math.max(...right.map(({ id }) => id)) - Math.max(...left.map(({ id }) => id)),
-    )
-    .flat();
+    .sort((left, right) => right.id - left.id)
+    .flatMap((root) => block(root, 0));
 }
 
 /** A working directory's branch, when it is a repository: the footer shows it beside the path.
