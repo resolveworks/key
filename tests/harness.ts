@@ -1,5 +1,6 @@
 // Test support in durable's own shape: a setup of host-lifetime objects, a function that opens one
 // Harness from it, and small free helpers beside them. The API under test is called at the call site.
+import { inspect } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createModels,
@@ -20,7 +21,7 @@ import {
   type TaskRecord,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { expect, vi } from "vitest";
+import { afterEach, expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
 import { Fetch } from "../src/fetch.ts";
 import { ModelDefaultsDoc } from "../src/models.ts";
@@ -33,11 +34,21 @@ const context = BACKGROUND_CONTEXT;
 /** The faux provider's default model, the one every conversation here runs. */
 export const MODEL = { provider: "faux", modelId: "faux-1" } as const;
 
-/** What a host process carries across a restart: its provider, models, registry, and reports. */
+/** Every failure a Harness reported in this test's process: one afterEach fails a test that hid one, in
+ * every file, however that file opened its harness. */
+const reports: unknown[] = [];
+
+afterEach(() => {
+  const faults = reports.splice(0).map((report) => inspect(report, { depth: 4 }));
+  if (faults.length > 0) throw new Error(`harness reported failures:\n${faults.join("\n\n")}`);
+});
+
+/** What a host process carries across a restart: its provider, models, and registry. */
 export type KeySetup = {
   readonly faux: FauxProviderHandle;
   readonly models: Models;
   readonly registry: Registry;
+  /** The store above, kept here for the files that still check reports themselves. */
   readonly reports: unknown[];
 };
 
@@ -51,7 +62,7 @@ export function keySetup(): KeySetup {
   registry.install(Search);
   registry.install(Fetch);
   registry.install(Agents);
-  return { faux, models, registry, reports: [] };
+  return { faux, models, registry, reports };
 }
 
 export { CONVERSATION_TASK };
@@ -86,6 +97,7 @@ export async function cascade(harness: Harness): Promise<readonly ConversationTa
   const records: ConversationTaskRecord[] = [];
   await harness.commit(async (tx) => {
     const page = await tx.scanTasks({ kind: CONVERSATION_TASK }, 256);
+    if (page.next !== undefined) throw new Error("cascade: more than one page of tasks");
     records.push(...(page.items as unknown as ConversationTaskRecord[]));
   }, context);
   return records;

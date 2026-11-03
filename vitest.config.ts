@@ -10,6 +10,5 @@ export default defineConfig({
     pool: "forks",
     clearMocks: true,
     restoreMocks: true,
-    passWithNoTests: true,
   },
 });
