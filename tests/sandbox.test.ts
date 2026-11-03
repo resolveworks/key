@@ -1,7 +1,7 @@
 // The bwrap argv we build; enforcing it is bwrap's job.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir, userInfo } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
@@ -15,8 +15,8 @@ import {
 } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
-import { afterEach, describe, expect, test, vi } from "vitest";
-import { type Sandbox, sandboxCommand, sandboxEnv } from "../src/sandbox.ts";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import { CACHES, type Sandbox, sandboxCommand, sandboxEnv } from "../src/sandbox.ts";
 import { keySetup, MODEL } from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -51,21 +51,20 @@ function indexOf(command: readonly string[], ...tokens: string[]): number {
 }
 
 describe("sandboxCommand", () => {
+  // The pre-commit hook exports GIT_DIR for the repository it commits, and the probe asks git about
+  // cwd: a sandbox daemon started by hand carries no such thing.
+  beforeAll(() => {
+    for (const name of Object.keys(process.env))
+      if (name.startsWith("GIT_")) delete process.env[name];
+  });
+
   test("binds the writable paths over the read-only host and changes directory last", () => {
     const cwd = temp("key-sandbox-order-");
     const command = sandboxCommand(cwd, daemon);
     const root = indexOf(command, "--ro-bind", "/", "/");
 
     expect(root).toBeGreaterThanOrEqual(0);
-    for (const path of [
-      cwd,
-      join(homedir(), ".local/share/pnpm"),
-      join(homedir(), ".cache/pnpm"),
-      join(homedir(), ".local/state/pnpm"),
-      join(homedir(), ".cache/uv"),
-      join(homedir(), ".local/share/uv"),
-      join(homedir(), ".cargo"),
-    ]) {
+    for (const path of [cwd, ...CACHES]) {
       expect(indexOf(command, "--bind", path, path)).toBeGreaterThan(root);
     }
     const tmpfs = indexOf(command, "--tmpfs", "/tmp");
@@ -104,6 +103,16 @@ describe("sandboxCommand", () => {
 
     expect(indexOf(command, "--bind", worktree, worktree)).toBeGreaterThanOrEqual(0);
     expect(indexOf(command, "--bind", gitDir, gitDir)).toBeGreaterThanOrEqual(0);
+  });
+
+  test("binds no git dir when the cwd is not a repository", () => {
+    const cwd = temp("key-sandbox-plain-");
+    const command = sandboxCommand(cwd, daemon);
+    const binds = command.flatMap((token, index) =>
+      token === "--bind" ? [command[index + 1]] : [],
+    );
+
+    expect(binds).toEqual([cwd, ...CACHES]);
   });
 });
 
