@@ -51,12 +51,15 @@ verification. Launch independent children for the current wave in parallel.
 <handoff>
 delegate and research start separate conversations; they are not background jobs
 within your run. Once you have launched the current wave, your run is complete.
-End it immediately with a brief status. Do not continue the delegated work, wait,
-poll, or ask in-flight children for results.
+End it immediately with a concise handoff for your successor: the overall goal,
+why you delegated this work, the current plan, and what remains to decide. Do
+not merely report that children were started. Do not continue the delegated
+work, wait, poll, or ask in-flight children for results.
 
-After the children settle, a separate successor conversation receives their
-results and decides what to do next. Use ask to consult settled earlier
-conversations for missing goals or context instead of guessing.
+After the children settle, a separate successor conversation receives your
+handoff and their results and decides what to do next. The handoff is context,
+not a binding plan: child results may invalidate it. Use ask to consult settled
+earlier conversations for missing goals or context instead of guessing.
 </handoff>
 `;
 export const WORKER_INSTRUCTIONS =
@@ -72,6 +75,8 @@ export type ConversationTaskInput =
       readonly kind: "successor";
       /** The children whose results the successor receives. */
       readonly on: readonly TaskId<string>[];
+      /** The predecessor's final answer. */
+      readonly handoff: string;
     };
 
 type ConversationTaskState =
@@ -86,7 +91,7 @@ export const conversationTask = (git: Git) =>
     name: CONVERSATION_TASK,
     // A v1 worker stored its branch and base; v2 stores its name. Nothing migrates, so a stale
     // task blocks instead of diffing worker/undefined.
-    version: 2,
+    version: 3,
     // A worker or researcher has nothing to wait for; a successor waits for its children.
     initial: (input) => (input.kind === "successor" ? { phase: "wait" } : { phase: "run" }),
     phases: {
@@ -253,6 +258,8 @@ async function successorPrompt(
   return [
     `Successor of conversation #${predecessor}.`,
     "",
+    `<handoff>\n${input.handoff}\n</handoff>`,
+    "",
     ...rendered,
     "",
     "Use ask to consult any conversation above for further detail.",
@@ -283,19 +290,21 @@ async function createConversationTask(
  * until it finished answering. This task commits the conversation-owned,
  * background successor and terminates at once, so the run ends immediately.
  */
-type SuccessorInput = { readonly on: TaskId<string>[] };
+type SuccessorInput = { readonly on: TaskId<string>[]; readonly answer: EntryId };
 
 const successorTask = (taskDefinition: ConversationTaskDefinition) =>
   defineTask<SuccessorInput, { readonly phase: "schedule" }, null>({
     name: "key.successor",
-    version: 1,
+    version: 2,
     initial: () => ({ phase: "schedule" }),
     phases: {
       schedule: async (record, runtime, context) => {
         await runtime.commit(async (tx) => {
+          const handoff = answerOf(await tx.entry(AssistantEntry, record.input.answer));
           await createConversationTask(tx, taskDefinition, {
             kind: "successor",
             on: record.input.on,
+            handoff,
           });
           // The joined children are settled now; drop their records so the doc stays small.
           const children = await tx.doc(RunChildren, record.conversationId);
@@ -511,7 +520,7 @@ export const keySystem = (git: Git) => {
                   .filter((started) => started.entry >= run.first && started.entry <= run.last)
                   .map((started) => started.child);
           if (on.length === 0) return undefined;
-          return { tasks: [runEndTask(SuccessorTask, { on })] };
+          return { tasks: [runEndTask(SuccessorTask, { on, answer: run.answer })] };
         },
       }),
     ],

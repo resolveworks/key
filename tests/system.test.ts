@@ -124,7 +124,11 @@ describe("the child cascade", () => {
     const next = await waitForSuccessor(harness, [child.id]);
 
     expect(child.input).toEqual({ kind: "worker", name: "a", prompt: "task for a" });
-    expect(next.input).toEqual({ kind: "successor", on: [child.id] });
+    expect(next.input).toEqual({
+      kind: "successor",
+      on: [child.id],
+      handoff: "a is on its way",
+    });
     await harness.waitForTask(next.id, context);
   });
 
@@ -327,11 +331,12 @@ describe("ask", () => {
     expect(asked).toContain("parent final");
     expect(await entries(harness, parent)).toEqual(before);
 
-    // Only the lineage reached the successor.
+    // The predecessor's handoff reaches the successor, but its transcript does not.
     const successor = JSON.stringify(
       await entries(harness, await conversationOf(harness, next.id)),
     );
-    expect(successor).not.toContain("parent final");
+    expect(successor).toContain("<handoff>\\nparent final\\n</handoff>");
+    expect(successor).not.toContain("kick off");
     expect(successor).toContain(`conversation #${parent}`);
   });
 
@@ -477,6 +482,6 @@ describe("an interruption", () => {
     await harness.waitForTask(next.id, context);
 
     expect(children(await cascade(harness)).map(branchOf)).toEqual(["worker/a", "worker/b"]);
-    expect(next.input).toEqual({ kind: "successor", on: [b.id] });
+    expect(next.input).toEqual({ kind: "successor", on: [b.id], handoff: "wrapped up" });
   });
 });
