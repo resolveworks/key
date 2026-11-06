@@ -89,9 +89,12 @@ describe("a worker's run", () => {
         return fauxAssistantMessage("done");
       if (request.messages.at(-1)?.role === "toolResult")
         return fauxAssistantMessage("parent done");
-      return fauxAssistantMessage(fauxToolCall("delegate", { name, prompt: "ask the worker" }), {
-        stopReason: "toolUse",
-      });
+      return fauxAssistantMessage(
+        fauxToolCall("delegate_implementation", { name, prompt: "ask the worker" }),
+        {
+          stopReason: "toolUse",
+        },
+      );
     };
     setup.faux.setResponses([answer, answer, answer, answer]);
     const harness = await openKey(new MemoryStorage(), setup);

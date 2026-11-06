@@ -1038,7 +1038,9 @@ describe("host", () => {
   function turn(text: string, children: readonly string[] = []) {
     return fauxAssistantMessage(
       [
-        ...children.map((name) => fauxToolCall("delegate", { name, prompt: `task for ${name}` })),
+        ...children.map((name) =>
+          fauxToolCall("delegate_implementation", { name, prompt: `task for ${name}` }),
+        ),
         fauxText(text),
       ],
       { stopReason: children.length === 0 ? "stop" : "toolUse" },

@@ -45,7 +45,9 @@ async function fresh(): Promise<{ readonly faux: FauxProviderHandle; readonly ha
 function turn(text: string, children: readonly string[] = []) {
   return fauxAssistantMessage(
     [
-      ...children.map((name) => fauxToolCall("delegate", { name, prompt: `task for ${name}` })),
+      ...children.map((name) =>
+        fauxToolCall("delegate_implementation", { name, prompt: `task for ${name}` }),
+      ),
       fauxText(text),
     ],
     { stopReason: children.length === 0 ? "stop" : "toolUse" },
@@ -202,9 +204,12 @@ describe("the child cascade", () => {
       if (text.includes("investigate auth")) return turn("RESEARCH-FINDINGS");
       if (text.includes("Successor of conversation")) return turn("summed");
       if (request.messages.at(-1)?.role === "toolResult") return turn("research started");
-      return fauxAssistantMessage(fauxToolCall("research", { prompt: "investigate auth" }), {
-        stopReason: "toolUse",
-      });
+      return fauxAssistantMessage(
+        fauxToolCall("delegate_research", { prompt: "investigate auth" }),
+        {
+          stopReason: "toolUse",
+        },
+      );
     };
     faux.setResponses([step, step, step, step]);
 
@@ -269,9 +274,12 @@ describe("child results", () => {
   it("a delegation that fails its schema starts no child", async () => {
     const { faux, harness } = await fresh();
     faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("delegate", { name: "Not Kebab", prompt: "no" }), {
-        stopReason: "toolUse",
-      }),
+      fauxAssistantMessage(
+        fauxToolCall("delegate_implementation", { name: "Not Kebab", prompt: "no" }),
+        {
+          stopReason: "toolUse",
+        },
+      ),
       // A worker wrongly started by this call would need a third answer, so the failure stays here.
       turn("no"),
       turn("no"),

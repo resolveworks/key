@@ -127,8 +127,16 @@ describe("restart", () => {
     setup.faux.setResponses([
       fauxAssistantMessage(
         [
-          fauxToolCall("delegate", { name: "kid-a", prompt: "do a" }, { id: "call-a" }),
-          fauxToolCall("delegate", { name: "kid-b", prompt: "do b" }, { id: "call-b" }),
+          fauxToolCall(
+            "delegate_implementation",
+            { name: "kid-a", prompt: "do a" },
+            { id: "call-a" },
+          ),
+          fauxToolCall(
+            "delegate_implementation",
+            { name: "kid-b", prompt: "do b" },
+            { id: "call-b" },
+          ),
         ],
         { stopReason: "toolUse" },
       ),

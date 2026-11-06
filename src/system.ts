@@ -29,17 +29,17 @@ import { ensureWorker, WORKER_NAME, workerBranch } from "./worker.ts";
 
 export const CONVERSATION_INSTRUCTIONS = `
 <role>
-You coordinate the user's coding task during this run. Answer directly, delegate
-implementation or research, or evaluate and integrate child results already
-supplied to you rather than merely relaying them.
+You coordinate the user's coding task during this run. Answer directly, use
+delegate_implementation or delegate_research, or evaluate and integrate child
+results already supplied to you rather than merely relaying them.
 </role>
 
 <delegation>
-Default to delegate for implementation instead of editing the current checkout.
+Default to delegate_implementation instead of editing the current checkout.
 Direct edits are the exception, reserved for trivial changes and integration or
 conflict resolution that cannot sensibly be delegated.
 
-Use research for non-trivial investigations that benefit from isolated context
+Use delegate_research for non-trivial investigations that benefit from isolated context
 or parallel work. Perform quick lookups directly, but never duplicate research
 already assigned to a researcher.
 
@@ -49,8 +49,8 @@ verification. Launch independent children for the current wave in parallel.
 </delegation>
 
 <handoff>
-delegate and research start separate conversations; they are not background jobs
-within your run. Once you have launched the current wave, your run is complete.
+delegate_implementation and delegate_research start separate conversations; they are not
+background jobs within your run. Once you have launched the current wave, your run is complete.
 End it immediately with a concise handoff for your successor: the overall goal,
 why you delegated this work, the current plan, and what remains to decide. Do
 not merely report that children were started. Do not continue the delegated
@@ -380,12 +380,12 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
       model: child,
       thinkingLevel: clampThinkingLevel(model, level),
       instructions: options.instructions,
-      tools: { remove: [Delegate, Research, Ask] },
+      tools: { remove: [DelegateImplementation, DelegateResearch, Ask] },
     });
   }
 
-  const Delegate = defineTool({
-    name: "delegate",
+  const DelegateImplementation = defineTool({
+    name: "delegate_implementation",
     description:
       "Start an implementation worker in its own git worktree and fresh conversation. Use this by default for implementation rather than editing the current checkout. This call only starts the worker; it does not return the worker's result. After launching all independent workers for the current wave, end this run immediately. Do not implement the delegated task locally, wait, or poll. A separate successor conversation receives the children's diffs and results after they settle; you will not resume to collect them.",
     parameters: obj({
@@ -401,7 +401,8 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
     replay: "safe",
     execute: async ({ prompt, name }, api, context) => {
       const repo = (await api.agent(context)).cwd;
-      if (repo === undefined) throw new Error("delegate: no cwd to make a worktree from");
+      if (repo === undefined)
+        throw new Error("delegate_implementation: no cwd to make a worktree from");
       const path = await ensureWorker(name, api.taskId, git, repo);
       const taskId = await startChild(
         api,
@@ -425,8 +426,8 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
     },
   });
 
-  const Research = defineTool({
-    name: "research",
+  const DelegateResearch = defineTool({
+    name: "delegate_research",
     description:
       "Start a researcher in a fresh conversation to investigate and report findings without changing code. Use this for non-trivial research benefiting from isolated context or parallel investigation. This call only starts the researcher; it does not return findings. After launching all independent researchers for the current wave, end this run immediately. Do not duplicate the research locally, wait, poll, or ask the researcher for results. A separate successor conversation receives the findings after the children settle; you will not resume to collect them.",
     parameters: obj({
@@ -459,7 +460,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
       };
     },
   });
-  return { Delegate, Research };
+  return { DelegateImplementation, DelegateResearch };
 }
 
 /** Ask one settled conversation a question: it answers in a private fork of its own context. */
@@ -498,7 +499,7 @@ const Ask = defineTool({
 export const keySystem = (git: Git) => {
   const ConversationTask = conversationTask(git);
   const SuccessorTask = successorTask(ConversationTask);
-  const { Delegate, Research } = childTools(git, ConversationTask);
+  const { DelegateImplementation, DelegateResearch } = childTools(git, ConversationTask);
   return defineExtension({
     name: "key",
     sections: [
@@ -525,6 +526,6 @@ export const keySystem = (git: Git) => {
       }),
     ],
     tasks: [ConversationTask, SuccessorTask],
-    tools: [Delegate, Research, Ask],
+    tools: [DelegateImplementation, DelegateResearch, Ask],
   });
 };
