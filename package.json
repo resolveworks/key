@@ -4,6 +4,7 @@
   "description": "A durable host and terminal client for cascades of coding agents",
   "license": "AGPL-3.0-only",
   "type": "module",
+  "packageManager": "pnpm@12.17.0",
   "bin": {
     "key": "dist/main.js"
   },
@@ -12,6 +13,10 @@
   ],
   "engines": {
     "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/resolveworks/key.git"
   },
   "publishConfig": {
     "access": "public"

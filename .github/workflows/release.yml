@@ -1,0 +1,31 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for npm trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6 # version comes from packageManager in package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check version matches release tag
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+
+      # prepublishOnly builds, checks, and tests.
+      - run: pnpm publish --access public --no-git-checks
