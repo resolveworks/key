@@ -4,9 +4,9 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   authFile,
   configDir,
+  dataDir,
   port,
   sandboxFile,
-  sessionDir,
   sessionFile,
   worktreesDir,
 } from "../src/config.ts";
@@ -14,42 +14,31 @@ import {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("key paths", () => {
-  test("everything lives under ~/.key by default", () => {
-    expect(configDir()).toBe(join(homedir(), ".key"));
-    expect(sessionDir()).toBe(join(homedir(), ".key"));
-    expect(authFile()).toBe(join(homedir(), ".key", "auth.json"));
-    expect(sandboxFile()).toBe(join(homedir(), ".key", "sandbox.json"));
-    expect(sessionFile()).toBe(join(homedir(), ".key", "session.sqlite"));
-    expect(worktreesDir()).toBe(join(homedir(), ".key", "worktrees"));
+  test("defaults to the XDG config and data directories", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", undefined);
+    vi.stubEnv("XDG_DATA_HOME", undefined);
+    const config = join(homedir(), ".config", "key");
+    const data = join(homedir(), ".local", "share", "key");
+    expect(configDir()).toBe(config);
+    expect(dataDir()).toBe(data);
+    expect(authFile()).toBe(join(config, "auth.json"));
+    expect(sandboxFile()).toBe(join(config, "sandbox.json"));
+    expect(sessionFile()).toBe(join(data, "session.sqlite"));
+    expect(worktreesDir()).toBe(join(data, "worktrees"));
     expect(port()).toBe(7317);
   });
 
-  test("KEY_CONFIG_DIR moves credentials and the manifest; sessions follow it", () => {
+  test("XDG_CONFIG_HOME and XDG_DATA_HOME move each tree", () => {
     const config = join(tmpdir(), "key-config");
-    vi.stubEnv("KEY_CONFIG_DIR", config);
-    expect(configDir()).toBe(config);
-    expect(sessionDir()).toBe(config);
-    expect(authFile()).toBe(join(config, "auth.json"));
-    expect(sandboxFile()).toBe(join(config, "sandbox.json"));
-    expect(sessionFile()).toBe(join(config, "session.sqlite"));
-  });
-
-  test("KEY_SESSION_DIR moves the database and checkouts, leaving config in place", () => {
-    const config = join(tmpdir(), "key-config");
-    const sessions = join(tmpdir(), "key-sessions");
-    vi.stubEnv("KEY_CONFIG_DIR", config);
-    vi.stubEnv("KEY_SESSION_DIR", sessions);
-    expect(configDir()).toBe(config);
-    expect(sessionDir()).toBe(sessions);
-    expect(authFile()).toBe(join(config, "auth.json"));
-    expect(sandboxFile()).toBe(join(config, "sandbox.json"));
-    expect(sessionFile()).toBe(join(sessions, "session.sqlite"));
-    expect(worktreesDir()).toBe(join(sessions, "worktrees"));
-  });
-
-  test("~ in a configured directory is the home directory", () => {
-    vi.stubEnv("KEY_CONFIG_DIR", "~/key-test");
-    expect(configDir()).toBe(join(homedir(), "key-test"));
+    const data = join(tmpdir(), "key-data");
+    vi.stubEnv("XDG_CONFIG_HOME", config);
+    vi.stubEnv("XDG_DATA_HOME", data);
+    expect(configDir()).toBe(join(config, "key"));
+    expect(dataDir()).toBe(join(data, "key"));
+    expect(authFile()).toBe(join(config, "key", "auth.json"));
+    expect(sandboxFile()).toBe(join(config, "key", "sandbox.json"));
+    expect(sessionFile()).toBe(join(data, "key", "session.sqlite"));
+    expect(worktreesDir()).toBe(join(data, "key", "worktrees"));
   });
 
   test("KEY_PORT names the port", () => {

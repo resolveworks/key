@@ -1,30 +1,25 @@
-// Key's own directories: config holds credentials and the sandbox manifest; sessions hold the
-// database and worker checkouts. `KEY_CONFIG_DIR` and `KEY_SESSION_DIR` move them; both default
-// to `~/.key`, and sessions follow a moved config directory unless named themselves.
+// Key's directories: config holds credentials and the sandbox manifest; data holds the session
+// database and worker checkouts. Both follow the XDG base directory spec, so `XDG_CONFIG_HOME`
+// and `XDG_DATA_HOME` move them.
 
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 const DEFAULT_PORT = 7317;
 
-/** `~` at the front is the user's home, as in a sandbox manifest. */
-function expand(path: string, home: string): string {
-  if (path === "~") return home;
-  return path.startsWith("~/") ? join(home, path.slice(2)) : path;
-}
-
-function directory(name: string, fallback: string): string {
-  return resolve(expand(process.env[name] || fallback, homedir()));
+/** An XDG base directory: the variable when set, else its home-relative default. */
+function base(variable: "XDG_CONFIG_HOME" | "XDG_DATA_HOME", fallback: string): string {
+  return process.env[variable] || join(homedir(), fallback);
 }
 
 /** The config directory: credentials and the sandbox manifest. */
 export function configDir(): string {
-  return directory("KEY_CONFIG_DIR", join(homedir(), ".key"));
+  return join(base("XDG_CONFIG_HOME", ".config"), "key");
 }
 
-/** The session directory: the session database and worker checkouts. */
-export function sessionDir(): string {
-  return directory("KEY_SESSION_DIR", configDir());
+/** The data directory: the session database and worker checkouts. */
+export function dataDir(): string {
+  return join(base("XDG_DATA_HOME", join(".local", "share")), "key");
 }
 
 export function authFile(): string {
@@ -36,11 +31,11 @@ export function sandboxFile(): string {
 }
 
 export function sessionFile(): string {
-  return join(sessionDir(), "session.sqlite");
+  return join(dataDir(), "session.sqlite");
 }
 
 export function worktreesDir(): string {
-  return join(sessionDir(), "worktrees");
+  return join(dataDir(), "worktrees");
 }
 
 /** The port `key serve` binds; the client agrees unless `KEY_HOST` names another. */

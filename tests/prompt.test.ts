@@ -56,7 +56,7 @@ describe("provider", () => {
   test("/new's path survives the suggestion row's narrow name column, home-shortened", async () => {
     // The editor clamps a command's name to 32 columns and cuts the rest without an ellipsis:
     // a path in the name column would lose its leaf, so the row must read whole in the row.
-    const cwd = `${homedir()}/.key/worktrees/key-e01a74c8/sandbox-gitdir`;
+    const cwd = `${homedir()}/.local/share/key/worktrees/key-e01a74c8/sandbox-gitdir`;
     const suggestions = await provider(vi.fn(), () => cwd).getSuggestions(["/new"], 0, 4, {
       signal,
     });
@@ -64,7 +64,7 @@ describe("provider", () => {
       {
         value: "new",
         label: "new",
-        description: "~/.key/worktrees/key-e01a74c8/sandbox-gitdir — start fresh",
+        description: "~/.local/share/key/worktrees/key-e01a74c8/sandbox-gitdir — start fresh",
       },
     ]);
 
@@ -73,7 +73,7 @@ describe("provider", () => {
       maxPrimaryColumnWidth: 32,
     });
     const row = stripTerminalSequences(list.render(90)[0] ?? "");
-    expect(row).toContain("~/.key/worktrees/key-e01a74c8/sandbox-gitdir");
+    expect(row).toContain("~/.local/share/key/worktrees/key-e01a74c8/sandbox-gitdir");
     expect(row).toContain("start fresh");
   });
 

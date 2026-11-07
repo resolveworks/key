@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   contentText,
@@ -17,6 +17,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "../src/agents.ts";
 import type { api } from "../src/api.ts";
+import { dataDir } from "../src/config.ts";
 import type { Stats } from "../src/footer.ts";
 import { Host, type Summary } from "../src/host.ts";
 import type { LoginEvent, ProviderInfo } from "../src/login.ts";
@@ -670,8 +671,8 @@ describe("host", () => {
     ]);
     // The child's conversation lists beneath its kickoff.
     expect(listed[1].id).toBeGreaterThan(listed[0].id);
-    // The child's worktree is keyed by the delegate call's task id under the key home.
-    expect(listed[1].cwd).toMatch(new RegExp(`^${homedir()}/\\.key/worktrees/\\d+$`));
+    // The child's worktree is keyed by the delegate call's task id under the key data directory.
+    expect(listed[1].cwd).toContain(`${join(dataDir(), "worktrees")}/`);
   });
 
   test("a settled cascade leaves attention on its final heir alone", async () => {

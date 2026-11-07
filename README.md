@@ -43,12 +43,13 @@ key serve    # own the session and serve the graph
 key          # connect the client from another terminal
 ```
 
-Everything Key owns lives under `~/.key`:
+Key keeps configuration in `$XDG_CONFIG_HOME/key` and data in `$XDG_DATA_HOME/key`, following the
+XDG base directory spec:
 
 | Variable          | Default                      | What it moves                                                       |
 | ----------------- | ---------------------------- | ------------------------------------------------------------------- |
-| `KEY_CONFIG_DIR`  | `~/.key`                     | `auth.json` and `sandbox.json`                                      |
-| `KEY_SESSION_DIR` | `$KEY_CONFIG_DIR`            | `session.sqlite` and `worktrees/`                                   |
+| `XDG_CONFIG_HOME` | `~/.config`                  | `key/auth.json` and `key/sandbox.json`                              |
+| `XDG_DATA_HOME`   | `~/.local/share`             | `key/session.sqlite` and `key/worktrees/`                           |
 | `KEY_PORT`        | `7317`                       | the host's port; the client follows unless `KEY_HOST` names another |
 | `KEY_BIND`        | `127.0.0.1`                  | the host's interface                                                |
 | `KEY_HOST`        | `http://127.0.0.1:$KEY_PORT` | the client's host                                                   |
@@ -86,8 +87,9 @@ In another terminal, connect the client:
 pnpm client
 ```
 
-`pnpm build:env` builds the pi checkout beside this repository and puts its daemon where
-local sessions look. The published package ships pi's daemon already.
+`pnpm build` compiles the published artifact into `dist/`; `pnpm serve` and `pnpm client` run the
+source directly. `pnpm build:env` builds the pi checkout beside this repository and puts its
+daemon where local sessions look. The published package ships pi's daemon already.
 
 ```sh
 pnpm check

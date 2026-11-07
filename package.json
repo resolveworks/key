@@ -2,12 +2,13 @@
   "name": "@resolveworks/key",
   "version": "0.1.0",
   "description": "A durable host and terminal client for cascades of coding agents",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "bin": {
-    "key": "src/main.ts"
+    "key": "dist/main.js"
   },
   "files": [
-    "src"
+    "dist"
   ],
   "engines": {
     "node": ">=22.19.0"
@@ -16,6 +17,7 @@
     "access": "public"
   },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "build:env": "node scripts/build-env.mjs",
     "serve": "node src/main.ts serve",
     "client": "node src/main.ts client",
@@ -23,7 +25,7 @@
     "fix": "biome check --write",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "pnpm check && pnpm test"
+    "prepublishOnly": "pnpm build && pnpm check && pnpm test"
   },
   "dependencies": {
     "@earendil-works/chord": "1.5.0",

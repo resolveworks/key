@@ -41,7 +41,7 @@ import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
-import { authFile, port, sessionDir, sessionFile } from "./config.ts";
+import { authFile, dataDir, port, sessionFile } from "./config.ts";
 import { targetCwd } from "./cwd.ts";
 import type { Target } from "./defaults.ts";
 import { Fetch } from "./fetch.ts";
@@ -81,7 +81,7 @@ export type HostOptions = {
 export async function production(): Promise<HostOptions> {
   const manifest = loadSandboxManifest();
   const models = builtinModels({ credentials: new FileCredentialStore(authFile()) });
-  mkdirSync(sessionDir(), { recursive: true });
+  mkdirSync(dataDir(), { recursive: true });
   return {
     models,
     manifest,

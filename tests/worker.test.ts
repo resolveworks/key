@@ -1,6 +1,6 @@
-// A worker runs in a worktree under the key home, outside the repo, on its own branch.
+// A worker runs in a worktree under the key data directory, outside the repo, on its own branch.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { FauxResponseStep } from "@earendil-works/pi-ai";
@@ -13,6 +13,7 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { dataDir } from "../src/config.ts";
 import { WORKER_INSTRUCTIONS } from "../src/system.ts";
 import { ensureWorker } from "../src/worker.ts";
 import { fakeGit, gitCalls, REPO, resetGit, setGitRefs } from "./git.ts";
@@ -30,9 +31,9 @@ const context = BACKGROUND_CONTEXT;
 describe("ensureWorker", () => {
   beforeEach(resetGit);
 
-  it("creates a worktree under .key keyed by the task, on branch worker/<name>", async () => {
+  it("creates a worktree under the data directory keyed by the task, on branch worker/<name>", async () => {
     const path = await ensureWorker("fix-the-bug", 7 as TaskId, fakeGit, REPO);
-    expect(path).toBe(join(homedir(), ".key", "worktrees", "7"));
+    expect(path).toBe(join(dataDir(), "worktrees", "7"));
     expect(gitCalls()).toEqual([
       ["for-each-ref", "--format=%(objectname)", "refs/heads/worker/fix-the-bug"],
       ["worktree", "add", "--quiet", "-b", "worker/fix-the-bug", path, "HEAD"],
@@ -43,15 +44,15 @@ describe("ensureWorker", () => {
     setGitRefs("kept-commit\n");
     const path = await ensureWorker("x", 7 as TaskId, fakeGit, REPO);
     expect(gitCalls()).toContainEqual(["worktree", "add", "--quiet", path, "worker/x"]);
-    expect(path).toBe(join(homedir(), ".key", "worktrees", "7"));
+    expect(path).toBe(join(dataDir(), "worktrees", "7"));
   });
 
   it("accepts the checkout a crashed attempt left for the same task", async () => {
-    // A rented home: the real ~/.key is a tmpfs inside a worker's sandbox, but its cwd is bound writable.
+    // A rented home: the real data directory is a tmpfs inside a worker's sandbox, but its cwd is bound writable.
     const home = mkdtempSync(join(tmpdir(), "key-home-"));
-    const path = join(home, ".key", "worktrees", "9000001");
-    mkdirSync(path, { recursive: true });
     vi.stubEnv("HOME", home);
+    const path = join(dataDir(), "worktrees", "9000001");
+    mkdirSync(path, { recursive: true });
     try {
       const kept = await ensureWorker("fix-the-bug", 9_000_001 as TaskId, fakeGit, REPO);
       expect(kept).toBe(path);
@@ -131,7 +132,7 @@ describe("a worker's run", () => {
     const agent = await agentState(harness, conversation.id);
     const tools = await harness.commit((tx) => tx.scanTasks({ kind: "pi.tool" }, 100), context);
     expect(tools.items).toHaveLength(1);
-    expect(agent?.cwd).toBe(join(homedir(), ".key", "worktrees", String(tools.items[0].id)));
+    expect(agent?.cwd).toBe(join(dataDir(), "worktrees", String(tools.items[0].id)));
     expect(agent?.instructions).toBe(WORKER_INSTRUCTIONS);
   });
 });
