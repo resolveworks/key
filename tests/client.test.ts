@@ -172,7 +172,7 @@ describe("inheritCwd", () => {
   });
 
   test("a conversation the host never listed hands nothing", () => {
-    expect(inheritCwd([summary(1, true)], 7)).toBe("");
+    expect(inheritCwd([summary(1, true)], 7)).toBeUndefined();
   });
 });
 

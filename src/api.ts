@@ -29,7 +29,7 @@ const CwdInput = Type.Object({
 });
 
 const CompleteInput = Type.Object({
-  cwd: Type.Optional(Type.String({ minLength: 1 })),
+  cwd: Type.String({ minLength: 1 }),
   text: Type.String(),
   force: Type.Optional(Type.Boolean()),
 });
@@ -71,7 +71,7 @@ const index = `key host
   GET  /api/conversations/:id/entries  page entries behind or between the windows
   POST /api/run                        {prompt, cwd} → {conversation}: start a conversation in that directory
   POST /api/cwd                        {path, cwd?} → {cwd}: resolve a real directory on the host
-  POST /api/complete                   {cwd?, text, force}: the host's completion of one prompt line
+  POST /api/complete                   {cwd, text, force}: the host's completion of one prompt line
   POST /api/conversations/:id/messages  {prompt}: message a conversation
   POST /api/conversations/:id/abort     interrupt a conversation: abort its current run
   POST /api/conversations/:id/fork      {at?}: fork a conversation after that entry, or empty without one

@@ -53,6 +53,7 @@ export const fakeGit: Git = async (args, _cwd) => {
   calls = [...calls, args];
   if (args[0] === "diff") return diff;
   if (args[0] === "for-each-ref") return refs;
+  if (args[0] === "symbolic-ref") return "";
   if (args[0] === "worktree") return "";
   throw new Error(`fake git: no answer for ${JSON.stringify(args)}`);
 };

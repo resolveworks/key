@@ -2,7 +2,7 @@
 // and every view's own draft — and renders the whole screen from that state on change.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AuthType } from "@earendil-works/pi-ai";
@@ -120,8 +120,7 @@ export async function open(base: string): Promise<void> {
    * its cascade's kickoff — or, from the composer, the target it already carries. */
   const leaving = (): string | undefined => {
     const here = place();
-    const cwd = here.kind === "transcript" ? inheritCwd(summaries, here.id) : here.cwd;
-    return cwd || undefined;
+    return here.kind === "transcript" ? inheritCwd(summaries, here.id) : here.cwd;
   };
 
   /** Only a conversation or an already-targeted composer gives `/new` a path to prefill. */
@@ -140,9 +139,11 @@ export async function open(base: string): Promise<void> {
     force: boolean,
     signal: AbortSignal,
   ): Promise<AutocompleteSuggestions | null> => {
+    const cwd = leaving();
+    if (cwd === undefined) return null;
     try {
       const body = await call(() =>
-        client.api.complete.$post({ json: { cwd: leaving(), text, force } }, { init: { signal } }),
+        client.api.complete.$post({ json: { cwd, text, force } }, { init: { signal } }),
       );
       return JSON.parse(body) as AutocompleteSuggestions | null;
     } catch (error) {
@@ -690,18 +691,19 @@ export async function open(base: string): Promise<void> {
 }
 
 function loadCursor(): number | undefined {
+  let text: string;
   try {
-    const { conversation } = JSON.parse(readFileSync(cursorFile, "utf8")) as {
-      conversation: number | null;
-    };
-    return conversation ?? undefined;
-  } catch {
-    return undefined;
+    text = readFileSync(cursorFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
+  const { conversation } = JSON.parse(text) as { conversation: number | null };
+  return conversation ?? undefined;
 }
 
 function saveCursor(conversation: number | undefined): void {
-  mkdirSync(join(process.cwd(), ".key"), { recursive: true });
+  mkdirSync(dirname(cursorFile), { recursive: true });
   writeFileSync(cursorFile, JSON.stringify({ conversation: conversation ?? null }));
 }
 
@@ -715,19 +717,22 @@ export function freshCwd(named: string | undefined, leaving: string | undefined)
 /** What a conversation hands a fresh trajectory: its own directory at its cascade's head —
  * below the head the head's own, for a distinct directory below a head is a worker's worktree,
  * and a `/new` from a child continues the project, not its checkout. */
-export function inheritCwd(summaries: readonly Summary[], id: number): string {
+export function inheritCwd(summaries: readonly Summary[], id: number): string | undefined {
   const at = summaries.findIndex((summary) => summary.id === id);
   const open = summaries[at];
-  if (open === undefined || open.depth === 0) return open?.cwd ?? "";
+  if (open === undefined) return undefined;
+  if (open.depth === 0) return open.cwd;
   // One contiguous block per cascade, its kickoff the depth-0 line at its head.
   const kickoff = summaries.slice(0, at + 1).findLastIndex((summary) => summary.depth === 0);
-  return summaries[kickoff]?.cwd ?? open.cwd;
+  const head = summaries[kickoff];
+  if (head === undefined) throw new Error(`conversation #${id} has no kickoff`);
+  return head.cwd;
 }
 
 export function line(summary: Summary): string {
   return `${"  ".repeat(summary.depth)}${dot(summary.streaming)} ${
     summary.attention ? style.warning("!") : " "
-  } ${summary.cwd === "" ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`;
+  } ${summary.cwd === undefined ? "" : `${style.dim(basename(summary.cwd))} · `}${summary.label}`;
 }
 
 /** The places that need a human as a ring: a drafted composer first, then the attention

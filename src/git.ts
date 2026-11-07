@@ -15,6 +15,7 @@ export const git: Git = async (args, cwd) => {
     const failed = error as { code?: number | string; stderr?: string; message: string };
     throw new Error(
       `key: git ${args[0]} failed (exit ${failed.code}): ${`${failed.stderr ?? ""}${failed.message}`.trim()}`,
+      { cause: error },
     );
   }
 };

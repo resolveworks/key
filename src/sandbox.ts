@@ -65,9 +65,10 @@ function gitCommonDir(cwd: string): string | undefined {
         stdio: ["ignore", "pipe", "ignore"],
       }).trim() || undefined
     );
-  } catch {
-    // Not a git repository: nothing to bind.
-    return undefined;
+  } catch (error) {
+    // Git's 128 is "not a repository": a plain directory has nothing to bind.
+    if ((error as { status?: number }).status === 128) return undefined;
+    throw error;
   }
 }
 

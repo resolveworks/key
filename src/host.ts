@@ -106,8 +106,8 @@ export type Summary = {
   readonly id: number;
   /** The prompt that started this conversation. */
   readonly label: string;
-  /** The directory this conversation runs in. */
-  readonly cwd: string;
+  /** The directory this conversation runs in, unset until the conversation is configured. */
+  readonly cwd?: string;
   /** Steps below the conversation whose task created this one: 0 for a cascade's kickoff. */
   readonly depth: number;
   /** This conversation's own run is in flight. */
@@ -163,9 +163,11 @@ export class Host {
     const watch = await conversation.watch(context);
     this.#watchers.set(id, (this.#watchers.get(id) ?? 0) + 1);
     void watch.closed.then(() => {
-      const remaining = (this.#watchers.get(id) ?? 1) - 1;
-      if (remaining === 0) this.#watchers.delete(id);
-      else this.#watchers.set(id, remaining);
+      const remaining = this.#watchers.get(id);
+      if (remaining === undefined)
+        throw new Error(`conversation #${id} was not counted as watched`);
+      if (remaining === 1) this.#watchers.delete(id);
+      else this.#watchers.set(id, remaining - 1);
     });
     return watch;
   }
@@ -292,13 +294,13 @@ export class Host {
   /** What a view cannot say: the branch and the context window. */
   async stats(view: ConversationView): Promise<Stats> {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
-    const ref = agent?.model;
-    if (ref === undefined) throw new Error(`conversation ${view.conversation.id} has no model`);
-    const model = this.#options.models.getModel(ref.provider, ref.modelId);
-    const branch = await branchOf(agent?.cwd);
+    if (agent?.model === undefined)
+      throw new Error(`conversation ${view.conversation.id} has no model`);
+    const model = this.#model(agent.model);
+    const branch = await branchOf(agent.cwd);
     return {
       ...(branch === undefined ? {} : { branch }),
-      contextWindow: model?.contextWindow ?? 0,
+      contextWindow: model.contextWindow,
     };
   }
 
@@ -365,17 +367,15 @@ export class Host {
   /** The prompt's path completions, answered from the host's own filesystem: the line as it stands
    * before the cursor, and whether the tab key forced the asking. */
   complete(
-    cwd: string | undefined,
+    cwd: string,
     text: string,
     force: boolean,
     signal: AbortSignal,
   ): Promise<AutocompleteSuggestions | null> {
-    return new CombinedAutocompleteProvider([], cwd ?? process.cwd()).getSuggestions(
-      [text],
-      0,
-      text.length,
-      { signal, force },
-    );
+    return new CombinedAutocompleteProvider([], cwd).getSuggestions([text], 0, text.length, {
+      signal,
+      force,
+    });
   }
 
   /** Resolve a directory the client names against the host's filesystem. */
@@ -383,9 +383,9 @@ export class Host {
     return targetCwd(path, cwd);
   }
 
-  /** Start a cascade in a directory: an ownerless conversation and its first prompt. */
+  /** Start a cascade in a directory the client has already resolved. */
   async run(cwd: string, prompt: string): Promise<number> {
-    cwd = targetCwd(cwd);
+    cwd = targetCwd(cwd, undefined);
     const { conversation: ref } = await this.#stored(ModelDefaultsDoc);
     if (ref === undefined) throw new Error("no conversation model default: set one with /model");
     const { conversation: level } = await this.thinkingDefaults();
@@ -494,24 +494,23 @@ export class Host {
       // Read each opening prompt and per-conversation document in the same commit, so every agent
       // has the same label source and the list is one consistent picture. Drafts live only inside
       // the commit, and the list needs just two scalars of the live one.
-      const cwds = new Map<number, string | undefined>();
-      const states = new Map<number, { streaming: boolean; aborted: boolean }>();
-      const prompts = new Map<number, string>();
-      for (const { id } of conversations) {
+      const detail: ListedConversation[] = [];
+      for (const { id, owner } of conversations) {
         const first = (
           await tx.scanEntries({ conversationId: id as ConversationId, order: "ascending" }, 1)
         ).items[0];
         const message = first?.model?.[0];
-        if (message?.role === "user") prompts.set(id, contentText(message.content));
-        cwds.set(id, (await tx.doc(AgentDoc, id as ConversationId)).cwd);
         const live = await tx.doc(LiveDoc, id as ConversationId);
-        states.set(id, {
+        detail.push({
+          id,
+          owner,
+          label:
+            message?.role === "user" ? contentText(message.content).split("\n", 1)[0].trim() : "",
+          cwd: (await tx.doc(AgentDoc, id as ConversationId)).cwd,
           streaming: live.run !== undefined,
           aborted: live.runFailure?.reason === "aborted",
         });
       }
-
-      const owners = new Map(conversations.map(({ id, owner }) => [id, owner?.taskId]));
       // The graph holds live tasks only. Cascade liveness suppresses the final-frontier dot;
       // a blocked task is the one live state that needs the human now.
       const cascade = new Set<number>();
@@ -534,34 +533,36 @@ export class Host {
         if (run.state.status === "completing" || run.state.status === "terminal") ended.add(run.id);
       }
       /** A conversation whose story continues elsewhere: a successor, or a child that has ended. */
-      const closed = (id: number, owner: number | undefined): boolean =>
-        succeeded.has(id) || (owner !== undefined && children.has(owner) && ended.has(owner));
+      const closed = ({ id, owner }: ListedConversation): boolean =>
+        succeeded.has(id) ||
+        (owner !== undefined && children.has(owner.taskId) && ended.has(owner.taskId));
       /** Whether the cascade stopped here with the next move the human's: an open frontier, or a
        * task that cannot move on its own. A closed branch's failure crosses upstream as its
        * result. An aborted run is the human's own hand, so it never flags. */
-      const stopped = (id: number, owner: number | undefined): boolean => {
-        if (blocked.has(id)) return true;
-        if (closed(id, owner)) return false;
-        if (states.get(id)?.aborted) return false;
-        return !cascade.has(id);
+      const stopped = (conversation: ListedConversation): boolean => {
+        if (blocked.has(conversation.id)) return true;
+        if (closed(conversation)) return false;
+        if (conversation.aborted) return false;
+        return !cascade.has(conversation.id);
       };
       // The settled marks are the doc: retire the stops that ended — the cascade moved on, so the
       // next stop flags anew — and stand the ones a looker just witnessed.
       const seenDoc = await tx.doc(SeenDoc);
       const seen = new Set(seenDoc.seen);
       let changed = false;
-      const summaries = forest(conversations).map(({ id, depth }) => {
-        const stoppedHere = stopped(id, owners.get(id));
+      const summaries = forest(detail).map((conversation) => {
+        const { id, depth, label, cwd, streaming } = conversation;
+        const stoppedHere = stopped(conversation);
         if (stoppedHere && this.#watchers.has(id) && !seen.has(id)) {
           seen.add(id);
           changed = true;
         } else if (!stoppedHere && seen.delete(id)) changed = true;
         return {
           id,
-          label: prompts.get(id)?.split("\n", 1)[0]?.trim() ?? "",
-          cwd: cwds.get(id) ?? "",
+          label,
+          cwd,
           depth,
-          streaming: states.get(id)?.streaming ?? false,
+          streaming,
           attention: stoppedHere && !seen.has(id),
         };
       });
@@ -595,18 +596,25 @@ export class Host {
 /** A conversation the list shows, with the task edge that names and places it. */
 type ContextConversation = Pick<ConversationRecord, "id" | "owner">;
 
+/** The same conversation with what its opening prompt and documents say. */
+type ListedConversation = ContextConversation & {
+  readonly label: string;
+  readonly cwd: string | undefined;
+  readonly streaming: boolean;
+  readonly aborted: boolean;
+};
+
 /** A key.conversation's stored record: its input names the conversation it mints. */
 type RunRecord = TaskRecord<ConversationTaskInput, unknown, string>;
-
-/** A listed conversation placed for display: `depth` hops under its cascade's kickoff. */
-type Placed = ContextConversation & { depth: number };
 
 /** The listed conversations in display order: one contiguous block per cascade — the tree rooted
  * at the ownerless kickoff conversation — the newest root first, so a cascade keeps its place as
  * its children and successors arrive, and within a block a conversation ahead of its children,
  * siblings ascending by id, so a run's successor follows its children on their level. */
-function forest(conversations: readonly ContextConversation[]): readonly Placed[] {
-  const block = (root: ContextConversation, depth: number): readonly Placed[] => [
+function forest<T extends ContextConversation>(
+  conversations: readonly T[],
+): readonly (T & { readonly depth: number })[] {
+  const block = (root: T, depth: number): readonly (T & { readonly depth: number })[] => [
     { ...root, depth },
     ...conversations
       .filter(({ owner }) => owner?.conversationId === root.id)
@@ -623,8 +631,13 @@ function forest(conversations: readonly ContextConversation[]): readonly Placed[
  * Git answers — symbols, worktrees, reftables, and the environment are its business, not ours. */
 async function branchOf(cwd: string | undefined): Promise<string | undefined> {
   if (cwd === undefined) return undefined;
-  const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd)
-    .then((stdout) => stdout.trim())
-    .catch(() => "");
-  return branch === "" ? undefined : branch;
+  try {
+    const branch = (await git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd)).trim();
+    return branch === "" ? undefined : branch;
+  } catch (error) {
+    // A detached HEAD or a directory outside any repository has no branch to show.
+    const exit = (error as { cause?: { code?: unknown } }).cause?.code;
+    if (exit === 1 || exit === 128) return undefined;
+    throw error;
+  }
 }

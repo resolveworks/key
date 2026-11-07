@@ -52,7 +52,7 @@ export function provider(
   const local = () => new CombinedAutocompleteProvider(commands(), "");
   return {
     async getSuggestions(lines, cursorLine, cursorCol, options) {
-      const text = (lines[cursorLine] ?? "").slice(0, cursorCol);
+      const text = lines[cursorLine].slice(0, cursorCol);
       return options.force !== true && text.trimStart().startsWith("/")
         ? local().getSuggestions(lines, cursorLine, cursorCol, options)
         : complete(text, options.force ?? false, options.signal);

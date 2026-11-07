@@ -13,6 +13,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { style } from "./theme.ts";
+import { DEFAULT_THINKING_LEVEL } from "./thinking.ts";
 
 /** What the host tells the client about a conversation, beyond its view. */
 export type Stats = {
@@ -134,12 +135,12 @@ export class Footer implements Component {
   watch(view: TranscriptView, stats: Stats, contextTokens: number): void {
     const agent = view.docs["pi.agent"] as AgentState | undefined;
     this.#view = view;
-    this.#cwd = agent?.cwd ?? "";
+    this.#cwd = agent?.cwd;
     this.#branch = stats.branch;
     this.#window = stats.contextWindow;
     this.#contextTokens = contextTokens;
     this.#model = agent?.model?.modelId ?? "";
-    const level = agent?.thinkingLevel ?? "off";
+    const level = agent?.thinkingLevel ?? DEFAULT_THINKING_LEVEL;
     this.#thinking = level === "off" ? "thinking off" : level;
   }
 
