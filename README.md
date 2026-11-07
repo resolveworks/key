@@ -50,15 +50,6 @@ In another terminal, connect the client:
 pnpm client
 ```
 
-Use `/login` to configure a model provider and `/model` to choose models for
-conversations and their children. `/new <path>` starts work in a project directory on the host;
-from an existing conversation, `/new` reuses its directory. `/list` browses existing conversations. `/tree` picks a point in the open
-transcript and forks from it, leaving the source untouched. `/thinking` controls
-thinking levels, and `ctrl+c` interrupts the current run.
-
-The host keeps its state in `~/.key`. Conversations run in bubblewrap
-sandboxes, with their project worktrees writable.
-
 ## Development
 
 ```sh

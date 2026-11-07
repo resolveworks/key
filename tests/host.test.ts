@@ -32,6 +32,9 @@ class ReopenableStorage extends MemoryStorage {
   }
 }
 
+/** A host's sandbox: these tests never run the daemon, so it declares nothing. */
+const sandbox = { mount: [], env: {} };
+
 /** One transcript frame: the conversation's view, and what its footer needs beyond it. */
 type Transcript = {
   readonly view: ConversationView;
@@ -115,6 +118,7 @@ describe("host", () => {
       extensions: [CodingTools, keySystem(fakeGit), Agents],
       port: 0,
       hostname: "127.0.0.1",
+      manifest: sandbox,
     });
     await host.open();
     await host.setModelDefault("conversation", {
@@ -329,6 +333,7 @@ describe("host", () => {
       extensions: [CodingTools, keySystem(fakeGit), Agents],
       port: 0,
       hostname: "127.0.0.1",
+      manifest: sandbox,
     });
     await local.open();
     const settings = (await (await local.app.request("/api/models")).json()) as {
@@ -409,6 +414,7 @@ describe("host", () => {
         extensions: [CodingTools, keySystem(fakeGit), Agents],
         port: 0,
         hostname: "127.0.0.1",
+        manifest: sandbox,
       });
       await reopened.open();
       await reopened.setModelDefault("conversation", {
@@ -456,6 +462,7 @@ describe("host", () => {
         extensions: [CodingTools, keySystem(fakeGit), Agents],
         port: 0,
         hostname: "127.0.0.1",
+        manifest: sandbox,
       });
       await reopened.open();
       await reopened.setModelDefault("conversation", {

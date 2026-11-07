@@ -47,7 +47,7 @@ describe("ensureWorker", () => {
   });
 
   it("accepts the checkout a crashed attempt left for the same task", async () => {
-    // A rented home: the real ~/.key is read-only inside a worker's sandbox.
+    // A rented home: the real ~/.key is a tmpfs inside a worker's sandbox, but its cwd is bound writable.
     const home = mkdtempSync(join(tmpdir(), "key-home-"));
     const path = join(home, ".key", "worktrees", "9000001");
     mkdirSync(path, { recursive: true });

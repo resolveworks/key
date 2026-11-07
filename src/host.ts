@@ -50,7 +50,7 @@ import { contextTokens as activeContextTokens, type Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { LoginSession, type ProviderInfo } from "./login.ts";
 import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.ts";
-import { sandboxEnv } from "./sandbox.ts";
+import { loadSandboxManifest, type SandboxManifest, sandboxEnv } from "./sandbox.ts";
 import { Search } from "./search.ts";
 import { SeenDoc } from "./seen.ts";
 import {
@@ -79,14 +79,18 @@ export type HostOptions = {
   readonly port: number;
   /** The interface the server listens on: `KEY_BIND`, loopback by default. */
   readonly hostname: string;
+  /** The declared mounts and environment every conversation's sandbox gets. */
+  readonly manifest: SandboxManifest;
 };
 
 const production = (): HostOptions => {
+  const manifest = loadSandboxManifest();
   const models = builtinModels({
     credentials: new FileCredentialStore(join(dataDirectory, "auth.json")),
   });
   return {
     models,
+    manifest,
     storage: (async () => {
       mkdirSync(dataDirectory, { recursive: true });
       return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
@@ -321,7 +325,13 @@ export class Host {
           // A conversation without a root is a bug to surface, not to paper over.
           if (target.cwd === undefined)
             throw new Error(`conversation ${target.conversationId} has no cwd`);
-          return sandboxEnv(target.conversationId, target.cwd, localDaemon(), context);
+          return sandboxEnv(
+            target.conversationId,
+            target.cwd,
+            localDaemon(),
+            this.#options.manifest,
+            context,
+          );
         },
         onReport: (report) => console.error("key:", report),
       },
