@@ -1,13 +1,15 @@
+#!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { open } from "./client.ts";
-import { Host, PORT } from "./host.ts";
+import { port } from "./config.ts";
+import { Host, production } from "./host.ts";
 
-const base = process.env.KEY_HOST ?? `http://127.0.0.1:${PORT}`;
+const base = process.env.KEY_HOST ?? `http://127.0.0.1:${port()}`;
 
-const usage = `usage: key <command> [args...]
+const usage = `usage: key [command] [args...]
 
-  serve            own the session and serve the graph
   client           chat with a running host: start trajectories, stream them, browse past ones
+  serve            own the session and serve the graph
 
   -h, --help       this
 `;
@@ -27,12 +29,12 @@ async function main(): Promise<void> {
   }
 
   const [command] = positionals;
-  if (values.help || command === undefined) {
+  if (values.help) {
     process.stdout.write(usage);
     return;
   }
 
-  switch (command) {
+  switch (command ?? "client") {
     case "serve":
       await serve();
       break;
@@ -45,7 +47,7 @@ async function main(): Promise<void> {
 }
 
 async function serve(): Promise<void> {
-  const host = new Host();
+  const host = new Host(await production());
   await host.open();
   await host.listen();
   for (const signal of ["SIGINT", "SIGTERM"] as const) {

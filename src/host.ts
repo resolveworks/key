@@ -1,7 +1,5 @@
 // The host: one process owns the Session on SQLite and serves the transcripts over HTTP+SSE.
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   type AuthType,
@@ -43,6 +41,7 @@ import type { Hono } from "hono";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
+import { authFile, port, sessionDir, sessionFile } from "./config.ts";
 import { targetCwd } from "./cwd.ts";
 import type { Target } from "./defaults.ts";
 import { Fetch } from "./fetch.ts";
@@ -66,15 +65,10 @@ import { DEFAULT_THINKING_LEVEL, type ThinkingDefaults, ThinkingDefaultsDoc } fr
 const context = BACKGROUND_CONTEXT;
 const SCAN_PAGE_SIZE = 256;
 
-/** The port `key serve` binds; the client and a plain `new Host()` agree on it. */
-export const PORT = 7317;
-/** Everything the host owns lives here, outside every project: store, credentials. */
-const dataDirectory = join(homedir(), ".key");
-
-/** What the host runs on. `new Host()` is one box: defaults on the session at `PORT`. */
+/** What the host runs on, resolved before the host is constructed. */
 export type HostOptions = {
   readonly models: Models;
-  readonly storage: Storage | Promise<Storage>;
+  readonly storage: Storage;
   readonly extensions: readonly Extension[];
   readonly port: number;
   /** The interface the server listens on: `KEY_BIND`, loopback by default. */
@@ -83,23 +77,20 @@ export type HostOptions = {
   readonly manifest: SandboxManifest;
 };
 
-const production = (): HostOptions => {
+/** One box's defaults: the configured session, pi's models, and the declared sandbox. */
+export async function production(): Promise<HostOptions> {
   const manifest = loadSandboxManifest();
-  const models = builtinModels({
-    credentials: new FileCredentialStore(join(dataDirectory, "auth.json")),
-  });
+  const models = builtinModels({ credentials: new FileCredentialStore(authFile()) });
+  mkdirSync(sessionDir(), { recursive: true });
   return {
     models,
     manifest,
-    storage: (async () => {
-      mkdirSync(dataDirectory, { recursive: true });
-      return openNodeSqliteStorage(join(dataDirectory, "session.sqlite"));
-    })(),
+    storage: await openNodeSqliteStorage(sessionFile()),
     extensions: [CodingTools, keySystem(git), Search, Fetch, Agents],
-    port: PORT,
+    port: port(),
     hostname: process.env.KEY_BIND ?? "127.0.0.1",
   };
-};
+}
 
 /** One line in the transcript picker: a conversation, whether it streams, and whether it needs a human. */
 export type Summary = {
@@ -129,7 +120,7 @@ export class Host {
   #login?: LoginSession;
   #options: HostOptions;
 
-  constructor(options: HostOptions = production()) {
+  constructor(options: HostOptions) {
     this.#options = options;
   }
 
@@ -319,7 +310,7 @@ export class Host {
     const registry = createRegistry();
     for (const extension of this.#options.extensions) registry.install(extension);
     this.#harness = await Harness.open(
-      await this.#options.storage,
+      this.#options.storage,
       {
         models: this.#options.models,
         registry,

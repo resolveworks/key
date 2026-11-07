@@ -1,5 +1,6 @@
-// Credentials live in `~/.key/auth.json`, one pi-ai credential per provider. The file is the
-// host's only provider configuration: no env file, no fallback beyond pi-ai's own auth context.
+// Credentials live in the config directory's `auth.json`, one pi-ai credential per provider. The
+// file is the host's only provider configuration: no env file, no fallback beyond pi-ai's own auth
+// context.
 
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";

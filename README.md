@@ -35,12 +35,48 @@ mine to optimize and direct.
 
 ## Usage
 
-Key needs Node, pnpm, bubblewrap, and a built checkout of
-[pi](../pi) beside this repository.
+Key needs Node 22.19+, pnpm, and bubblewrap.
+
+```sh
+pnpm add -g @resolveworks/key
+key serve    # own the session and serve the graph
+key          # connect the client from another terminal
+```
+
+Everything Key owns lives under `~/.key`:
+
+| Variable          | Default                      | What it moves                                                       |
+| ----------------- | ---------------------------- | ------------------------------------------------------------------- |
+| `KEY_CONFIG_DIR`  | `~/.key`                     | `auth.json` and `sandbox.json`                                      |
+| `KEY_SESSION_DIR` | `$KEY_CONFIG_DIR`            | `session.sqlite` and `worktrees/`                                   |
+| `KEY_PORT`        | `7317`                       | the host's port; the client follows unless `KEY_HOST` names another |
+| `KEY_BIND`        | `127.0.0.1`                  | the host's interface                                                |
+| `KEY_HOST`        | `http://127.0.0.1:$KEY_PORT` | the client's host                                                   |
+
+### Host as a systemd user service
+
+```ini
+[Unit]
+Description=Key host
+
+[Service]
+ExecStart=%h/.local/share/pnpm/bin/key serve
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user enable --now key
+```
+
+## Development
+
+From a checkout:
 
 ```sh
 pnpm install
-pnpm build:env
 pnpm serve
 ```
 
@@ -50,7 +86,8 @@ In another terminal, connect the client:
 pnpm client
 ```
 
-## Development
+`pnpm build:env` builds the pi checkout beside this repository and puts its daemon where
+local sessions look. The published package ships pi's daemon already.
 
 ```sh
 pnpm check

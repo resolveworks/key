@@ -31,6 +31,7 @@ import {
   TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import { hc } from "hono/client";
+import { EventSource } from "undici";
 import type { api } from "./api.ts";
 import type { Target } from "./defaults.ts";
 import type { FilterList } from "./filter-list.ts";
@@ -792,8 +793,7 @@ type Frame = {
   readonly contextTokens: number;
 };
 
-/** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts; `pnpm
- * client` runs EventSource behind --experimental-eventsource. */
+/** Follow an SSE endpoint as typed frames, reconnecting whenever the host restarts. */
 function follow<T>(url: URL, onFrame: (frame: T) => void): () => void {
   let stopped = false;
   let current: EventSource | undefined;

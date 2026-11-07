@@ -1,15 +1,29 @@
 {
-  "name": "key",
-  "private": true,
+  "name": "@resolveworks/key",
+  "version": "0.1.0",
+  "description": "A durable host and terminal client for cascades of coding agents",
   "type": "module",
+  "bin": {
+    "key": "src/main.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build:env": "node scripts/build-env.mjs",
     "serve": "node src/main.ts serve",
-    "client": "node --experimental-eventsource src/main.ts client",
+    "client": "node src/main.ts client",
     "check": "biome check && tsc",
     "fix": "biome check --write",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm check && pnpm test"
   },
   "dependencies": {
     "@earendil-works/chord": "1.5.0",
@@ -19,11 +33,12 @@
     "@earendil-works/pi-schema": "1.5.0",
     "@earendil-works/pi-tui": "1.5.0",
     "@hono/node-server": "^2.1.5",
-    "hono": "^4.13.13",
     "defuddle": "^0.19.5",
+    "hono": "^4.13.13",
     "linkedom": "^0.18.13",
     "playwright-core": "~1.64.1",
-    "typebox": "^1.4.3"
+    "typebox": "^1.4.3",
+    "undici": "^8.12.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.2",

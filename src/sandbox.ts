@@ -8,6 +8,7 @@ import type { ConversationId } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import { arr, bool, compile, map, obj, opt, type Static, str } from "@earendil-works/pi-schema";
+import { sandboxFile } from "./config.ts";
 
 const home = homedir();
 // Where pnpm keeps its store operation locks, and where the session sockets live.
@@ -36,8 +37,8 @@ function expand(value: unknown): unknown {
   return value;
 }
 
-/** Read, expand and validate `~/.key/sandbox.json`; a missing file, unknown key or wrong type throws. */
-export function loadSandboxManifest(file = join(home, ".key", "sandbox.json")): SandboxManifest {
+/** Read, expand and validate the config directory's `sandbox.json`; a missing file, unknown key or wrong type throws. */
+export function loadSandboxManifest(file = sandboxFile()): SandboxManifest {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(file, "utf8"));

@@ -1,9 +1,9 @@
 // A worker's isolated checkout: a git worktree keyed by the delegate call's task id, on
 // branch worker/<name> — cut fresh, or checked out again when an earlier cascade left the branch.
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TaskId } from "@earendil-works/pi-durable";
+import { worktreesDir } from "./config.ts";
 import type { Git } from "./git.ts";
 
 export const WORKER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -20,7 +20,7 @@ export async function ensureWorker(
   git: Git,
   cwd: string,
 ): Promise<string> {
-  const path = join(homedir(), ".key", "worktrees", String(taskId));
+  const path = join(worktreesDir(), String(taskId));
   if (!existsSync(path)) {
     const branch = workerBranch(name);
     const ref = `refs/heads/${branch}`;
