@@ -10,5 +10,8 @@ export default defineConfig({
     pool: "forks",
     clearMocks: true,
     restoreMocks: true,
+    // The tools live in sibling packages: Vite must process them so vi.mock
+    // reaches the playwright-core they import.
+    server: { deps: { inline: ["mine", "scry"] } },
   },
 });

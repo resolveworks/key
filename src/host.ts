@@ -38,19 +38,19 @@ import { localDaemon } from "@earendil-works/pi-env";
 import { type AutocompleteSuggestions, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { type ServerType, serve } from "@hono/node-server";
 import type { Hono } from "hono";
+import { Fetch } from "mine/key";
+import { Search } from "scry/key";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
 import { authFile, dataDir, port, sessionFile } from "./config.ts";
 import { targetCwd } from "./cwd.ts";
 import type { Target } from "./defaults.ts";
-import { Fetch } from "./fetch.ts";
 import { contextTokens as activeContextTokens, type Stats } from "./footer.ts";
 import { git } from "./git.ts";
 import { LoginSession, type ProviderInfo } from "./login.ts";
 import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.ts";
 import { loadSandboxManifest, type SandboxManifest, sandboxEnv } from "./sandbox.ts";
-import { Search } from "./search.ts";
 import { SeenDoc } from "./seen.ts";
 import {
   CONVERSATION_INSTRUCTIONS,

@@ -1,7 +1,6 @@
 // Web fetch as the model sees it: one call, the stealth Chrome server behind a stubbed playwright.
 // What the tool answers is pinned from the transcript's tool results, not from the tool's own code paths.
 
-import { readFile, rm } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   contentText,
@@ -25,7 +24,7 @@ let opened: Harness | undefined;
 afterEach(async () => {
   await opened?.close(context);
   opened = undefined;
-  delete process.env.KEY_BROWSER_ENDPOINT;
+  delete process.env.MINE_BROWSER_ENDPOINT;
 });
 
 /** One test's harness: the faux model over memory storage, scheduling on. */
@@ -116,8 +115,8 @@ describe("web fetch", () => {
     expect(text).not.toContain("<harness>");
   });
 
-  it("KEY_BROWSER_ENDPOINT points the fetch at another server", async () => {
-    process.env.KEY_BROWSER_ENDPOINT = "ws://127.0.0.1:9333";
+  it("MINE_BROWSER_ENDPOINT points the fetch at another server", async () => {
+    process.env.MINE_BROWSER_ENDPOINT = "ws://127.0.0.1:9333";
     connect.mockResolvedValue(
       browser({ [PAGE_URL]: "<html><body><article><p>Hello.</p></article></body></html>" }),
     );
@@ -140,7 +139,7 @@ describe("web fetch", () => {
     expect(text).toContain("mine-browser.service");
   });
 
-  it("a page over the output limits spills its whole content to a file read can page through", async () => {
+  it("a page over the harness's output limits is truncated by the harness", async () => {
     const paragraphs = Array.from({ length: 1200 }, (_, i) => `<p>Line ${i} of the article.</p>`);
     const server = browser({
       [PAGE_URL]: `<!doctype html><html><body><article><h1>Long</h1>${paragraphs.join("")}</article></body></html>`,
@@ -151,12 +150,8 @@ describe("web fetch", () => {
     const { diagnostics, result } = await fetched(faux, harness);
 
     expect(result.isError).toBe(false);
+    expect(contentText(result.content)).toContain("Line 0 of the article.");
     expect(contentText(result.content)).not.toContain("Line 1199 of the article.");
-    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["full_output", "truncated"]);
-    const path = diagnostics[0].message.replace("Full output: ", "");
-    const spilled = await readFile(path, "utf8");
-    expect(spilled).toContain("Line 0 of the article.");
-    expect(spilled).toContain("Line 1199 of the article.");
-    await rm(path, { force: true });
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["truncated"]);
   });
 });

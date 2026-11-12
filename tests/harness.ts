@@ -21,11 +21,11 @@ import {
   type TaskRecord,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { Fetch } from "mine/key";
+import { Search } from "scry/key";
 import { afterEach, expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
-import { Fetch } from "../src/fetch.ts";
 import { ModelDefaultsDoc } from "../src/models.ts";
-import { Search } from "../src/search.ts";
 import { CONVERSATION_TASK, type ConversationTaskInput, keySystem } from "../src/system.ts";
 import { FakeEnv, fakeGit } from "./git.ts";
 
