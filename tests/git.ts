@@ -1,6 +1,6 @@
 // Git reduced to a recorder: a test cares that Key issues the right git command, never what git
 // does with it. Anything the fake was not asked to answer fails loudly.
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { Result, ShellExecOptions, ShellExecResult } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import type { Git } from "../src/git.ts";
