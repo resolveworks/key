@@ -689,6 +689,19 @@ export async function open(base: string): Promise<void> {
     }
     render();
   });
+
+  // The launch directory is a hint: a remote host may not have it. An explicit `/new` that
+  // resolves first replaces the composer object and wins over this slower answer.
+  const initial = composer;
+  void call(() => client.api.cwd.$post({ json: { path: process.cwd() } }))
+    .then((body) => {
+      if (composer !== initial) return;
+      composer = { kind: "new", cwd: (JSON.parse(body) as { cwd: string }).cwd };
+      if (place() !== initial) return;
+      mode = mode.kind === "view" ? { ...mode, view: composer } : { ...mode, back: composer };
+      render();
+    })
+    .catch(() => undefined);
 }
 
 function loadCursor(): number | undefined {
