@@ -1,6 +1,6 @@
 // One conversation's bubblewrap sandbox: a private home, the mounts the host declares, and only its environment.
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
@@ -9,6 +9,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import { arr, bool, compile, map, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import { sandboxFile } from "./config.ts";
+import { defaultSkillPaths, externalSkillDirectories, type SkillPaths } from "./skills.ts";
 
 const home = homedir();
 // Where pnpm keeps its store operation locks, and where the session sockets live.
@@ -74,7 +75,12 @@ function gitCommonDir(cwd: string): string | undefined {
 }
 
 /** The bwrap argv that starts the sandbox, before `Connection` appends `serve --token`. */
-export function sandboxCommand(cwd: string, daemon: string, config: SandboxManifest): string[] {
+export function sandboxCommand(
+  cwd: string,
+  daemon: string,
+  config: SandboxManifest,
+  skillPaths: SkillPaths = defaultSkillPaths(),
+): string[] {
   const gitDir = gitCommonDir(cwd);
   return [
     "bwrap",
@@ -91,7 +97,7 @@ export function sandboxCommand(cwd: string, daemon: string, config: SandboxManif
     // writes, not connect().
     "--tmpfs",
     runtimeDirectory,
-    // The host home is private; only the declared mounts below enter it.
+    // The host home is private; only the declared and skill-resource mounts below enter it.
     "--tmpfs",
     home,
     ...config.mount.flatMap(({ path, readonly }) => [
@@ -103,6 +109,9 @@ export function sandboxCommand(cwd: string, daemon: string, config: SandboxManif
     cwd,
     cwd,
     ...(gitDir === undefined ? [] : ["--bind", gitDir, gitDir]),
+    ...externalSkillDirectories(cwd, skillPaths)
+      .filter((path) => existsSync(path) && statSync(path).isDirectory())
+      .flatMap((path) => ["--ro-bind", path, path]),
     // The daemon lives in the pnpm store, which is writable by design: make the binary itself read-only.
     "--ro-bind",
     daemon,
@@ -132,9 +141,10 @@ export function openSandbox(
   cwd: string,
   daemon: string,
   config: SandboxManifest,
+  skillPaths: SkillPaths = defaultSkillPaths(),
 ): Sandbox {
   const connection = new Connection({
-    command: sandboxCommand(cwd, daemon, config),
+    command: sandboxCommand(cwd, daemon, config, skillPaths),
     onLog: (text) => console.error("sandbox:", text),
   });
   const env = new RemoteExecutionEnv({
@@ -152,9 +162,15 @@ export function sandboxEnv(
   daemon: string,
   config: SandboxManifest,
   context: Context,
-  open: typeof openSandbox = openSandbox,
+  /** The invocation environment's test and resource overrides. */
+  options: {
+    readonly open?: typeof openSandbox;
+    readonly skillPaths?: SkillPaths;
+  } = {},
 ): ExecutionEnv {
-  const sandbox = open(conversationId, cwd, daemon, config);
+  const open = options.open ?? openSandbox;
+  const skillPaths = options.skillPaths ?? defaultSkillPaths();
+  const sandbox = open(conversationId, cwd, daemon, config, skillPaths);
   const { abortSignal: signal } = context;
   if (signal === undefined) throw new Error("sandboxEnv: the context has no abort signal");
   signal.addEventListener("abort", () => sandbox.connection.close(), { once: true });

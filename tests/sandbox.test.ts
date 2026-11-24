@@ -219,6 +219,26 @@ describe("sandboxCommand", () => {
     expect(indexOf(command, "--bind", gitDir, gitDir)).toBeGreaterThanOrEqual(0);
   });
 
+  test("binds external skill roots read-only without masking project skills in the checkout", () => {
+    const root = temp("key-sandbox-skills-");
+    const repository = join(root, "repository");
+    const cwd = join(repository, "packages", "app");
+    const paths = {
+      user: join(root, "config", "key", "skills"),
+      agents: join(root, "home", ".agents", "skills"),
+    };
+    const project = join(repository, ".agents", "skills");
+    const local = join(cwd, ".agents", "skills");
+    for (const path of [paths.user, paths.agents, project, local])
+      mkdirSync(path, { recursive: true });
+
+    const command = sandboxCommand(cwd, daemon, { mount: [], env: {} }, paths);
+    for (const path of [paths.user, paths.agents, project])
+      expect(indexOf(command, "--ro-bind", path, path)).toBeGreaterThanOrEqual(0);
+    expect(indexOf(command, "--ro-bind", local, local)).toBe(-1);
+    expect(indexOf(command, "--bind", cwd, cwd)).toBeGreaterThanOrEqual(0);
+  });
+
   test("binds no git dir when the cwd is not a repository", () => {
     const cwd = temp("key-sandbox-plain-");
     const command = sandboxCommand(cwd, daemon, { mount: [], env: {} });
@@ -253,7 +273,7 @@ describe("sandboxEnv", () => {
       daemon,
       { mount: [], env: {} },
       withAbortSignal(controller.signal, context),
-      () => ({ connection, env }),
+      { open: () => ({ connection, env }) },
     );
 
     expect(connection.closes).toBe(0);

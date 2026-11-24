@@ -1,6 +1,6 @@
-// The prompt's completions: the client's slash commands answered here — `/new` naming the
-// directory a bare one would run — and every path answered by the host, whose filesystem is the
-// one the trajectories run on.
+// The prompt's completions: built-in slash commands answered here — `/new` naming the
+// directory a bare one would run — and skills and paths answered by the host, whose filesystem
+// is the one the trajectories run on.
 
 import {
   type AutocompleteItem,
@@ -47,15 +47,20 @@ export function provider(
     ];
   };
   // The library's provider kept for its text grammar alone: an unforced line that starts with
-  // "/" is its command branch, and the client's commands are the only ones — no path is ever
-  // answered against this filesystem.
+  // "/" is its command branch. The local list holds built-ins; skill commands merge from the host.
   const local = () => new CombinedAutocompleteProvider(commands(), "");
   return {
     async getSuggestions(lines, cursorLine, cursorCol, options) {
       const text = lines[cursorLine].slice(0, cursorCol);
-      return options.force !== true && text.trimStart().startsWith("/")
-        ? local().getSuggestions(lines, cursorLine, cursorCol, options)
-        : complete(text, options.force ?? false, options.signal);
+      const command = text.trimStart();
+      if (options.force === true || !command.startsWith("/"))
+        return complete(text, options.force ?? false, options.signal);
+      const suggestions = await local().getSuggestions(lines, cursorLine, cursorCol, options);
+      if (!("/skill:".startsWith(command) || command.startsWith("/skill:"))) return suggestions;
+      const skills = await complete(text, false, options.signal);
+      if (skills === null) return suggestions;
+      if (suggestions === null) return skills;
+      return { items: [...suggestions.items, ...skills.items], prefix: suggestions.prefix };
     },
     applyCompletion: (...args) => local().applyCompletion(...args),
     shouldTriggerFileCompletion: (...args) => local().shouldTriggerFileCompletion(...args),

@@ -77,6 +77,28 @@ describe("provider", () => {
     expect(row).toContain("start fresh");
   });
 
+  test("skill commands complete on the host and apply like the other slash commands", async () => {
+    const complete = vi.fn(async () => ({
+      items: [{ value: "skill:review", label: "skill:review", description: "Review changes" }],
+      prefix: "/skill:re",
+    }));
+    const autocomplete = provider(complete, () => freshDefault);
+    const suggestions = await autocomplete.getSuggestions(["/skill:re"], 0, 9, { signal });
+    expect(complete).toHaveBeenCalledWith("/skill:re", false, signal);
+    expect(suggestions?.items).toEqual([
+      { value: "skill:review", label: "skill:review", description: "Review changes" },
+    ]);
+    expect(
+      autocomplete.applyCompletion(
+        ["/skill:re"],
+        0,
+        9,
+        { value: "skill:review", label: "skill:review" },
+        "/skill:re",
+      ),
+    ).toEqual({ lines: ["/skill:review "], cursorLine: 0, cursorCol: 14 });
+  });
+
   test("every other line is the host's, as it stands before the cursor", async () => {
     const complete = vi.fn();
     const autocomplete = provider(complete, () => freshDefault);

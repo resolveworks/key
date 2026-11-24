@@ -26,6 +26,7 @@ import { Search } from "scry/key";
 import { afterEach, expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
 import { ModelDefaultsDoc } from "../src/models.ts";
+import { createSkills } from "../src/skills.ts";
 import { CONVERSATION_TASK, type ConversationTaskInput, keySystem } from "../src/system.ts";
 import { FakeEnv, fakeGit } from "./git.ts";
 
@@ -60,6 +61,9 @@ export function keySetup(): KeySetup {
   registry.install(Search);
   registry.install(Fetch);
   registry.install(Agents);
+  registry.install(
+    createSkills({ user: "/key/test-user-skills", agents: "/key/test-agent-skills" }),
+  );
   return { faux, models, registry };
 }
 

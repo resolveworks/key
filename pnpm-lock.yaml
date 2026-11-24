@@ -209,6 +209,9 @@ importers:
       hono:
         specifier: ^4.13.21
         version: 4.13.21
+      ignore:
+        specifier: 7.0.8
+        version: 7.0.8
       mine:
         specifier: file:../mine
         version: file:../mine(@earendil-works/pi-coding-agent@1.6.0(@aws-sdk/credential-provider-node@3.972.98)(@smithy/signature-v4@5.7.5)(google-auth-library@10.9.1)(ws@8.23.0))(@earendil-works/pi-durable@1.6.0(@aws-sdk/credential-provider-node@3.972.98)(@smithy/signature-v4@5.7.5)(google-auth-library@10.9.1)(undici@8.13.1)(ws@8.23.0))(@earendil-works/pi-schema@1.6.0)(@earendil-works/pi-tui@1.6.0)(typebox@1.4.7)
@@ -221,6 +224,9 @@ importers:
       undici:
         specifier: ^8.13.1
         version: 8.13.1
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.6.8
@@ -2800,5 +2806,4 @@ snapshots:
 
   yaml@2.9.0: {}
 
-  yaml@2.9.1:
-    optional: true
+  yaml@2.9.1: {}

@@ -1,4 +1,4 @@
-// Key's directories: config holds credentials and the sandbox manifest; data holds the session
+// Key's directories: config holds credentials, skills, and the sandbox manifest; data holds the session
 // database and worker checkouts. Both follow the XDG base directory spec, so `XDG_CONFIG_HOME`
 // and `XDG_DATA_HOME` move them.
 
@@ -12,7 +12,7 @@ function base(variable: "XDG_CONFIG_HOME" | "XDG_DATA_HOME", fallback: string): 
   return process.env[variable] || join(homedir(), fallback);
 }
 
-/** The config directory: credentials and the sandbox manifest. */
+/** The config directory: credentials, skills, and the sandbox manifest. */
 export function configDir(): string {
   return join(base("XDG_CONFIG_HOME", ".config"), "key");
 }
