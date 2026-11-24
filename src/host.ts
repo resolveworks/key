@@ -474,8 +474,7 @@ export class Host {
         tx.scanTasks({ kind: CONVERSATION_TASK }, SCAN_PAGE_SIZE, cursor),
       )) as RunRecord[];
       // The list is the conversations that own a story: a cascade's kickoff and its
-      // key.conversation children. Tool-private continuations (key.ask forks) stay durable
-      // but never list.
+      // key.conversation children.
       const listed = new Set(runs.map(({ id }) => Number(id)));
       const conversations = (
         await all((cursor) => tx.scanConversations({}, SCAN_PAGE_SIZE, cursor))

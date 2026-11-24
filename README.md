@@ -16,13 +16,6 @@ Information flows forward rather than accumulating in one ever-growing
 conversation. A successor starts with the work and findings before it, not a
 copy of every transcript.
 
-The past remains available without becoming baggage. Earlier conversations
-stay frozen and can be questioned when their knowledge is needed. Their answers
-inform the present without rewriting or extending the past.
-
-These are two sides of the same idea: fresh contexts carry work forward, and
-the past remains something they can consult.
-
 ## Host and clients
 
 The host owns durable sessions and the work running through them. Clients are

@@ -7,7 +7,7 @@ import { style } from "../src/theme.ts";
 
 const summary = (id: number, attention: boolean, depth = 0, streaming = false): Summary => ({
   id,
-  label: `ask ${id}`,
+  label: `task ${id}`,
   cwd: "/key/repo",
   depth,
   streaming,
@@ -126,11 +126,11 @@ describe("line", () => {
   const warning = style.warning("!");
 
   test("the green dot streams and the amber mark asks, with depth indenting both", () => {
-    expect(line(summary(4, false))).toBe(`${dot(false)}   ${style.dim("repo")} · ask 4`);
-    expect(line(summary(5, true))).toBe(`${dot(false)} ${warning} ${style.dim("repo")} · ask 5`);
-    expect(line(summary(6, false, 1, true))).toBe(`  ${dot(true)}   ${style.dim("repo")} · ask 6`);
+    expect(line(summary(4, false))).toBe(`${dot(false)}   ${style.dim("repo")} · task 4`);
+    expect(line(summary(5, true))).toBe(`${dot(false)} ${warning} ${style.dim("repo")} · task 5`);
+    expect(line(summary(6, false, 1, true))).toBe(`  ${dot(true)}   ${style.dim("repo")} · task 6`);
     expect(line(summary(7, true, 2, true))).toBe(
-      `    ${dot(true)} ${warning} ${style.dim("repo")} · ask 7`,
+      `    ${dot(true)} ${warning} ${style.dim("repo")} · task 7`,
     );
   });
 });

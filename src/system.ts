@@ -21,7 +21,7 @@ import {
   type ToolExecutionApi,
   type Tx,
 } from "@earendil-works/pi-durable";
-import { num, obj, str } from "@earendil-works/pi-schema";
+import { obj, str } from "@earendil-works/pi-schema";
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
@@ -54,12 +54,11 @@ background jobs within your run. Once you have launched the current wave, your r
 End it immediately with a concise handoff for your successor: the overall goal,
 why you delegated this work, the current plan, and what remains to decide. Do
 not merely report that children were started. Do not continue the delegated
-work, wait, poll, or ask in-flight children for results.
+work, wait, or poll for results.
 
 After the children settle, a separate successor conversation receives your
 handoff and their results and decides what to do next. The handoff is context,
-not a binding plan: child results may invalidate it. Use ask to consult settled
-earlier conversations for missing goals or context instead of guessing.
+not a binding plan: child results may invalidate it.
 </handoff>
 `;
 export const WORKER_INSTRUCTIONS =
@@ -261,8 +260,6 @@ async function successorPrompt(
     `<handoff>\n${input.handoff}\n</handoff>`,
     "",
     ...rendered,
-    "",
-    "Use ask to consult any conversation above for further detail.",
   ].join("\n");
 }
 
@@ -380,7 +377,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
       model: child,
       thinkingLevel: clampThinkingLevel(model, level),
       instructions: options.instructions,
-      tools: { remove: [DelegateImplementation, DelegateResearch, Ask] },
+      tools: { remove: [DelegateImplementation, DelegateResearch] },
     });
   }
 
@@ -429,7 +426,7 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
   const DelegateResearch = defineTool({
     name: "delegate_research",
     description:
-      "Start a researcher in a fresh conversation to investigate and report findings without changing code. Use this for non-trivial research benefiting from isolated context or parallel investigation. This call only starts the researcher; it does not return findings. After launching all independent researchers for the current wave, end this run immediately. Do not duplicate the research locally, wait, poll, or ask the researcher for results. A separate successor conversation receives the findings after the children settle; you will not resume to collect them.",
+      "Start a researcher in a fresh conversation to investigate and report findings without changing code. Use this for non-trivial research benefiting from isolated context or parallel investigation. This call only starts the researcher; it does not return findings. After launching all independent researchers for the current wave, end this run immediately. Do not duplicate the research locally, wait, or poll for results. A separate successor conversation receives the findings after the children settle; you will not resume to collect them.",
     parameters: obj({
       prompt: str({
         description:
@@ -463,38 +460,6 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
   return { DelegateImplementation, DelegateResearch };
 }
 
-/** Ask one settled conversation a question: it answers in a private fork of its own context. */
-const Ask = defineTool({
-  name: "ask",
-  description:
-    "Ask a settled conversation a question. It answers in a private copy of its own context, with its tools; the conversation itself is never modified. Batch compound questions into one ask; several asks may run in parallel.",
-  parameters: obj({
-    conversation: num({ description: "The conversation id from the framing." }),
-    question: str({ description: "The question to answer from that conversation." }),
-  }),
-  replay: "safe",
-  execute: async ({ conversation, question }, api, context) => {
-    const target = conversation as ConversationId;
-    const fork = await api.commit(async (tx) => {
-      // The ownership index remembers the fork, so a replay or restart reuses it.
-      const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-      if (existing !== undefined) return existing.id;
-      const at = await tx.latestEntryId(target);
-      if (at === undefined) throw new Error(`ask: conversation #${target} is empty`);
-      return (
-        await tx.forkConversation(target, at, {
-          ownership: { kind: "task", taskId: api.taskId },
-        })
-      ).id;
-    }, context);
-    const handle = await api.conversation(fork, context);
-    if (handle === undefined) throw new Error(`ask: conversation fork ${fork} is gone`);
-    const answer = await answerOfRun(handle, api, context, `key.ask:${api.taskId}`, question);
-    if (answer === undefined) throw new Error("ask failed: aborted");
-    return { output: [{ type: "text", text: answer }] };
-  },
-});
-
 /** The host's system: direct conversation runs, with tasks only at cascade boundaries. */
 export const keySystem = (git: Git) => {
   const ConversationTask = conversationTask(git);
@@ -526,6 +491,6 @@ export const keySystem = (git: Git) => {
       }),
     ],
     tasks: [ConversationTask, SuccessorTask],
-    tools: [DelegateImplementation, DelegateResearch, Ask],
+    tools: [DelegateImplementation, DelegateResearch],
   });
 };
