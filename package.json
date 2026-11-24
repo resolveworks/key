@@ -4,7 +4,7 @@
   "description": "A durable host and terminal client for cascades of coding agents",
   "license": "AGPL-3.0-only",
   "type": "module",
-  "packageManager": "pnpm@12.18.0",
+  "packageManager": "pnpm@12.23.0",
   "bin": {
     "key": "dist/main.js"
   },
@@ -33,26 +33,26 @@
     "prepublishOnly": "pnpm build && pnpm check && pnpm test"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.5.2",
-    "@earendil-works/pi-ai": "1.5.2",
-    "@earendil-works/pi-durable": "1.5.2",
-    "@earendil-works/pi-env": "1.5.2",
-    "@earendil-works/pi-schema": "1.5.2",
-    "@earendil-works/pi-tui": "1.5.2",
-    "@hono/node-server": "^2.1.7",
-    "hono": "^4.13.18",
+    "@earendil-works/chord": "1.6.0",
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-durable": "1.6.0",
+    "@earendil-works/pi-env": "1.6.0",
+    "@earendil-works/pi-schema": "1.6.0",
+    "@earendil-works/pi-tui": "1.6.0",
+    "@hono/node-server": "^2.1.11",
+    "hono": "^4.13.21",
     "mine": "file:../mine",
     "scry": "file:../scry",
-    "typebox": "^1.4.6",
-    "undici": "^8.12.4"
+    "typebox": "^1.4.7",
+    "undici": "^8.13.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.6",
+    "@biomejs/biome": "^2.6.8",
     "@types/node": "^26.6.6",
-    "lint-staged": "^17.6.0",
+    "lint-staged": "^17.6.2",
     "playwright-core": "~1.64.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "lint-staged": {
     "*": "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true"

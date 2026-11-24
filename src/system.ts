@@ -14,7 +14,7 @@ import {
   type EntryRecord,
   GenerationTask,
   hook,
-  runEndTask,
+  hookTask,
   section,
   type TaskId,
   type TaskRecord,
@@ -281,7 +281,7 @@ async function createConversationTask(
  *
  * It cannot be created directly in `afterRun`: a hook's api is read-only (a
  * `DocumentReader` with memos), so the only way to start work there is a
- * `runEndTask()`, which the generation creates as its own child and waits for
+ * `hookTask()`, which the generation creates as its own child and waits for
  * until it is terminal — and it takes no ownership or background options. A
  * ConversationTask successor would hold the run, and the conversation, open
  * until it finished answering. This task commits the conversation-owned,
@@ -486,7 +486,7 @@ export const keySystem = (git: Git) => {
                   .filter((started) => started.entry >= run.first && started.entry <= run.last)
                   .map((started) => started.child);
           if (on.length === 0) return undefined;
-          return { tasks: [runEndTask(SuccessorTask, { on, answer: run.answer })] };
+          return { tasks: [hookTask(SuccessorTask, { on, answer: run.answer })] };
         },
       }),
     ],
