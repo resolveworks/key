@@ -106,6 +106,7 @@ describe("host", () => {
     skillPaths = {
       user: join(cwd, "test-user-skills"),
       agents: join(cwd, "test-agent-skills"),
+      bundled: join(cwd, "test-bundled-skills"),
     };
     // The fake provider serves the pair the tests set as both defaults.
     faux = fauxProvider({

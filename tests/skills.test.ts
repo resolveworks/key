@@ -45,6 +45,7 @@ function paths(root: string): SkillPaths {
   return {
     user: join(root, "config", "key", "skills"),
     agents: join(root, "home", ".agents", "skills"),
+    bundled: join(root, "package", "skills"),
   };
 }
 
@@ -76,6 +77,7 @@ describe("skill discovery", () => {
     skill(join(root, ".agents", "skills", "outside"), "outside");
     skill(join(cwd, ".key", "skills", "key-only"), "key-only");
     skill(join(cwd, ".pi", "skills", "pi-only"), "pi-only");
+    skill(join(configured.bundled, "bundled"), "bundled");
 
     const loaded = loadSkills(cwd, configured);
     expect(loaded.skills.map(({ name }) => name)).toEqual([
@@ -83,6 +85,7 @@ describe("skill discovery", () => {
       "agents-user",
       "near",
       "project",
+      "bundled",
     ]);
     expect(loaded.diagnostics).toEqual([]);
     expect(externalSkillDirectories(cwd, configured)).toEqual([
@@ -90,7 +93,49 @@ describe("skill discovery", () => {
       configured.agents,
       join(repository, "packages", ".agents", "skills"),
       join(repository, ".agents", "skills"),
+      configured.bundled,
     ]);
+  });
+
+  test("a user or project skill shadows the bundled one of the same name", () => {
+    const root = temp();
+    const repository = join(root, "repo");
+    const cwd = join(repository, "app");
+    const configured = paths(root);
+    mkdirSync(join(repository, ".git"), { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    const bundled = skill(join(configured.bundled, "review"), "review", "Bundled review");
+    skill(join(configured.bundled, "compose"), "compose", "Bundled compose");
+    skill(join(configured.user, "review"), "review", "User review");
+    const userReview = join(configured.user, "review", "SKILL.md");
+
+    const loaded = loadSkills(cwd, configured);
+    expect(loaded.skills.map(({ name, description }) => ({ name, description }))).toEqual([
+      { name: "review", description: "User review" },
+      { name: "compose", description: "Bundled compose" },
+    ]);
+    expect(loaded.diagnostics).toEqual([
+      { path: bundled, message: `name "review" collision; ${userReview} wins` },
+    ]);
+
+    skill(join(cwd, ".agents", "skills", "compose"), "compose", "Project compose");
+    expect(loadSkills(cwd, configured).skills.map(({ description }) => description)).toEqual([
+      "User review",
+      "Project compose",
+    ]);
+  });
+
+  test("the bundled collection mounts read-only unless the checkout already holds it", () => {
+    const root = temp();
+    const configured = paths(root);
+    mkdirSync(configured.bundled, { recursive: true });
+
+    expect(externalSkillDirectories(join(root, "checkout"), configured)).toContain(
+      configured.bundled,
+    );
+    expect(externalSkillDirectories(join(root, "package"), configured)).not.toContain(
+      configured.bundled,
+    );
   });
 
   test("a skill root stops recursion, and a name collision keeps the first skill", () => {

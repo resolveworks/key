@@ -75,6 +75,14 @@ function indexOf(command: readonly string[], ...tokens: string[]): number {
   return -1;
 }
 
+function skillPaths(root: string) {
+  return {
+    user: join(root, "config", "key", "skills"),
+    agents: join(root, "home", ".agents", "skills"),
+    bundled: join(root, "package", "skills"),
+  };
+}
+
 describe("sandboxCommand", () => {
   // The pre-commit hook exports GIT_DIR for the repository it commits, and the probe asks git about
   // cwd: a sandbox daemon started by hand carries no such thing.
@@ -223,17 +231,14 @@ describe("sandboxCommand", () => {
     const root = temp("key-sandbox-skills-");
     const repository = join(root, "repository");
     const cwd = join(repository, "packages", "app");
-    const paths = {
-      user: join(root, "config", "key", "skills"),
-      agents: join(root, "home", ".agents", "skills"),
-    };
+    const paths = skillPaths(root);
     const project = join(repository, ".agents", "skills");
     const local = join(cwd, ".agents", "skills");
-    for (const path of [paths.user, paths.agents, project, local])
+    for (const path of [paths.user, paths.agents, project, local, paths.bundled])
       mkdirSync(path, { recursive: true });
 
     const command = sandboxCommand(cwd, daemon, { mount: [], env: {} }, paths);
-    for (const path of [paths.user, paths.agents, project])
+    for (const path of [paths.user, paths.agents, project, paths.bundled])
       expect(indexOf(command, "--ro-bind", path, path)).toBeGreaterThanOrEqual(0);
     expect(indexOf(command, "--ro-bind", local, local)).toBe(-1);
     expect(indexOf(command, "--bind", cwd, cwd)).toBeGreaterThanOrEqual(0);
@@ -241,7 +246,12 @@ describe("sandboxCommand", () => {
 
   test("binds no git dir when the cwd is not a repository", () => {
     const cwd = temp("key-sandbox-plain-");
-    const command = sandboxCommand(cwd, daemon, { mount: [], env: {} });
+    const command = sandboxCommand(
+      cwd,
+      daemon,
+      { mount: [], env: {} },
+      skillPaths(temp("key-sandbox-none-")),
+    );
     const binds = command.flatMap((token, index) =>
       token === "--bind" ? [command[index + 1]] : [],
     );

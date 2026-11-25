@@ -55,6 +55,10 @@ Key discovers [Agent Skills](https://agentskills.io/specification) directories c
 - `$XDG_CONFIG_HOME/key/skills/` (`~/.config/key/skills/` by default)
 - `~/.agents/skills/`
 - `.agents/skills/` in the working directory and its ancestors, stopping at the repository root
+- the `skills/` directory shipped with the package, so an install is never empty
+
+The first skill of a name wins, so a user or project skill shadows the bundled one of the same
+name; Key reports the losing file on stderr.
 
 The system prompt advertises each skill's name, description, and path. The model reads the full
 instructions only when it selects one. Use `/skill:name [arguments]` to invoke one explicitly,
@@ -62,8 +66,8 @@ including a skill whose frontmatter sets `disable-model-invocation: true`. Skill
 repeated for each request, so edits take effect on the next request.
 
 Skill directories outside the conversation's working directory are mounted into its sandbox
-read-only. Bundled references and scripts therefore use the same absolute paths shown in the
-system prompt.
+read-only, the bundled collection among them. Bundled references and scripts therefore use the
+same absolute paths shown in the system prompt.
 
 ### Host as a systemd user service
 

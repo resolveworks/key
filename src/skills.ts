@@ -2,6 +2,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineExtension, section } from "@earendil-works/pi-durable";
 import ignore from "ignore";
 import { parse } from "yaml";
@@ -18,6 +19,8 @@ export type SkillPaths = {
   readonly user: string;
   /** The Agent Skills user location, normally ~/.agents/skills. */
   readonly agents: string;
+  /** The collection shipped beside the code, so an install starts with skills. */
+  readonly bundled: string;
 };
 
 export type Skill = {
@@ -39,7 +42,12 @@ export type LoadSkillsResult = {
 };
 
 export function defaultSkillPaths(): SkillPaths {
-  return { user: join(configDir(), "skills"), agents: join(homedir(), ".agents", "skills") };
+  return {
+    user: join(configDir(), "skills"),
+    agents: join(homedir(), ".agents", "skills"),
+    // src/skills.ts and its dist/skills.js alike sit one level below the package root.
+    bundled: join(dirname(fileURLToPath(import.meta.url)), "..", "skills"),
+  };
 }
 
 function gitRoot(cwd: string): string | undefined {
@@ -51,7 +59,10 @@ function gitRoot(cwd: string): string | undefined {
   }
 }
 
-/** User locations first, then project .agents directories from nearest to farthest. */
+/**
+ * User locations first, then project .agents directories from nearest to farthest, then the bundled
+ * collection: the first skill of a name wins, so users and projects shadow what we ship.
+ */
 export function skillDirectories(
   cwd: string,
   paths: SkillPaths = defaultSkillPaths(),
@@ -66,6 +77,7 @@ export function skillDirectories(
     if (parent === dir) break;
     dir = parent;
   }
+  directories.push(resolve(paths.bundled));
   return [...new Set(directories)];
 }
 

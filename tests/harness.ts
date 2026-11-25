@@ -62,7 +62,11 @@ export function keySetup(): KeySetup {
   registry.install(Fetch);
   registry.install(Agents);
   registry.install(
-    createSkills({ user: "/key/test-user-skills", agents: "/key/test-agent-skills" }),
+    createSkills({
+      user: "/key/test-user-skills",
+      agents: "/key/test-agent-skills",
+      bundled: "/key/test-bundled-skills",
+    }),
   );
   return { faux, models, registry };
 }
