@@ -69,10 +69,6 @@ Skill directories outside the conversation's working directory are mounted into 
 read-only, the bundled collection among them. Bundled references and scripts therefore use the
 same absolute paths shown in the system prompt.
 
-Key also mounts its data directory read-only into every conversation's sandbox as `KEY_DATA_DIR`,
-so the bundled `session-history` skill can query `session.sqlite` directly while the host keeps
-writing it. That mount is for reading: replies and edits still go through the host.
-
 ### Host as a systemd user service
 
 ```ini
