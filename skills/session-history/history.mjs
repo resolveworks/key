@@ -199,9 +199,9 @@ function ancestry(known) {
   return parts.join(" · ");
 }
 
-/** Newest first, nested by lineage: a fork or a cascade child sits under what it came from. */
+/** The newest conversations, oldest first, so a fork or a cascade child prints under what it came from. */
 function list(limit) {
-  for (const { id } of newestConversations.all(limit)) {
+  for (const { id } of newestConversations.all(limit).reverse()) {
     const known = conversation(id);
     const prompt = label(known);
     console.log(`${String(id).padStart(4)}  ${"  ".repeat(depth(known))}${prompt}`);
@@ -248,7 +248,7 @@ function search(terms, limit) {
   }
 }
 
-const USAGE = `history.mjs list [--limit N]                     newest first, nested by lineage
+const USAGE = `history.mjs list [--limit N]                     newest, oldest first, nested by lineage
 history.mjs show <conversation> [--full] [--user] [spec]   one transcript; spec is 88,92-97
 history.mjs search <terms...> [--limit N]          conversations ranked by total hits`;
 

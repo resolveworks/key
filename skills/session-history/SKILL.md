@@ -12,7 +12,7 @@ Never read a record raw; render with `history.mjs`, next to this file. The snipp
 `history.mjs` for that copy: give the tool call its absolute path.
 
 ```bash
-node history.mjs list          # newest first, nested by lineage
+node history.mjs list          # the newest, oldest first, nested by lineage
 node history.mjs show 42       # one conversation's transcript
 ```
 
@@ -23,7 +23,8 @@ node history.mjs list                # 25 newest conversations
 node history.mjs list --limit 100
 ```
 
-Each line is the `id` and the conversation's opening prompt.
+Each line is the `id` and the conversation's opening prompt. The newest sit at the bottom, so a
+conversation prints under the one it came from.
 
 ## Read
 
