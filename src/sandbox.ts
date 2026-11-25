@@ -8,7 +8,7 @@ import type { ConversationId } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import { arr, bool, compile, map, obj, opt, type Static, str } from "@earendil-works/pi-schema";
-import { sandboxFile } from "./config.ts";
+import { dataDir, sandboxFile } from "./config.ts";
 import { defaultSkillPaths, externalSkillDirectories, type SkillPaths } from "./skills.ts";
 
 const home = homedir();
@@ -100,6 +100,11 @@ export function sandboxCommand(
     // The host home is private; only the declared and skill-resource mounts below enter it.
     "--tmpfs",
     home,
+    // The bundled history skill reads the store read-only; SQLite's WAL keeps serving readers while
+    // the host writes. Ahead of the declared mounts, so one of them can still take it over.
+    "--ro-bind",
+    dataDir(),
+    dataDir(),
     ...config.mount.flatMap(({ path, readonly }) => [
       readonly === true ? "--ro-bind" : "--bind",
       path,
@@ -126,6 +131,9 @@ export function sandboxCommand(
     "--setenv",
     "XDG_RUNTIME_DIR",
     runtimeDirectory,
+    "--setenv",
+    "KEY_DATA_DIR",
+    dataDir(),
     ...Object.entries(config.env).flatMap(([name, value]) => ["--setenv", name, value]),
     "--die-with-parent",
     "--chdir",
