@@ -88,16 +88,20 @@ async function store(): Promise<Store> {
 }
 
 describe("history.mjs", () => {
-  test("list prints the fork under the root's opening label, newest last", async () => {
+  test("list shows both conversations under the root's opening label, the fork nested", async () => {
     const held = await store();
     const lines = history(held, "list").trimEnd().split("\n");
 
+    expect(lines).toHaveLength(2);
+    const lineOf = (id: number) =>
+      lines.find((line) => line.startsWith(`${String(id).padStart(4)}  `)) as string;
+
+    expect(lineOf(held.root)).toBe(`${String(held.root).padStart(4)}  hello marker from the root`);
     // The fork's own first entry is its follow-up; its label is the ancestor's opening prompt,
     // nested one level under the conversation it forked from.
-    expect(lines).toEqual([
-      `${String(held.root).padStart(4)}  hello marker from the root`,
+    expect(lineOf(held.fork)).toBe(
       `${String(held.fork).padStart(4)}    hello marker from the root`,
-    ]);
+    );
   });
 
   test("show renders the fork chain: the ancestor's turns, then the fork's own", async () => {
