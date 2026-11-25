@@ -38,8 +38,6 @@ import { localDaemon } from "@earendil-works/pi-env";
 import { type AutocompleteSuggestions, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { type ServerType, serve } from "@hono/node-server";
 import type { Hono } from "hono";
-import { Fetch } from "mine/key";
-import { Search } from "scry/key";
 import { Agents } from "./agents.ts";
 import { api } from "./api.ts";
 import { FileCredentialStore } from "./auth.ts";
@@ -97,7 +95,7 @@ export async function production(): Promise<HostOptions> {
     manifest,
     skillPaths,
     storage: await openNodeSqliteStorage(sessionFile()),
-    extensions: [CodingTools, keySystem(git), Search, Fetch, Agents, createSkills(skillPaths)],
+    extensions: [CodingTools, keySystem(git), Agents, createSkills(skillPaths)],
     port: port(),
     hostname: process.env.KEY_BIND ?? "127.0.0.1",
   };

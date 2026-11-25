@@ -119,8 +119,8 @@ describe("row", () => {
 
 describe("searchText", () => {
   it("exposes everything the row shows: kind, text, tool name, output, model", () => {
-    expect(searchText(result(20, "web_search", "node 24 is out"))).toBe(
-      "tool result · web_search node 24 is out",
+    expect(searchText(result(20, "bash", "node 24 is out"))).toBe(
+      "tool result · bash node 24 is out",
     );
     expect(searchText(answer(21, [{ type: "text", text: "Done." }]))).toBe(
       "assistant · Done. faux/faux-1",

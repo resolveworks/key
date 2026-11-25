@@ -21,8 +21,6 @@ import {
   type TaskRecord,
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { Fetch } from "mine/key";
-import { Search } from "scry/key";
 import { afterEach, expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
 import { ModelDefaultsDoc } from "../src/models.ts";
@@ -58,8 +56,6 @@ export function keySetup(): KeySetup {
   const registry = createRegistry();
   registry.install(CodingTools);
   registry.install(keySystem(fakeGit));
-  registry.install(Search);
-  registry.install(Fetch);
   registry.install(Agents);
   registry.install(
     createSkills({

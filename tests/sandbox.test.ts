@@ -157,7 +157,6 @@ describe("sandboxCommand", () => {
       ].sort(),
     );
     expect([...environment.keys()].filter((name) => name.startsWith("KEY_"))).toEqual([]);
-    expect(environment.has("BRAVE_API_KEY")).toBe(false);
   });
 
   test("no writable mount of home, and every writable mount is bound at its own path", () => {
