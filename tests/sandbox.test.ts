@@ -7,6 +7,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/conte
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { dataDir } from "../src/config.ts";
 import { loadSandboxManifest, sandboxCommand, sandboxEnv } from "../src/sandbox.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -139,6 +140,7 @@ describe("sandboxCommand", () => {
     expect(environment.get("HOME")).toBe(home);
     expect(environment.get("TMPDIR")).toBe("/tmp");
     expect(environment.get("XDG_RUNTIME_DIR")).toBe(runtimeDirectory);
+    expect(environment.get("KEY_DATA_DIR")).toBe(dataDir());
     for (const [name, value] of Object.entries(config.env)) {
       expect(environment.get(name)).toBe(value);
     }
@@ -147,6 +149,7 @@ describe("sandboxCommand", () => {
         "HOME",
         "TMPDIR",
         "XDG_RUNTIME_DIR",
+        "KEY_DATA_DIR",
         "LANG",
         "PATH",
         "SSH_AUTH_SOCK",
@@ -156,7 +159,26 @@ describe("sandboxCommand", () => {
         "pnpm_config_enable_global_virtual_store",
       ].sort(),
     );
-    expect([...environment.keys()].filter((name) => name.startsWith("KEY_"))).toEqual([]);
+    expect([...environment.keys()].filter((name) => name.startsWith("KEY_"))).toEqual([
+      "KEY_DATA_DIR",
+    ]);
+  });
+
+  test("mounts the data directory read-only and names it for the recall skill", () => {
+    const config = loaded();
+    const command = sandboxCommand(temp("key-sandbox-data-"), daemon, config);
+    const data = dataDir();
+    const mount = indexOf(command, "--ro-bind", data, data);
+    const [first] = config.mount;
+
+    expect(mount).toBeGreaterThan(indexOf(command, "--tmpfs", home));
+    // Ahead of the declared mounts, so a manifest can still take the path over.
+    expect(mount).toBeLessThan(
+      indexOf(command, first.readonly === true ? "--ro-bind" : "--bind", first.path, first.path),
+    );
+    expect(indexOf(command, "--setenv", "KEY_DATA_DIR", data)).toBeGreaterThan(
+      indexOf(command, "--clearenv"),
+    );
   });
 
   test("no writable mount of home, and every writable mount is bound at its own path", () => {

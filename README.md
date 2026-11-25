@@ -69,6 +69,11 @@ Skill directories outside the conversation's working directory are mounted into 
 read-only, the bundled collection among them. Bundled references and scripts therefore use the
 same absolute paths shown in the system prompt.
 
+Key also mounts its data directory into every conversation's sandbox read-only, as `KEY_DATA_DIR`,
+so the bundled `recall` skill reads the session store while the host writes it: SQLite's WAL serves
+a reader beside the writer. That mount is for reading — replies and edits still go through the
+host.
+
 ### Host as a systemd user service
 
 ```ini
