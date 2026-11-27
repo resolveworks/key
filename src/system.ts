@@ -1,5 +1,3 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Context } from "@earendil-works/chord/context";
 import { clampThinkingLevel, contentText, type Models } from "@earendil-works/pi-ai";
 import {
@@ -26,6 +24,7 @@ import {
 import { obj, str } from "@earendil-works/pi-schema";
 import type { Git } from "./git.ts";
 import { ModelDefaultsDoc } from "./models.ts";
+import { RECALL } from "./recall.ts";
 import { DEFAULT_THINKING_LEVEL, ThinkingDefaultsDoc } from "./thinking.ts";
 import { ensureWorker, WORKER_NAME, workerBranch } from "./worker.ts";
 
@@ -461,17 +460,6 @@ function childTools(git: Git, taskDefinition: ConversationTaskDefinition) {
   });
   return { DelegateImplementation, DelegateResearch };
 }
-
-/** The bundled guide sits at the package root: src/system.ts and dist/system.js alike are one level below it. */
-export const RECALL_GUIDE = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "recall",
-  "RECALL.md",
-);
-
-/** What the guide answers, kept beside the path so the prompt names one file and no catalog. */
-export const RECALL = `Questions about what was discussed, decided, or tried before — "what did we do about X", "find the conversation where…", "what were we working on" — live in key's session store. Read ${RECALL_GUIDE} for how: it names the script that lists conversations, renders a transcript, and searches every entry.`;
 
 /** The host's system: direct conversation runs, with tasks only at cascade boundaries. */
 export const keySystem = (git: Git) => {

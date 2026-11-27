@@ -4,7 +4,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   fauxAssistantMessage,
@@ -15,11 +14,11 @@ import {
 import { type Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
+import { RECALL_DIR, RECALL_GUIDE } from "../src/recall.ts";
 import { keySetup, MODEL, openKey } from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
-const guide = fileURLToPath(new URL("../recall/RECALL.md", import.meta.url));
-const script = fileURLToPath(new URL("../recall/show.mjs", import.meta.url));
+const script = join(RECALL_DIR, "show.mjs");
 
 /** One store: the conversation the run started in, and the conversation forked from it. */
 type Store = {
@@ -139,8 +138,9 @@ describe("the built-in guidance", () => {
     expect((await asked.wait(context)).status).toBe("done");
 
     expect(prompts[0]).toContain("what was discussed, decided, or tried before");
-    expect(prompts[0]).toContain(`Read ${guide} for how`);
-    expect(existsSync(guide)).toBe(true);
+    expect(prompts[0]).toContain(`Read ${RECALL_GUIDE} for how`);
+    expect(existsSync(RECALL_GUIDE)).toBe(true);
+    expect(existsSync(script)).toBe(true);
   });
 });
 

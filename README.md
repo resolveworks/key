@@ -54,9 +54,10 @@ decided, or tried before, and names the bundled guide's absolute path. The model
 `recall/RECALL.md` only when the question needs it, and runs `recall/show.mjs` from there to list
 conversations, render a transcript, or search every entry.
 
-Key mounts its data directory into every conversation's sandbox read-only, as `KEY_DATA_DIR`, so
-that script reads the session store while the host writes it: SQLite's WAL serves a reader beside
-the writer. That mount is for reading — replies and edits still go through the host.
+Key mounts the bundled `recall/` directory read-only at the absolute path in the prompt. It also
+mounts its data directory read-only, as `KEY_DATA_DIR`, so that script reads the session store
+while the host writes it: SQLite's WAL serves a reader beside the writer. That mount is for reading
+— replies and edits still go through the host.
 
 ### Host as a systemd user service
 

@@ -9,6 +9,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import { arr, bool, compile, map, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import { dataDir, sandboxFile } from "./config.ts";
+import { RECALL_DIR } from "./recall.ts";
 
 const home = homedir();
 // Where pnpm keeps its store operation locks, and where the session sockets live.
@@ -94,6 +95,10 @@ export function sandboxCommand(cwd: string, daemon: string, config: SandboxManif
     // The host home is private; only the declared mounts below enter it.
     "--tmpfs",
     home,
+    // The guide and script stay at the absolute paths the system prompt names.
+    "--ro-bind",
+    RECALL_DIR,
+    RECALL_DIR,
     // Recall reads the session store: SQLite's WAL serves a reader while the host writes, so this
     // mount is for reading only. Ahead of the declared mounts, so a manifest can still take it over.
     "--ro-bind",

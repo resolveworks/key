@@ -8,6 +8,7 @@ import type { ConversationId } from "@earendil-works/pi-durable";
 import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { dataDir } from "../src/config.ts";
+import { RECALL_DIR } from "../src/recall.ts";
 import { loadSandboxManifest, sandboxCommand, sandboxEnv } from "../src/sandbox.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -170,6 +171,14 @@ describe("sandboxCommand", () => {
     );
     expect(indexOf(command, "--setenv", "KEY_DATA_DIR", data)).toBeGreaterThan(
       indexOf(command, "--clearenv"),
+    );
+  });
+
+  test("mounts the bundled recall guide and script read-only at their prompt paths", () => {
+    const command = sandboxCommand(temp("key-sandbox-recall-"), daemon, { mount: [], env: {} });
+
+    expect(indexOf(command, "--ro-bind", RECALL_DIR, RECALL_DIR)).toBeGreaterThan(
+      indexOf(command, "--tmpfs", home),
     );
   });
 
