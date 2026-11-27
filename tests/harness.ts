@@ -24,7 +24,6 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { afterEach, expect, vi } from "vitest";
 import { Agents } from "../src/agents.ts";
 import { ModelDefaultsDoc } from "../src/models.ts";
-import { createSkills } from "../src/skills.ts";
 import { CONVERSATION_TASK, type ConversationTaskInput, keySystem } from "../src/system.ts";
 import { FakeEnv, fakeGit } from "./git.ts";
 
@@ -57,13 +56,6 @@ export function keySetup(): KeySetup {
   registry.install(CodingTools);
   registry.install(keySystem(fakeGit));
   registry.install(Agents);
-  registry.install(
-    createSkills({
-      user: "/key/test-user-skills",
-      agents: "/key/test-agent-skills",
-      bundled: "/key/test-bundled-skills",
-    }),
-  );
   return { faux, models, registry };
 }
 

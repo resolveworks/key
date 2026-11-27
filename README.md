@@ -41,38 +41,22 @@ XDG base directory spec:
 
 | Variable          | Default                      | What it moves                                                       |
 | ----------------- | ---------------------------- | ------------------------------------------------------------------- |
-| `XDG_CONFIG_HOME` | `~/.config`                  | `key/auth.json`, `key/sandbox.json`, and `key/skills/`              |
+| `XDG_CONFIG_HOME` | `~/.config`                  | `key/auth.json` and `key/sandbox.json`                              |
 | `XDG_DATA_HOME`   | `~/.local/share`             | `key/session.sqlite` and `key/worktrees/`                           |
 | `KEY_PORT`        | `7317`                       | the host's port; the client follows unless `KEY_HOST` names another |
 | `KEY_BIND`        | `127.0.0.1`                  | the host's interface                                                |
 | `KEY_HOST`        | `http://127.0.0.1:$KEY_PORT` | the client's host                                                   |
 
-### Skills
+### Recall
 
-Key discovers [Agent Skills](https://agentskills.io/specification) directories containing
-`SKILL.md` in these locations:
+Every conversation's system prompt says where to look when the user asks what was discussed,
+decided, or tried before, and names the bundled guide's absolute path. The model reads
+`recall/RECALL.md` only when the question needs it, and runs `recall/show.mjs` from there to list
+conversations, render a transcript, or search every entry.
 
-- `$XDG_CONFIG_HOME/key/skills/` (`~/.config/key/skills/` by default)
-- `~/.agents/skills/`
-- `.agents/skills/` in the working directory and its ancestors, stopping at the repository root
-- the `skills/` directory shipped with the package, so an install is never empty
-
-The first skill of a name wins, so a user or project skill shadows the bundled one of the same
-name; Key reports the losing file on stderr.
-
-The system prompt advertises each skill's name, description, and path. The model reads the full
-instructions only when it selects one. Use `/skill:name [arguments]` to invoke one explicitly,
-including a skill whose frontmatter sets `disable-model-invocation: true`. Skill discovery is
-repeated for each request, so edits take effect on the next request.
-
-Skill directories outside the conversation's working directory are mounted into its sandbox
-read-only, the bundled collection among them. Bundled references and scripts therefore use the
-same absolute paths shown in the system prompt.
-
-Key also mounts its data directory into every conversation's sandbox read-only, as `KEY_DATA_DIR`,
-so the bundled `recall` skill reads the session store while the host writes it: SQLite's WAL serves
-a reader beside the writer. That mount is for reading — replies and edits still go through the
-host.
+Key mounts its data directory into every conversation's sandbox read-only, as `KEY_DATA_DIR`, so
+that script reads the session store while the host writes it: SQLite's WAL serves a reader beside
+the writer. That mount is for reading — replies and edits still go through the host.
 
 ### Host as a systemd user service
 

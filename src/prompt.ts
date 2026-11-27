@@ -1,6 +1,6 @@
 // The prompt's completions: built-in slash commands answered here — `/new` naming the
-// directory a bare one would run — and skills and paths answered by the host, whose filesystem
-// is the one the trajectories run on.
+// directory a bare one would run — and paths answered by the host, whose filesystem is the one
+// the trajectories run on.
 
 import {
   type AutocompleteItem,
@@ -47,7 +47,7 @@ export function provider(
     ];
   };
   // The library's provider kept for its text grammar alone: an unforced line that starts with
-  // "/" is its command branch. The local list holds built-ins; skill commands merge from the host.
+  // "/" is its command branch, and its list holds the built-ins.
   const local = () => new CombinedAutocompleteProvider(commands(), "");
   return {
     async getSuggestions(lines, cursorLine, cursorCol, options) {
@@ -55,12 +55,7 @@ export function provider(
       const command = text.trimStart();
       if (options.force === true || !command.startsWith("/"))
         return complete(text, options.force ?? false, options.signal);
-      const suggestions = await local().getSuggestions(lines, cursorLine, cursorCol, options);
-      if (!("/skill:".startsWith(command) || command.startsWith("/skill:"))) return suggestions;
-      const skills = await complete(text, false, options.signal);
-      if (skills === null) return suggestions;
-      if (suggestions === null) return skills;
-      return { items: [...suggestions.items, ...skills.items], prefix: suggestions.prefix };
+      return local().getSuggestions(lines, cursorLine, cursorCol, options);
     },
     applyCompletion: (...args) => local().applyCompletion(...args),
     shouldTriggerFileCompletion: (...args) => local().shouldTriggerFileCompletion(...args),

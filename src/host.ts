@@ -51,13 +51,6 @@ import { type ModelDefaults, ModelDefaultsDoc, type ModelInfo } from "./models.t
 import { loadSandboxManifest, type SandboxManifest, sandboxEnv } from "./sandbox.ts";
 import { SeenDoc } from "./seen.ts";
 import {
-  createSkills,
-  defaultSkillPaths,
-  expandSkillCommand,
-  loadSkills,
-  type SkillPaths,
-} from "./skills.ts";
-import {
   CONVERSATION_INSTRUCTIONS,
   CONVERSATION_TASK,
   type ConversationTaskInput,
@@ -80,22 +73,18 @@ export type HostOptions = {
   readonly hostname: string;
   /** The declared mounts and environment every conversation's sandbox gets. */
   readonly manifest: SandboxManifest;
-  /** User and Agent Skills locations; production uses their standard defaults. */
-  readonly skillPaths?: SkillPaths;
 };
 
 /** One box's defaults: the configured session, pi's models, and the declared sandbox. */
 export async function production(): Promise<HostOptions> {
   const manifest = loadSandboxManifest();
   const models = builtinModels({ credentials: new FileCredentialStore(authFile()) });
-  const skillPaths = defaultSkillPaths();
   mkdirSync(dataDir(), { recursive: true });
   return {
     models,
     manifest,
-    skillPaths,
     storage: await openNodeSqliteStorage(sessionFile()),
-    extensions: [CodingTools, keySystem(git), Agents, createSkills(skillPaths)],
+    extensions: [CodingTools, keySystem(git), Agents],
     port: port(),
     hostname: process.env.KEY_BIND ?? "127.0.0.1",
   };
@@ -333,7 +322,6 @@ export class Host {
             localDaemon(),
             this.#options.manifest,
             context,
-            { skillPaths: this.#options.skillPaths },
           );
         },
         onReport: (report) => console.error("key:", report),
@@ -365,25 +353,14 @@ export class Host {
     return (await this.#harness.snapshot(doc, context)) ?? doc.definition.initial();
   }
 
-  /** The prompt's path and skill completions, answered from the host's own filesystem. */
+  /** The prompt's path completions, answered from the host's own filesystem. */
   complete(
     cwd: string,
     text: string,
     force: boolean,
     signal: AbortSignal,
   ): Promise<AutocompleteSuggestions | null> {
-    const command = text.trimStart();
-    const skillCommands =
-      !force &&
-      command.startsWith("/") &&
-      ("/skill:".startsWith(command) || command.startsWith("/skill:"));
-    const commands = skillCommands
-      ? loadSkills(cwd, this.#options.skillPaths).skills.map((skill) => ({
-          name: `skill:${skill.name}`,
-          description: skill.description,
-        }))
-      : [];
-    return new CombinedAutocompleteProvider(commands, cwd).getSuggestions([text], 0, text.length, {
+    return new CombinedAutocompleteProvider([], cwd).getSuggestions([text], 0, text.length, {
       signal,
       force,
     });
@@ -400,7 +377,6 @@ export class Host {
     const { conversation: ref } = await this.#stored(ModelDefaultsDoc);
     if (ref === undefined) throw new Error("no conversation model default: set one with /model");
     const { conversation: level } = await this.thinkingDefaults();
-    prompt = expandSkillCommand(cwd, prompt, this.#options.skillPaths);
     const conversation = await this.#harness.createConversation(
       {
         ownership: { kind: "ownerless" },
@@ -451,10 +427,6 @@ export class Host {
     const id = conversationId as ConversationId;
     const conversation = await this.#harness.conversation(id, context);
     if (conversation === undefined) throw new Error(`no conversation #${conversationId}`);
-    const { cwd } = await this.#agentOf(id);
-    if (cwd === undefined || cwd === null)
-      throw new Error(`conversation #${conversationId} has no cwd`);
-    prompt = expandSkillCommand(cwd, prompt, this.#options.skillPaths);
     await conversation.submit({ type: "input", content: prompt, whenBusy: "steer" }, context);
   }
 

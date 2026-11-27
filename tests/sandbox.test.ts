@@ -76,14 +76,6 @@ function indexOf(command: readonly string[], ...tokens: string[]): number {
   return -1;
 }
 
-function skillPaths(root: string) {
-  return {
-    user: join(root, "config", "key", "skills"),
-    agents: join(root, "home", ".agents", "skills"),
-    bundled: join(root, "package", "skills"),
-  };
-}
-
 describe("sandboxCommand", () => {
   // The pre-commit hook exports GIT_DIR for the repository it commits, and the probe asks git about
   // cwd: a sandbox daemon started by hand carries no such thing.
@@ -164,7 +156,7 @@ describe("sandboxCommand", () => {
     ]);
   });
 
-  test("mounts the data directory read-only and names it for the recall skill", () => {
+  test("mounts the data directory read-only and names it for recall", () => {
     const config = loaded();
     const command = sandboxCommand(temp("key-sandbox-data-"), daemon, config);
     const data = dataDir();
@@ -248,31 +240,9 @@ describe("sandboxCommand", () => {
     expect(indexOf(command, "--bind", gitDir, gitDir)).toBeGreaterThanOrEqual(0);
   });
 
-  test("binds external skill roots read-only without masking project skills in the checkout", () => {
-    const root = temp("key-sandbox-skills-");
-    const repository = join(root, "repository");
-    const cwd = join(repository, "packages", "app");
-    const paths = skillPaths(root);
-    const project = join(repository, ".agents", "skills");
-    const local = join(cwd, ".agents", "skills");
-    for (const path of [paths.user, paths.agents, project, local, paths.bundled])
-      mkdirSync(path, { recursive: true });
-
-    const command = sandboxCommand(cwd, daemon, { mount: [], env: {} }, paths);
-    for (const path of [paths.user, paths.agents, project, paths.bundled])
-      expect(indexOf(command, "--ro-bind", path, path)).toBeGreaterThanOrEqual(0);
-    expect(indexOf(command, "--ro-bind", local, local)).toBe(-1);
-    expect(indexOf(command, "--bind", cwd, cwd)).toBeGreaterThanOrEqual(0);
-  });
-
   test("binds no git dir when the cwd is not a repository", () => {
     const cwd = temp("key-sandbox-plain-");
-    const command = sandboxCommand(
-      cwd,
-      daemon,
-      { mount: [], env: {} },
-      skillPaths(temp("key-sandbox-none-")),
-    );
+    const command = sandboxCommand(cwd, daemon, { mount: [], env: {} });
     const binds = command.flatMap((token, index) =>
       token === "--bind" ? [command[index + 1]] : [],
     );

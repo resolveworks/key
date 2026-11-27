@@ -14,14 +14,13 @@ import { groqProvider } from "@earendil-works/pi-ai/providers/groq";
 import type { AgentState, ConversationView, EntryRecord } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { Agents } from "../src/agents.ts";
 import type { api } from "../src/api.ts";
 import { dataDir } from "../src/config.ts";
 import type { Stats } from "../src/footer.ts";
 import { Host, type Summary } from "../src/host.ts";
 import type { LoginEvent, ProviderInfo } from "../src/login.ts";
-import { createSkills, type SkillPaths } from "../src/skills.ts";
 import { CONVERSATION_INSTRUCTIONS, keySystem } from "../src/system.ts";
 import { fakeGit } from "./git.ts";
 import { requestText, route } from "./harness.ts";
@@ -97,17 +96,11 @@ class Frames {
 describe("host", () => {
   let host: Host;
   let cwd: string;
-  let skillPaths: SkillPaths;
   let faux: ReturnType<typeof fauxProvider>;
   let app: ReturnType<typeof api>;
 
   beforeEach(async () => {
     cwd = mkdtempSync(join(tmpdir(), "key-host-"));
-    skillPaths = {
-      user: join(cwd, "test-user-skills"),
-      agents: join(cwd, "test-agent-skills"),
-      bundled: join(cwd, "test-bundled-skills"),
-    };
     // The fake provider serves the pair the tests set as both defaults.
     faux = fauxProvider({
       provider: "deepseek",
@@ -123,11 +116,10 @@ describe("host", () => {
     host = new Host({
       models,
       storage: new MemoryStorage(),
-      extensions: [CodingTools, keySystem(fakeGit), Agents, createSkills(skillPaths)],
+      extensions: [CodingTools, keySystem(fakeGit), Agents],
       port: 0,
       hostname: "127.0.0.1",
       manifest: sandbox,
-      skillPaths,
     });
     await host.open();
     await host.setModelDefault("conversation", {
@@ -353,62 +345,6 @@ describe("host", () => {
       "no conversation model default: set one with /model",
     );
     await local.close();
-  });
-
-  test("the host completes skills and expands them for new and existing conversations", async () => {
-    const directory = join(cwd, ".agents", "skills", "review");
-    mkdirSync(directory, { recursive: true });
-    const file = join(directory, "SKILL.md");
-    writeFileSync(
-      file,
-      "---\nname: review\ndescription: Review changes\n---\n\n# Review\n\nInspect the diff first.\n",
-    );
-    const requests: string[] = [];
-    faux.setResponses([
-      (request) => {
-        requests.push(requestText(request.messages));
-        return fauxAssistantMessage("first");
-      },
-      (request) => {
-        requests.push(requestText(request.messages));
-        return fauxAssistantMessage("second");
-      },
-    ]);
-
-    const completion = await app.request("/api/complete", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cwd, text: "/skill:re" }),
-    });
-    expect(completion.status).toBe(200);
-    expect(await completion.json()).toMatchObject({
-      items: [{ value: "skill:review", description: "Review changes" }],
-    });
-
-    const started = await app.request("/api/run", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cwd, prompt: "/skill:review start fresh" }),
-    });
-    expect(started.status).toBe(202);
-    const { conversation } = (await started.json()) as { conversation: number };
-    const continued = await app.request(`/api/conversations/${conversation}/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: "/skill:review continue this" }),
-    });
-    expect(continued.status).toBe(202);
-    await vi.waitFor(() => expect(requests).toHaveLength(2));
-    await settled(host, conversation);
-
-    for (const [index, args] of ["start fresh", "continue this"].entries()) {
-      expect(requests[index]).toContain(
-        `<skill name="review" location="${file}">\n` +
-          `References are relative to ${directory}.\n\n` +
-          `# Review\n\nInspect the diff first.\n</skill>\n\n${args}`,
-      );
-      expect(requests[index]).not.toContain("description: Review changes");
-    }
   });
 
   test("an empty prompt is rejected", async () => {

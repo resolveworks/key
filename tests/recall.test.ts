@@ -1,19 +1,25 @@
-// The bundled recall skill reads the store the host writes: a real session.sqlite, rendered by the
+// The bundled recall guide reads the store the host writes: a real session.sqlite, rendered by the
 // shipped script from outside the harness, exactly as a sandboxed conversation runs it.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import type { Harness } from "@earendil-works/pi-durable";
+import {
+  fauxAssistantMessage,
+  fauxText,
+  fauxToolCall,
+  getCurrentSystemPrompt,
+} from "@earendil-works/pi-ai";
+import { type Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { afterEach, describe, expect, test } from "vitest";
 import { keySetup, MODEL, openKey } from "./harness.ts";
 
 const context = BACKGROUND_CONTEXT;
-const script = fileURLToPath(new URL("../skills/recall/show.mjs", import.meta.url));
+const guide = fileURLToPath(new URL("../recall/RECALL.md", import.meta.url));
+const script = fileURLToPath(new URL("../recall/show.mjs", import.meta.url));
 
 /** One store: the conversation the run started in, and the conversation forked from it. */
 type Store = {
@@ -108,6 +114,35 @@ async function store(): Promise<Store> {
 
   return { directory: temporary, root: root.id, fork: fork.id, rootEntries, forkEntries };
 }
+
+describe("the built-in guidance", () => {
+  test("the system prompt routes past-work questions to the guide at its bundled path", async () => {
+    const setup = keySetup();
+    const harness = await openKey(new MemoryStorage(), setup);
+    opened = harness;
+    const prompts: (string | undefined)[] = [];
+    setup.faux.setResponses([
+      (request) => {
+        prompts.push(getCurrentSystemPrompt(request.messages));
+        return fauxAssistantMessage("answered");
+      },
+    ]);
+    const conversation = await harness.createConversation(
+      { ownership: { kind: "ownerless" }, agent: { model: MODEL, cwd: process.cwd() } },
+      context,
+    );
+    harness.resume();
+    const asked = await conversation.submit(
+      { type: "input", content: "what did we decide about recall?" },
+      context,
+    );
+    expect((await asked.wait(context)).status).toBe("done");
+
+    expect(prompts[0]).toContain("what was discussed, decided, or tried before");
+    expect(prompts[0]).toContain(`Read ${guide} for how`);
+    expect(existsSync(guide)).toBe(true);
+  });
+});
 
 describe("show.mjs", () => {
   test("--titles lists the newest conversations by opening prompt, the fork nested under its root", async () => {

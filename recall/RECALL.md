@@ -1,9 +1,3 @@
----
-
-name: recall
-description: Search and review past key conversations in the session store. Use when the user asks what was discussed, decided, or tried before — "what did we do about X", "find the conversation where…", "when did we run Y", "look at our last conversation", "what were we working on".
----
-
 # Recall
 
 Key keeps every conversation in one SQLite file, `$KEY_DATA_DIR/session.sqlite`, mounted read-only
@@ -16,10 +10,9 @@ conversations(id, owner_conversation_id, owner_task_id, record)
 ```
 
 Entry **ids are the coordinates**, where past pi sessions had line numbers. Never read a `record`
-raw — it is kilobytes of JSON, tool output and prompt included. Render it with `show.mjs`, next to
-this file. The snippets below say `show.mjs` for that copy: bundled skills are mounted at their real
-path, so give the tool call the absolute path — the `location` the system prompt gives for this
-skill, with `SKILL.md` replaced by `show.mjs`.
+raw — it is kilobytes of JSON, tool output and prompt included. Render it with `show.mjs`, beside
+this guide: give the tool call the absolute path, which is this guide's own path with `RECALL.md`
+replaced by `show.mjs`. The snippets below say `show.mjs` for that copy.
 
 `show.mjs` only assembles and renders. Finding is SQL, wrapped as `search`:
 
